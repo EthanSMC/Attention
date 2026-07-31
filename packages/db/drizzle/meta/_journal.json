@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1785485447587,
+      "tag": "0000_attention_web_core",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785487566791,
+      "tag": "0001_public_content_attributions",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785488605570,
+      "tag": "0002_runtime_roles",
+      "breakpoints": true
+    }
+  ]
+}

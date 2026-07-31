@@ -1,0 +1,25 @@
+{
+  "name": "@attention/fetcher",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc --outDir dist",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@attention/contracts": "workspace:*",
+    "@hono/node-server": "latest",
+    "hono": "latest",
+    "ipaddr.js": "latest",
+    "undici": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "^6.0.3"
+  }
+}

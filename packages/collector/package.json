@@ -1,0 +1,20 @@
+{
+  "name": "@attention/collector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@attention/contracts": "workspace:*",
+    "tldts": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}
