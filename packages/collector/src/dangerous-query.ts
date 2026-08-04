@@ -53,7 +53,7 @@ const EXACT_PARAMETER_REASONS = new Map<string, DangerousQueryReason>([
 ]);
 
 const SECRET_NAME_PATTERN =
-  /(?:^|[_-])(?:access[_-]?token|auth[_-]?token|secret|password|passwd|private[_-]?key|share[_-]?key|share[_-]?token|session[_-]?id|signature)(?:$|[_-])/u;
+  /(?:^|[_-])(?:access[_-]?token|auth[_-]?token|token|auth|authorization|credential|password|passwd|secret|private[_-]?key|share[_-]?key|share[_-]?token|session[_-]?id|signature|signed|sig|api[_-]?key|key)(?:$|[_-])/u;
 
 function dangerousReason(parameter: string): DangerousQueryReason | undefined {
   return (

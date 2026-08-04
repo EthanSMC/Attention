@@ -7,12 +7,25 @@ import {
 
 import { getWebDatabase } from "./db";
 
-export interface CloudPrincipal {
+interface CloudPrincipalBase {
   accountId: string;
   isFilter: boolean;
   isMember: boolean;
   scopes: string[];
 }
+
+export type CloudPrincipal = CloudPrincipalBase & (
+  | {
+      clientId: string;
+      credentialId: string;
+      credentialKind: "oauth";
+    }
+  | {
+      clientId: null;
+      credentialId: string;
+      credentialKind: "pat";
+    }
+);
 
 export function readBearerToken(request: Request): string | null {
   const match = /^Bearer ([^\s]+)$/u.exec(request.headers.get("authorization") ?? "");
@@ -26,7 +39,29 @@ export async function resolveCloudPrincipal(
   const token = readBearerToken(request);
   if (!token) return null;
   if (token.startsWith("att_pat_")) {
-    return resolveApiCredential(getWebDatabase(), token);
+    const principal = await resolveApiCredential(getWebDatabase(), token);
+    if (!principal) return null;
+    return {
+      accountId: principal.accountId,
+      clientId: null,
+      credentialId: principal.credentialId,
+      credentialKind: "pat",
+      isFilter: principal.isFilter,
+      isMember: principal.isMember,
+      scopes: principal.scopes,
+    };
   }
-  return resolveOAuthAccessToken(getWebDatabase(), token, { audience });
+  const principal = await resolveOAuthAccessToken(getWebDatabase(), token, {
+    audience,
+  });
+  if (!principal) return null;
+  return {
+    accountId: principal.accountId,
+    clientId: principal.clientId,
+    credentialId: principal.tokenId,
+    credentialKind: "oauth",
+    isFilter: principal.isFilter,
+    isMember: principal.isMember,
+    scopes: principal.scopes,
+  };
 }

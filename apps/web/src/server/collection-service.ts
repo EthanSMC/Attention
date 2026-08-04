@@ -101,6 +101,7 @@ interface ResolvedCandidate {
   observedUrl: string;
   redirectChain: string[];
   displayHost: string;
+  resolutionStatus: "pending" | "resolved";
 }
 
 interface PendingSelectionClaim {
@@ -118,6 +119,52 @@ class CandidatePendingError extends Error {
     this.name = "CandidatePendingError";
     if (source !== undefined) this.source = source;
   }
+}
+
+const temporaryFetcherErrorCodes = new Set([
+  "dns_failure",
+  "fetch_failed",
+  "fetcher_failed",
+  "fetcher_not_configured",
+  "fetcher_unavailable",
+  "internal_error",
+  "invalid_fetcher_response",
+  "overloaded",
+  "timeout",
+]);
+
+function fallbackDirectCandidate(
+  url: string,
+  match: NonNullable<ReturnType<typeof classifySourceUrl>>,
+): ResolvedCandidate | null {
+  if (
+    match.classification.kind !== "content" ||
+    match.adapter.id === "generic_web"
+  ) {
+    return null;
+  }
+  const parsedInput = parseHttpUrl(url);
+  if (!parsedInput) return null;
+  const identity = match.adapter.identity(url);
+  if (!identity) return null;
+  const outboundUrl = identity.normalizedUrl;
+  const parsedOutbound = parseHttpUrl(outboundUrl);
+  if (
+    parsedOutbound === null ||
+    hasUnsupportedHttpPort(parsedOutbound) ||
+    clearlyUnsafeHostname(parsedOutbound.hostname) ||
+    findDangerousUrlParameters(parsedOutbound).length > 0
+  ) {
+    throw new CandidateUnsafeError("unsafe_outbound");
+  }
+  return {
+    displayHost: new URL(url).hostname,
+    identity,
+    observedUrl: url,
+    outboundUrl,
+    redirectChain: [],
+    resolutionStatus: "pending",
+  };
 }
 
 function collectionSecret(): string {
@@ -200,6 +247,10 @@ function clearlyUnsafeHostname(hostname: string): boolean {
   );
 }
 
+function hasUnsupportedHttpPort(url: URL): boolean {
+  return url.port !== "" && url.port !== "80" && url.port !== "443";
+}
+
 function dangerousForAdapter(
   url: string,
   adapter: SourceAdapterId,
@@ -220,7 +271,12 @@ async function resolveCandidate(rawUrl: string): Promise<ResolvedCandidate | nul
   let match = classifySourceUrl(currentUrl);
   if (!match) return null;
 
-  if (clearlyUnsafeHostname(new URL(currentUrl).hostname)) {
+  const parsedCurrent = parseHttpUrl(currentUrl);
+  if (
+    parsedCurrent === null ||
+    hasUnsupportedHttpPort(parsedCurrent) ||
+    clearlyUnsafeHostname(parsedCurrent.hostname)
+  ) {
     throw new CandidateUnsafeError("unsafe_target");
   }
   if (
@@ -249,12 +305,24 @@ async function resolveCandidate(rawUrl: string): Promise<ResolvedCandidate | nul
     if (error instanceof FetcherClientError && error.unsafe) {
       throw new CandidateUnsafeError("unsafe_target");
     }
+    if (
+      error instanceof FetcherClientError &&
+      temporaryFetcherErrorCodes.has(error.code)
+    ) {
+      const fallback = fallbackDirectCandidate(currentUrl, match);
+      if (fallback) return fallback;
+    }
     throw new CandidatePendingError(initialSource);
   }
 
   match = classifySourceUrl(currentUrl);
   if (!match) return null;
-  if (clearlyUnsafeHostname(new URL(currentUrl).hostname)) {
+  const parsedResolved = parseHttpUrl(currentUrl);
+  if (
+    parsedResolved === null ||
+    hasUnsupportedHttpPort(parsedResolved) ||
+    clearlyUnsafeHostname(parsedResolved.hostname)
+  ) {
     throw new CandidateUnsafeError("unsafe_target");
   }
   if (
@@ -284,6 +352,7 @@ async function resolveCandidate(rawUrl: string): Promise<ResolvedCandidate | nul
   const parsedOutbound = parseHttpUrl(outboundUrl);
   if (
     parsedOutbound === null ||
+    hasUnsupportedHttpPort(parsedOutbound) ||
     clearlyUnsafeHostname(parsedOutbound.hostname) ||
     findDangerousUrlParameters(parsedOutbound).length > 0
   ) {
@@ -295,6 +364,7 @@ async function resolveCandidate(rawUrl: string): Promise<ResolvedCandidate | nul
     observedUrl: currentUrl,
     outboundUrl,
     redirectChain,
+    resolutionStatus: "resolved",
   };
 }
 
@@ -731,10 +801,20 @@ async function establishCollection(
       normalizedUrl: candidate.identity.normalizedUrl,
       observedAt: now,
       redirectChain: candidate.redirectChain,
+      resolutionStatus: candidate.resolutionStatus,
       resolvedUrl: candidate.observedUrl,
       safeSelectedUrl: candidate.observedUrl,
       sourceAdapter: candidate.identity.adapter,
     });
+    if (
+      candidate.resolutionStatus === "pending" &&
+      contentResult.content.enrichmentStatus === "pending"
+    ) {
+      await tx
+        .update(contents)
+        .set({ enrichmentStatus: "partial", updatedAt: now })
+        .where(eq(contents.id, contentResult.content.id));
+    }
     await tx
       .insert(jobs)
       .values({

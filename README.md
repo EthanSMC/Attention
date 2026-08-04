@@ -92,6 +92,8 @@ claude mcp add --transport http --scope user attention http://127.0.0.1:3000/mcp
 
 公开 Skill 位于 `/skills/attention/SKILL.md`，不会嵌入 token。`/mcp` 与 `/api/sync` 只接受 OAuth/PAT Bearer credential；网站 Cookie 不能冒充 Agent credential。OAuth 客户端必须按 RFC 8707 在授权请求和 token 请求（包括刷新）中发送同一个 `resource`：MCP 使用 `ATTENTION_MCP_PUBLIC_URL`（默认 `${NEXT_PUBLIC_APP_URL}/mcp`），同步使用 `ATTENTION_SYNC_PUBLIC_URL`（默认 `${NEXT_PUBLIC_APP_URL}/api/sync`）。两个 resource 的 token 不能交叉使用。首次本地历史同步必须标记 `historical=true`，服务端会强制作为私密收藏导入。
 
+公开 Tool Contract 当前为 `1.0.0`：包含收藏、候选选择、处理状态、个人列表、可见性修改、公开流和 Member 搜索 7 个工具。收藏调用必须提供由客户端生成并在重试间复用的 `idempotency_key`；一次性候选选择明确标记为非幂等。工具调用审计只记录受限的版本、耗时、稳定状态和 HMAC 工作流指纹，不记录 URL、query、分享文本、正文、token 或一次性凭证。
+
 生产构建会把 Worker 及其工作区依赖打包为单一 Node.js 产物，运行时不依赖 `tsx`：
 
 ```bash

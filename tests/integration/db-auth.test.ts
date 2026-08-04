@@ -23,6 +23,12 @@ import {
 } from "../../apps/web/src/server/collection-service";
 import type { CollectionServiceError } from "../../apps/web/src/server/collection-service";
 import {
+  getCollectionStatus,
+  updateCollectionVisibility,
+} from "../../apps/web/src/server/collection-status-service";
+import type { CollectionStatusServiceError } from "../../apps/web/src/server/collection-status-service";
+import { recordAttentionToolAuditBestEffort } from "../../apps/web/src/server/attention-tool-audit";
+import {
   findOwnedOutboundUrl,
   findPublicOutboundUrl,
   isPublicContentInsidePreview,
@@ -120,6 +126,7 @@ import {
   digestEmailDeliveryItems,
   entitlements,
   eq,
+  eventLedger,
   filterProfiles,
   filterAnnualCodes,
   growthBillingEvents,
@@ -882,6 +889,332 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
         raw_input: "https://example.org/a-different-article"
       })
     ).rejects.toMatchObject({ code: "idempotency_payload_mismatch", httpStatus: 409 });
+  });
+
+  it("queries collection processing status only within the owning account", async () => {
+    const { redeemed } = await createRedeemedAccount("filter", "status-owner");
+    const owner = await principalFor(redeemed);
+    const otherAccount = await createRedeemedAccount("member", "status-other");
+    const other = await principalFor(otherAccount.redeemed);
+    const collected = await collectFromWeb(handle.db, owner, {
+      idempotency_key: "status-owner-collection",
+      raw_input: "https://example.org/status-owner",
+      visibility: "public",
+    });
+    if (
+      collected.status !== "accepted" &&
+      collected.status !== "already_collected" &&
+      collected.status !== "merged_with_existing_content"
+    ) {
+      throw new Error("Expected an established collection");
+    }
+
+    await expect(
+      getCollectionStatus(handle.db, owner, {
+        attempt_id: collected.attempt_id,
+      }),
+    ).resolves.toMatchObject({
+      attempt: {
+        attempt_id: collected.attempt_id,
+        next_action: "none",
+        status: "accepted",
+      },
+      collection: {
+        collection_id: collected.collection_id,
+        collection_status: "active",
+        effectively_public: true,
+        visibility: "public",
+      },
+      content: {
+        content_id: collected.content_id,
+        enrichment_status: "pending",
+        summary_status: "pending",
+      },
+    });
+
+    await handle.db
+      .update(contents)
+      .set({ enrichmentStatus: "partial", summaryStatus: "unavailable" })
+      .where(eq(contents.id, collected.content_id));
+    await expect(
+      getCollectionStatus(handle.db, owner, {
+        collection_id: collected.collection_id,
+      }),
+    ).resolves.toMatchObject({
+      attempt: null,
+      collection: { effectively_public: true },
+      content: {
+        enrichment_status: "partial",
+        summary_status: "unavailable",
+      },
+    });
+
+    await expect(
+      getCollectionStatus(handle.db, other, {
+        attempt_id: collected.attempt_id,
+      }),
+    ).rejects.toMatchObject<Partial<CollectionStatusServiceError>>({
+      code: "attempt_not_found",
+      httpStatus: 404,
+    });
+    await expect(
+      getCollectionStatus(handle.db, other, {
+        collection_id: collected.collection_id,
+      }),
+    ).rejects.toMatchObject<Partial<CollectionStatusServiceError>>({
+      code: "collection_not_found",
+      httpStatus: 404,
+    });
+  });
+
+  it("updates visibility idempotently and maps repository permissions to stable errors", async () => {
+    const { redeemed } = await createRedeemedAccount("filter", "status-update");
+    const filter = await principalFor(redeemed);
+    const collected = await collectFromWeb(handle.db, filter, {
+      idempotency_key: "status-update-private",
+      raw_input: "https://example.org/status-update",
+      visibility: "private",
+    });
+    if (
+      collected.status !== "accepted" &&
+      collected.status !== "already_collected" &&
+      collected.status !== "merged_with_existing_content"
+    ) {
+      throw new Error("Expected an established collection");
+    }
+
+    const first = await updateCollectionVisibility(handle.db, filter, {
+      collection_id: collected.collection_id,
+      visibility: "public",
+    });
+    expect(first).toMatchObject({
+      collection_id: collected.collection_id,
+      effectively_public: true,
+      visibility: "public",
+    });
+    const eventsAfterFirst = await handle.db
+      .select()
+      .from(collectionEvents)
+      .where(eq(collectionEvents.collectionId, collected.collection_id));
+    const [contentAfterFirst] = await handle.db
+      .select({ visibilityVersion: contents.visibilityVersion })
+      .from(contents)
+      .where(eq(contents.id, collected.content_id));
+
+    const replay = await updateCollectionVisibility(handle.db, filter, {
+      collection_id: collected.collection_id,
+      visibility: "public",
+    });
+    expect(replay).toEqual(first);
+    const eventsAfterReplay = await handle.db
+      .select()
+      .from(collectionEvents)
+      .where(eq(collectionEvents.collectionId, collected.collection_id));
+    const [contentAfterReplay] = await handle.db
+      .select({ visibilityVersion: contents.visibilityVersion })
+      .from(contents)
+      .where(eq(contents.id, collected.content_id));
+    expect(eventsAfterReplay).toHaveLength(eventsAfterFirst.length);
+    expect(contentAfterReplay?.visibilityVersion).toBe(
+      contentAfterFirst?.visibilityVersion,
+    );
+
+    const memberAccount = await createRedeemedAccount("member", "status-member");
+    const member = await principalFor(memberAccount.redeemed);
+    const memberCollection = await collectFromWeb(handle.db, member, {
+      idempotency_key: "status-member-private",
+      raw_input: "https://example.org/status-member",
+      visibility: "private",
+    });
+    if (
+      memberCollection.status !== "accepted" &&
+      memberCollection.status !== "already_collected" &&
+      memberCollection.status !== "merged_with_existing_content"
+    ) {
+      throw new Error("Expected an established member collection");
+    }
+    await expect(
+      updateCollectionVisibility(handle.db, member, {
+        collection_id: memberCollection.collection_id,
+        visibility: "public",
+      }),
+    ).rejects.toMatchObject<Partial<CollectionStatusServiceError>>({
+      code: "filter_required",
+      httpStatus: 403,
+    });
+
+    await updateCollectionVisibility(handle.db, filter, {
+      collection_id: collected.collection_id,
+      visibility: "private",
+    });
+    await handle.db
+      .update(filterProfiles)
+      .set({ active: false, revokedAt: new Date() })
+      .where(eq(filterProfiles.accountId, filter.accountId));
+    await expect(
+      updateCollectionVisibility(handle.db, filter, {
+        collection_id: collected.collection_id,
+        visibility: "public",
+      }),
+    ).rejects.toMatchObject<Partial<CollectionStatusServiceError>>({
+      code: "filter_required",
+      httpStatus: 403,
+    });
+
+    await deleteCollection(handle.db, {
+      accountId: filter.accountId,
+      collectionId: collected.collection_id,
+    });
+    await expect(
+      updateCollectionVisibility(handle.db, filter, {
+        collection_id: collected.collection_id,
+        visibility: "private",
+      }),
+    ).rejects.toMatchObject<Partial<CollectionStatusServiceError>>({
+      code: "collection_deleted",
+      httpStatus: 409,
+    });
+  });
+
+  it("allows only owner-scoped tool audit envelopes through the Web runtime", async () => {
+    const first = await createRedeemedAccount("member", "audit-owner");
+    const second = await createRedeemedAccount("member", "audit-other");
+    const runtimeHandle = createDatabase(databaseUrl!, { maxConnections: 1 });
+    try {
+      await runtimeHandle.sql.unsafe("SET ROLE attention_web_runtime");
+      await recordAttentionToolAuditBestEffort(runtimeHandle.db, {
+        accountId: first.redeemed.accountId,
+        clientId: "attention-test-client",
+        contractVersion: "1.0.0",
+        credentialId: "00000000-0000-4000-8000-000000000010",
+        credentialKind: "oauth",
+        durationMs: 12,
+        entrypoint: "hosted_mcp",
+        outcome: "success",
+        reportedSkillId: "attention",
+        reportedSkillVersion: "1.0.0",
+        reportedWorkflowId: "audit-workflow-1",
+        requestId: "00000000-0000-4000-8000-000000000011",
+        resultStatus: "accepted",
+        toolName: "attention_collect_content",
+      });
+
+      await expect(
+        runtimeHandle.db.transaction(async (tx) => {
+          await tx.execute(
+            sql`select set_config('app.account_id', ${first.redeemed.accountId}, true)`,
+          );
+          await tx.insert(eventLedger).values({
+            accountId: second.redeemed.accountId,
+            eventType: "agent.tool_call.v1",
+            metadata: {},
+            requestId: "cross-account-audit",
+            scope: "private",
+          });
+        }),
+      ).rejects.toThrow();
+      await expect(
+        runtimeHandle.db.transaction(async (tx) => {
+          await tx.execute(
+            sql`select set_config('app.account_id', ${first.redeemed.accountId}, true)`,
+          );
+          await tx.insert(eventLedger).values({
+            accountId: first.redeemed.accountId,
+            eventType: "forged.event",
+            metadata: {},
+            requestId: "wrong-event-audit",
+            scope: "private",
+          });
+        }),
+      ).rejects.toThrow();
+    } finally {
+      await runtimeHandle.sql.unsafe("RESET ROLE").catch(() => undefined);
+      await runtimeHandle.close();
+    }
+
+    await expect(
+      handle.db
+        .select({ accountId: eventLedger.accountId })
+        .from(eventLedger),
+    ).resolves.toEqual([{ accountId: first.redeemed.accountId }]);
+  });
+
+  it("collects a safe direct link when Fetcher is temporarily unavailable without degrading short or unsafe links", async () => {
+    const { redeemed } = await createRedeemedAccount("member", "fetch-fallback");
+    const principal = await principalFor(redeemed);
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new TypeError("temporary fetcher outage");
+    }));
+
+    const direct = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "fetch-fallback-direct",
+      raw_input: "https://mp.weixin.qq.com/s/fixtureArticle123",
+      visibility: "private",
+    });
+    expect(direct).toMatchObject({
+      current_visibility: "private",
+      status: "accepted",
+    });
+    if (
+      direct.status !== "accepted" &&
+      direct.status !== "already_collected" &&
+      direct.status !== "merged_with_existing_content"
+    ) {
+      throw new Error("Expected direct fallback collection");
+    }
+    const [fallbackLink] = await handle.db
+      .select({ resolutionStatus: contentLinks.resolutionStatus })
+      .from(contentLinks)
+      .where(eq(contentLinks.inputAttemptId, direct.attempt_id));
+    const [fallbackContent] = await handle.db
+      .select({ enrichmentStatus: contents.enrichmentStatus })
+      .from(contents)
+      .where(eq(contents.id, direct.content_id));
+    expect(fallbackLink?.resolutionStatus).toBe("pending");
+    expect(fallbackContent?.enrichmentStatus).toBe("partial");
+
+    const genericDirect = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "fetch-fallback-generic-direct",
+      raw_input: "https://example.org/direct-content",
+      visibility: "private",
+    });
+    expect(genericDirect).toMatchObject({ status: "resolution_pending" });
+
+    const shortLink = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "fetch-fallback-shortlink",
+      raw_input: "https://v.douyin.com/example",
+      visibility: "private",
+    });
+    expect(shortLink).toMatchObject({ status: "resolution_pending" });
+
+    const genericShortLink = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "fetch-fallback-generic-shortlink",
+      raw_input: "https://bit.ly/example",
+      visibility: "private",
+    });
+    expect(genericShortLink).toMatchObject({ status: "resolution_pending" });
+
+    const sensitiveQuery = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "fetch-fallback-sensitive-query",
+      raw_input: "https://example.org/private?auth=secret",
+      visibility: "private",
+    });
+    expect(sensitiveQuery).toMatchObject({ status: "unsafe" });
+
+    const unsupportedPort = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "fetch-fallback-unsupported-port",
+      raw_input: "https://example.org:8080/private",
+      visibility: "private",
+    });
+    expect(unsupportedPort).toMatchObject({ status: "unsafe" });
+
+    const unsafe = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "fetch-fallback-unsafe",
+      raw_input: "http://localhost/private",
+      visibility: "private",
+    });
+    expect(unsafe).toMatchObject({ status: "unsafe" });
+    expect(await handle.db.select().from(collections)).toHaveLength(1);
   });
 
   it("keeps the 20-card public preview and outbound gate deterministic for timestamp ties", async () => {

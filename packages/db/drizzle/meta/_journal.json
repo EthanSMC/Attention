@@ -99,6 +99,13 @@
       "when": 1785853245560,
       "tag": "0013_rapid_moderation_join_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1785858842677,
+      "tag": "0014_agent_tool_audit_grant",
+      "breakpoints": true
     }
   ]
 }

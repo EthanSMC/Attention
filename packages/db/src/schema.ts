@@ -1796,9 +1796,15 @@ export const eventLedger = pgTable(
   (table) => [
     uniqueIndex("event_ledger_dedupe_key_unique").on(table.dedupeKey),
     index("event_ledger_content_time_idx").on(table.contentId, table.occurredAt),
-    index("event_ledger_account_time_idx").on(table.accountId, table.occurredAt)
+    index("event_ledger_account_time_idx").on(table.accountId, table.occurredAt),
+    pgPolicy("event_ledger_web_tool_audit_insert", {
+      as: "permissive",
+      for: "insert",
+      to: "attention_web_runtime",
+      withCheck: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid AND ${table.eventType} = 'agent.tool_call.v1' AND ${table.scope} = 'private' AND ${table.contentId} IS NULL AND ${table.anonymousSessionId} IS NULL AND ${table.requestId} IS NOT NULL AND ${table.dedupeKey} IS NULL`
+    })
   ]
-);
+).enableRLS();
 
 export const publicContentsCurrent = pgView("public_contents_current", {
   id: uuid("id").notNull(),

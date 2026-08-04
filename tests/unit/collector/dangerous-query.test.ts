@@ -32,6 +32,28 @@ describe("dangerous query detection", () => {
     ).toBe(true);
   });
 
+  it("matches the Fetcher credential policy for auth and key aliases", () => {
+    expect(
+      findDangerousQueryParameters(
+        "https://example.com/file?auth=private&key=private",
+      ),
+    ).toEqual([
+      { parameter: "auth", reason: "account_credential" },
+      { parameter: "key", reason: "account_credential" },
+    ]);
+  });
+
+  it("retains compound token and session aliases", () => {
+    expect(
+      findDangerousQueryParameters(
+        "https://example.com/file?authToken=private&foo_session_id=private",
+      ),
+    ).toEqual([
+      { parameter: "authtoken", reason: "account_credential" },
+      { parameter: "foo_session_id", reason: "account_credential" },
+    ]);
+  });
+
   it("does not treat ordinary tracking and article identity as credentials", () => {
     expect(
       findDangerousQueryParameters(
