@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { CollectionList } from "../../components/collection-list";
-import { PlusIcon } from "../../components/icons";
 import { PageIntro } from "../../components/page-intro";
 import { loadMyCollections } from "../../server/content-queries";
 import { getWebDatabase } from "../../server/db";
@@ -18,18 +16,12 @@ export const metadata: Metadata = {
 
 export default async function MinePage() {
   const principal = await getPagePrincipal();
-  if (!principal?.isMember) redirect("/collect");
+  if (!principal) redirect("/login?return_to=%2Fmine");
   const collections = await loadMyCollections(getWebDatabase(), principal.accountId);
 
   return (
     <div className="page-shell page-shell--mine">
       <PageIntro
-        aside={
-          <Link className="button button--primary button--compact" href="/collect">
-            <PlusIcon />
-            收藏链接
-          </Link>
-        }
         description={
           <p>
             可见性决定谁能发现这条收藏；AI 状态只说明当前有没有可用摘要，两者互不替代。

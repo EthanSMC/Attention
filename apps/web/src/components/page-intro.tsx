@@ -7,7 +7,7 @@ export function PageIntro({
   aside,
 }: {
   eyebrow: string;
-  title: string;
+  title: ReactNode;
   description: ReactNode;
   aside?: ReactNode;
 }) {

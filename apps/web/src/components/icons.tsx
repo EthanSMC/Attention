@@ -35,6 +35,23 @@ export function CheckIcon(props: IconProps) {
   );
 }
 
+export function ChevronDownIcon(props: IconProps) {
+  return (
+    <svg {...defaults} {...props}>
+      <path d="m7 9.5 5 5 5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
+    </svg>
+  );
+}
+
+export function CompassIcon(props: IconProps) {
+  return (
+    <svg {...defaults} {...props}>
+      <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.7" />
+      <path d="m15.7 8.3-2.1 5.3-5.3 2.1 2.1-5.3 5.3-2.1Z" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.7" />
+    </svg>
+  );
+}
+
 export function EyeIcon(props: IconProps) {
   return (
     <svg {...defaults} {...props}>
@@ -53,6 +70,17 @@ export function GlobeIcon(props: IconProps) {
   );
 }
 
+export function GridIcon(props: IconProps) {
+  return (
+    <svg {...defaults} {...props}>
+      <rect height="7" rx="2" stroke="currentColor" strokeWidth="1.6" width="7" x="3" y="3" />
+      <rect height="7" rx="2" stroke="currentColor" strokeWidth="1.6" width="7" x="14" y="3" />
+      <rect height="7" rx="2" stroke="currentColor" strokeWidth="1.6" width="7" x="3" y="14" />
+      <rect height="7" rx="2" stroke="currentColor" strokeWidth="1.6" width="7" x="14" y="14" />
+    </svg>
+  );
+}
+
 export function LibraryIcon(props: IconProps) {
   return (
     <svg {...defaults} {...props}>
@@ -66,6 +94,17 @@ export function LinkIcon(props: IconProps) {
   return (
     <svg {...defaults} {...props}>
       <path d="m9.5 14.5 5-5M7.2 16.8l-1 .9a3.5 3.5 0 0 1-5-5l3-3a3.5 3.5 0 0 1 5 0M16.8 7.2l1-.9a3.5 3.5 0 0 1 5 5l-3 3a3.5 3.5 0 0 1-5 0" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7" transform="translate(.3)" />
+    </svg>
+  );
+}
+
+export function ListIcon(props: IconProps) {
+  return (
+    <svg {...defaults} {...props}>
+      <path d="M9 6h11M9 12h11M9 18h11" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7" />
+      <circle cx="4.5" cy="6" fill="currentColor" r="1" />
+      <circle cx="4.5" cy="12" fill="currentColor" r="1" />
+      <circle cx="4.5" cy="18" fill="currentColor" r="1" />
     </svg>
   );
 }
@@ -92,6 +131,15 @@ export function SearchIcon(props: IconProps) {
     <svg {...defaults} {...props}>
       <circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" strokeWidth="1.7" />
       <path d="m15.5 15.5 4 4" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7" />
+    </svg>
+  );
+}
+
+export function UserIcon(props: IconProps) {
+  return (
+    <svg {...defaults} {...props}>
+      <circle cx="12" cy="8" r="3.5" stroke="currentColor" strokeWidth="1.7" />
+      <path d="M5.5 20c.5-4 2.7-6 6.5-6s6 2 6.5 6" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7" />
     </svg>
   );
 }

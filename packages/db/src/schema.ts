@@ -30,10 +30,54 @@ export const accountStatusEnum = pgEnum("account_status", [
   "suspended",
   "deleted"
 ]);
+export const signupSourceEnum = pgEnum("signup_source", ["direct", "consumer_referral"]);
 export const entitlementSourceEnum = pgEnum("entitlement_source", [
   "invite",
   "admin_grant",
   "filter_grant"
+]);
+export const membershipGrantKindEnum = pgEnum("membership_grant_kind", [
+  "filter_grant",
+  "direct_trial",
+  "consumer_invitee_quarter",
+  "consumer_inviter_quarter",
+  "filter_annual_redemption",
+  "admin_grant"
+]);
+export const membershipGrantStatusEnum = pgEnum("membership_grant_status", [
+  "scheduled",
+  "active",
+  "revoked",
+  "expired"
+]);
+export const subscriptionStatusEnum = pgEnum("subscription_status", [
+  "trialing",
+  "active",
+  "past_due",
+  "cancelled",
+  "expired"
+]);
+export const oauthCredentialStatusEnum = pgEnum("oauth_credential_status", [
+  "active",
+  "revoked"
+]);
+export const apiCredentialStatusEnum = pgEnum("api_credential_status", [
+  "active",
+  "revoked"
+]);
+export const channelProviderEnum = pgEnum("channel_provider", [
+  "wechat",
+  "wecom",
+  "douyin",
+  "xiaohongshu"
+]);
+export const bindIntentStatusEnum = pgEnum("bind_intent_status", [
+  "pending",
+  "confirmed",
+  "consumed",
+  "expired",
+  "cancelled",
+  "conflict"
 ]);
 export const invitationKindEnum = pgEnum("invitation_kind", ["member", "filter"]);
 export const inputChannelEnum = pgEnum("input_channel", ["web", "wechat"]);
@@ -95,12 +139,25 @@ export const accounts = pgTable(
   "accounts",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    primaryEmail: varchar("primary_email", { length: 320 }),
+    emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
+    passwordHash: text("password_hash"),
     stableHandle: varchar("stable_handle", { length: 64 }).notNull(),
-    status: accountStatusEnum("status").default("invited").notNull(),
+    displayName: varchar("display_name", { length: 100 }).default("用户").notNull(),
+    signupSource: signupSourceEnum("signup_source").default("direct").notNull(),
+    termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
+    termsVersion: varchar("terms_version", { length: 32 }),
+    privacyVersion: varchar("privacy_version", { length: 32 }),
+    status: accountStatusEnum("status").default("active").notNull(),
     ...timestampColumns()
   },
   (table) => [
+    uniqueIndex("accounts_primary_email_unique").on(table.primaryEmail),
     uniqueIndex("accounts_stable_handle_unique").on(table.stableHandle),
+    check(
+      "accounts_email_verification_shape",
+      sql`${table.primaryEmail} IS NULL OR ${table.emailVerifiedAt} IS NOT NULL`
+    ),
     check("accounts_stable_handle_not_blank", sql`btrim(${table.stableHandle}) <> ''`)
   ]
 );
@@ -197,6 +254,321 @@ export const sessions = pgTable(
     index("sessions_account_active_idx").on(table.accountId, table.expiresAt),
     check("sessions_expire_after_creation", sql`${table.expiresAt} > ${table.createdAt}`),
     check("sessions_revoked_after_creation", sql`${table.revokedAt} IS NULL OR ${table.revokedAt} >= ${table.createdAt}`)
+  ]
+);
+
+export const loginChallenges = pgTable(
+  "login_challenges",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    email: varchar("email", { length: 320 }).notNull(),
+    codeHash: char("code_hash", { length: 64 }).notNull(),
+    requesterFingerprint: char("requester_fingerprint", { length: 64 }),
+    returnTo: text("return_to").default("/ai").notNull(),
+    failedAttempts: smallint("failed_attempts").default(0).notNull(),
+    maxAttempts: smallint("max_attempts").default(5).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    index("login_challenges_email_created_idx").on(table.email, table.createdAt),
+    index("login_challenges_fingerprint_created_idx").on(
+      table.requesterFingerprint,
+      table.createdAt
+    ),
+    check(
+      "login_challenges_attempts_range",
+      sql`${table.failedAttempts} >= 0 AND ${table.failedAttempts} <= ${table.maxAttempts}`
+    ),
+    check("login_challenges_max_attempts_positive", sql`${table.maxAttempts} > 0`),
+    check("login_challenges_expire_after_creation", sql`${table.expiresAt} > ${table.createdAt}`)
+  ]
+);
+
+export const passwordLoginAttempts = pgTable(
+  "password_login_attempts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    email: varchar("email", { length: 320 }).notNull(),
+    requesterFingerprint: char("requester_fingerprint", { length: 64 }),
+    success: boolean("success").default(false).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    index("password_login_attempts_email_created_idx").on(table.email, table.createdAt),
+    index("password_login_attempts_fingerprint_created_idx").on(
+      table.requesterFingerprint,
+      table.createdAt
+    )
+  ]
+);
+
+export const membershipGrants = pgTable(
+  "membership_grants",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    kind: membershipGrantKindEnum("kind").notNull(),
+    sourceId: varchar("source_id", { length: 255 }).notNull(),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+    status: membershipGrantStatusEnum("status").default("scheduled").notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revocationReason: varchar("revocation_reason", { length: 255 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    uniqueIndex("membership_grants_kind_source_unique").on(table.kind, table.sourceId),
+    index("membership_grants_account_window_idx").on(
+      table.accountId,
+      table.status,
+      table.startsAt,
+      table.endsAt
+    ),
+    check("membership_grants_valid_window", sql`${table.endsAt} > ${table.startsAt}`),
+    check(
+      "membership_grants_revocation_shape",
+      sql`(${table.status} = 'revoked' AND ${table.revokedAt} IS NOT NULL) OR (${table.status} <> 'revoked')`
+    )
+  ]
+);
+
+export const subscriptions = pgTable(
+  "subscriptions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    provider: varchar("provider", { length: 64 }).notNull(),
+    providerCustomerId: varchar("provider_customer_id", { length: 255 }),
+    providerSubscriptionId: varchar("provider_subscription_id", { length: 255 }),
+    status: subscriptionStatusEnum("status").notNull(),
+    introEligible: boolean("intro_eligible").default(true).notNull(),
+    firstChargeAt: timestamp("first_charge_at", { withTimezone: true }),
+    currentPeriodStart: timestamp("current_period_start", { withTimezone: true }).notNull(),
+    currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }).notNull(),
+    cancelAtPeriodEnd: boolean("cancel_at_period_end").default(false).notNull(),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    ...timestampColumns()
+  },
+  (table) => [
+    uniqueIndex("subscriptions_provider_subscription_unique").on(
+      table.provider,
+      table.providerSubscriptionId
+    ),
+    index("subscriptions_account_status_idx").on(table.accountId, table.status),
+    check(
+      "subscriptions_valid_period",
+      sql`${table.currentPeriodEnd} > ${table.currentPeriodStart}`
+    )
+  ]
+);
+
+export const oauthClients = pgTable(
+  "oauth_clients",
+  {
+    clientId: varchar("client_id", { length: 128 }).primaryKey(),
+    name: varchar("name", { length: 100 }).notNull(),
+    redirectUris: jsonb("redirect_uris").$type<string[]>().notNull(),
+    allowedScopes: jsonb("allowed_scopes").$type<string[]>().notNull(),
+    firstParty: boolean("first_party").default(false).notNull(),
+    active: boolean("active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [check("oauth_clients_name_not_blank", sql`btrim(${table.name}) <> ''`)]
+);
+
+export const oauthAuthorizationCodes = pgTable(
+  "oauth_authorization_codes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    codeHash: char("code_hash", { length: 64 }).notNull(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    clientId: varchar("client_id", { length: 128 })
+      .notNull()
+      .references(() => oauthClients.clientId, { onDelete: "cascade" }),
+    redirectUri: text("redirect_uri").notNull(),
+    scopes: jsonb("scopes").$type<string[]>().notNull(),
+    audience: varchar("audience", { length: 128 }).notNull(),
+    codeChallenge: varchar("code_challenge", { length: 128 }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    uniqueIndex("oauth_authorization_codes_hash_unique").on(table.codeHash),
+    index("oauth_authorization_codes_account_idx").on(table.accountId, table.createdAt),
+    check(
+      "oauth_authorization_codes_expire_after_creation",
+      sql`${table.expiresAt} > ${table.createdAt}`
+    )
+  ]
+);
+
+export const oauthAccessTokens = pgTable(
+  "oauth_access_tokens",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tokenHash: char("token_hash", { length: 64 }).notNull(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    clientId: varchar("client_id", { length: 128 })
+      .notNull()
+      .references(() => oauthClients.clientId, { onDelete: "cascade" }),
+    scopes: jsonb("scopes").$type<string[]>().notNull(),
+    audience: varchar("audience", { length: 128 }).notNull(),
+    status: oauthCredentialStatusEnum("status").default("active").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    uniqueIndex("oauth_access_tokens_hash_unique").on(table.tokenHash),
+    index("oauth_access_tokens_account_idx").on(table.accountId, table.status, table.expiresAt),
+    check("oauth_access_tokens_expire_after_creation", sql`${table.expiresAt} > ${table.createdAt}`)
+  ]
+);
+
+export const oauthRefreshTokens = pgTable(
+  "oauth_refresh_tokens",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tokenHash: char("token_hash", { length: 64 }).notNull(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    clientId: varchar("client_id", { length: 128 })
+      .notNull()
+      .references(() => oauthClients.clientId, { onDelete: "cascade" }),
+    scopes: jsonb("scopes").$type<string[]>().notNull(),
+    audience: varchar("audience", { length: 128 }).notNull(),
+    status: oauthCredentialStatusEnum("status").default("active").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    uniqueIndex("oauth_refresh_tokens_hash_unique").on(table.tokenHash),
+    index("oauth_refresh_tokens_account_idx").on(table.accountId, table.status, table.expiresAt),
+    check("oauth_refresh_tokens_expire_after_creation", sql`${table.expiresAt} > ${table.createdAt}`)
+  ]
+);
+
+export const apiCredentials = pgTable(
+  "api_credentials",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 100 }).notNull(),
+    keyPrefix: varchar("key_prefix", { length: 24 }).notNull(),
+    keyHash: char("key_hash", { length: 64 }).notNull(),
+    keyVersion: smallint("key_version").default(1).notNull(),
+    scopes: jsonb("scopes").$type<string[]>().notNull(),
+    clientId: varchar("client_id", { length: 128 }),
+    status: apiCredentialStatusEnum("status").default("active").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    uniqueIndex("api_credentials_key_hash_unique").on(table.keyHash),
+    index("api_credentials_account_status_idx").on(table.accountId, table.status),
+    check("api_credentials_name_not_blank", sql`btrim(${table.name}) <> ''`)
+  ]
+);
+
+export const channelIdentities = pgTable(
+  "channel_identities",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    provider: channelProviderEnum("provider").notNull(),
+    appId: varchar("app_id", { length: 128 }).notNull(),
+    subjectIdHash: char("subject_id_hash", { length: 64 }).notNull(),
+    unionSubjectIdHash: char("union_subject_id_hash", { length: 64 }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    boundAt: timestamp("bound_at", { withTimezone: true }).defaultNow().notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    uniqueIndex("channel_identities_provider_subject_unique").on(
+      table.provider,
+      table.appId,
+      table.subjectIdHash
+    ),
+    index("channel_identities_account_idx").on(table.accountId, table.revokedAt)
+  ]
+);
+
+export const channelPendingRequests = pgTable(
+  "channel_pending_requests",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    provider: channelProviderEnum("provider").notNull(),
+    appId: varchar("app_id", { length: 128 }).notNull(),
+    subjectIdHash: char("subject_id_hash", { length: 64 }).notNull(),
+    channelMessageId: varchar("channel_message_id", { length: 255 }).notNull(),
+    encryptedPayload: text("encrypted_payload").notNull(),
+    encryptedResult: text("encrypted_result"),
+    processingErrorCode: varchar("processing_error_code", { length: 100 }),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    uniqueIndex("channel_pending_requests_message_unique").on(
+      table.provider,
+      table.appId,
+      table.channelMessageId
+    ),
+    index("channel_pending_requests_expiry_idx").on(table.expiresAt),
+    check(
+      "channel_pending_requests_expire_after_creation",
+      sql`${table.expiresAt} > ${table.createdAt}`
+    )
+  ]
+);
+
+export const bindIntents = pgTable(
+  "bind_intents",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tokenHash: char("token_hash", { length: 64 }).notNull(),
+    provider: channelProviderEnum("provider").notNull(),
+    appId: varchar("app_id", { length: 128 }).notNull(),
+    subjectIdHash: char("subject_id_hash", { length: 64 }).notNull(),
+    pendingRequestId: uuid("pending_request_id").references(() => channelPendingRequests.id, {
+      onDelete: "set null"
+    }),
+    status: bindIntentStatusEnum("status").default("pending").notNull(),
+    confirmedAccountId: uuid("confirmed_account_id").references(() => accounts.id, {
+      onDelete: "set null"
+    }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    uniqueIndex("bind_intents_token_hash_unique").on(table.tokenHash),
+    index("bind_intents_pending_request_idx").on(table.pendingRequestId),
+    check("bind_intents_expire_after_creation", sql`${table.expiresAt} > ${table.createdAt}`)
   ]
 );
 

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { CollectForm } from "../../components/collect-form";
 import { PageIntro } from "../../components/page-intro";
@@ -26,16 +27,17 @@ export default async function CollectPage() {
         eyebrow="收藏入口 / Web"
         title="把值得保留的链接交给 AI"
       />
-      {principal?.isMember ? (
+      {principal ? (
         <CollectForm
           allowPublic={principal.isFilter}
           initialVisibility={principal.isFilter ? "public" : "private"}
         />
       ) : (
         <section className="receipt receipt--neutral">
-          <p className="receipt__eyebrow">邀请制试运行</p>
-          <h2>请先打开你的 Attention 邀请链接</h2>
-          <p>邀请链接会自动完成登录，然后把你带回这个 Web 收藏入口。</p>
+          <p className="receipt__eyebrow">需要 Attention 账号</p>
+          <h2>登录后才能收藏</h2>
+          <p>登录前不会接收或暂存你要收藏的链接。</p>
+          <Link className="button button--primary" href="/login?return_to=%2Fcollect">登录后收藏</Link>
         </section>
       )}
     </div>

@@ -80,7 +80,7 @@ function invitePage(
   options: { confirmationToken?: string; status?: number } = {},
 ): NextResponse {
   const action = options.confirmationToken
-    ? `<form method="post"><input name="confirmation_token" type="hidden" value="${options.confirmationToken}"><button type="submit">接受邀请并继续</button></form>`
+    ? `<form method="post"><input name="confirmation_token" type="hidden" value="${options.confirmationToken}"><button type="submit">确认身份并登录</button></form>`
     : '<a href="/">返回 Attention</a>';
   const html = `<!doctype html>
 <html lang="zh-CN">
@@ -140,10 +140,10 @@ export async function GET(
     const invitation = await inspectInvitation(getWebDatabase(), token);
     const confirmationToken = newConfirmationToken();
     const response = invitePage(
-      "加入 Attention",
+      "首次登录 Attention",
       invitation.kind === "filter"
-        ? `你将以 @${invitation.stableHandle} 的身份成为 Filter。确认后才会启用账号，这个页面本身不会消耗邀请。`
-        : `你将以 @${invitation.stableHandle} 的身份加入。确认后才会启用账号，这个页面本身不会消耗邀请。`,
+        ? `你的稳定网名是 @${invitation.stableHandle}。确认后将以 Filter 身份登录，这台设备会保持登录 30 天。`
+        : `你的稳定网名是 @${invitation.stableHandle}。确认后将登录 Attention，这台设备会保持登录 30 天。`,
       { confirmationToken },
     );
     setConfirmationCookie(response, confirmationToken);

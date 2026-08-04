@@ -57,6 +57,7 @@ import { FetcherClientError, resolveExternalUrl } from "./fetcher-client";
 const parserVersion = "web-v1";
 const selectionTtlMilliseconds = 24 * 60 * 60 * 1_000;
 const attemptLeaseMilliseconds = 5 * 60 * 1_000;
+type CollectionPrincipal = Pick<SessionPrincipal, "accountId" | "isFilter">;
 
 export const collectRequestSchema = z
   .object({
@@ -307,7 +308,7 @@ function attemptWritePredicate(attempt: InputAttempt) {
 
 async function beginAttempt(
   db: AttentionDatabase,
-  principal: SessionPrincipal,
+  principal: CollectionPrincipal,
   input: CollectRequest,
 ): Promise<{ attempt: InputAttempt; fresh: boolean }> {
   const now = new Date();
@@ -394,7 +395,7 @@ function baseResponse(attempt: InputAttempt) {
 
 async function establishedResponse(
   db: AttentionDatabase,
-  principal: SessionPrincipal,
+  principal: CollectionPrincipal,
   attempt: InputAttempt,
 ): Promise<CollectorResponse> {
   if (!attempt.resultContentId || !attempt.resultCollectionId) {
@@ -615,7 +616,7 @@ async function replayAmbiguousResponse(
 
 async function replayAttempt(
   db: AttentionDatabase,
-  principal: SessionPrincipal,
+  principal: CollectionPrincipal,
   attempt: InputAttempt,
 ): Promise<CollectorResponse> {
   if (
@@ -647,7 +648,7 @@ async function replayAttempt(
 
 async function establishCollection(
   db: AttentionDatabase,
-  principal: SessionPrincipal,
+  principal: CollectionPrincipal,
   attempt: InputAttempt,
   candidate: ResolvedCandidate,
   visibility: "public" | "private",
@@ -777,12 +778,9 @@ async function establishCollection(
 }
 
 function ensurePrincipal(
-  principal: SessionPrincipal,
+  principal: CollectionPrincipal,
   visibility: "public" | "private",
 ): void {
-  if (!principal.isMember) {
-    throw new CollectionServiceError("member_required", 403);
-  }
   if (visibility === "public" && !principal.isFilter) {
     throw new CollectionServiceError("filter_required", 403);
   }
@@ -790,7 +788,7 @@ function ensurePrincipal(
 
 export async function collectFromWeb(
   db: AttentionDatabase,
-  principal: SessionPrincipal,
+  principal: CollectionPrincipal,
   rawInput: unknown,
 ): Promise<CollectorResponse> {
   const input = collectRequestSchema.parse(rawInput);
@@ -853,7 +851,7 @@ export async function collectFromWeb(
 
 export async function selectCandidateFromWeb(
   db: AttentionDatabase,
-  principal: SessionPrincipal,
+  principal: CollectionPrincipal,
   rawInput: unknown,
 ): Promise<CollectorResponse> {
   const input = selectCandidateRequestSchema.parse(rawInput);

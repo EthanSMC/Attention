@@ -1,10 +1,12 @@
 # Attention V1 产品设计
 
-状态：已确认；Web 入口先行，微信入口后续接入
+状态：收藏与内容部分已确认；身份、会员、MCP 鉴权、Channel 绑定与增长部分已被 2026-08-04 设计取代
 
 日期：2026-07-31
 
 首个交付切片：多来源收藏工具
+
+> 2026-08-04 更新：账号注册登录、Guest/Free/Member 权限、公开流预览限制、Local/Cloud、OAuth、Hosted MCP、Channel、订阅体验与裂变机制，现以 [`2026-08-04-attention-identity-membership-growth-design.md`](./2026-08-04-attention-identity-membership-growth-design.md) 为准。本文件中与其冲突的角色表、游客访问范围、API Key-only 接入和“支付不在 V1”描述仅保留为首个收藏切片的历史上下文。
 
 ## 1. 一句话定义
 
@@ -88,6 +90,8 @@ Domain 是相互独立的信息圈。V1 只存在 `AI` Domain。未来金融 Dom
 
 ## 5. 角色与权限
 
+> 本节的旧角色表和支付边界已废弃。当前 Guest/Free/Member/Filter 能力矩阵见 [`2026-08-04-attention-identity-membership-growth-design.md`](./2026-08-04-attention-identity-membership-growth-design.md#33-能力矩阵)。
+
 角色能力不是一个互斥枚举，而是三个独立维度：
 
 - 账号身份。
@@ -135,9 +139,10 @@ Web 是首个实际交付入口。抖音、小红书、公众号和普通网页�
 
 同一个入口按已绑定账号能力决定行为：
 
-- 已绑定 Filter：默认公开收藏，并返回“改为私密”入口。
-- 已绑定普通会员：保存为私人收藏。
-- 未绑定用户：不保存，返回账号绑定链接。
+- 已绑定 Filter：通过 Channel 权益检查，默认公开收藏，并返回“改为私密”入口。
+- 已绑定 Member：通过 Channel 权益检查，保存为私人收藏。
+- 已绑定 Free：不执行 Channel 收藏，返回会员展示与升级入口，并短期保留 pending request。
+- 未绑定用户：不保存，返回账号绑定链接；登录、开通 Member 并确认绑定后可在有效期内继续 pending request。
 
 ### 6.3 默认公开的安全例外
 
@@ -169,6 +174,8 @@ Web 是首个实际交付入口。抖音、小红书、公众号和普通网页�
 系统对平台文案只做 URL 提取，不把“复制后打开 App”等模板文字当成内容摘要或用户评价。
 
 ## 8. 多来源采集架构
+
+本节描述的候选提取、来源识别和安全解析属于 Attention Agent 的链接解析能力。网页和微信 Channel Adapter 只产生统一 `InputEnvelope`；Agent 根据意图调用这些内部能力及受控 Web/Browser MCP，然后通过 Attention MCP 提交收藏。渠道入口不得分别实现一套解析器。
 
 ### 8.1 Input Envelope
 
@@ -425,6 +432,8 @@ Tag 至少包含：
 
 ## 14. 公开瀑布流与卡片
 
+> 本节的卡片内容设计仍有效；游客访问范围已更新为“每个 Domain 当前公开流前 `N` 张”，详见 [`2026-08-04 设计`](./2026-08-04-attention-identity-membership-growth-design.md#21-产品即展示页)。
+
 `/ai` 是 V1 唯一 Domain 页面，按第 11 节的公开时间倒序展示，不做推荐权重。
 
 卡片展示：
@@ -447,7 +456,7 @@ Tag 至少包含：
 - 点击标签进入会员筛选结果。
 - V1 不建立 Content 详情页。
 
-游客可浏览瀑布流和打开原文；搜索、筛选、收藏、Email 和 MCP 需要会员能力。
+当前权限以 2026-08-04 设计为准：Guest 与 Free 只能浏览每个 Domain 当前公开流前 `N` 张；Free 可以不限量私密收藏、云同步和使用基础 Hosted MCP；Member 解锁完整公开流、托管搜索/筛选/订阅、Email 与高级 MCP。
 
 ## 15. 每日 Email
 
@@ -460,30 +469,54 @@ Tag 至少包含：
 - 退订立即影响后续发送。
 - 公开收藏随后撤回时，历史 Email 无法召回。
 
-## 16. MCP 与个人知识库
+## 16. Agent、MCP 与个人知识库
 
-V1 MCP 是检索层，不承诺基于原文全文回答。
+> 本节的 Agent/MCP 业务边界仍可作为历史参考；当前接入方式为 OAuth + PKCE 优先、PAT 备用，Free 可使用基础 Hosted MCP，详见 [`2026-08-04 设计`](./2026-08-04-attention-identity-membership-growth-design.md#5-localcloud同步与-mcp)。
 
-### 16.1 接口
+完整架构图和数据流见 [`docs/architecture.md`](../../architecture.md)。V1 MCP 不承诺基于原文全文回答。
 
-`search_public_domain(query, limit)`：
+### 16.1 Channel 与 Agent 边界
 
-- 面向有会员能力的认证账号。
-- 只检索当前公开的 AI Domain Content。
-- 基于标题、摘要、作者、来源、标签、向量和 URL。
-- 每个结果显式返回 `scope: public_domain`。
+网页对话和微信对话只是不同 Channel。Channel Adapter 只负责渠道协议、Attention 账号绑定、消息幂等、统一消息封装和回复格式，不负责理解链接或实现收藏规则。
 
-`search_my_collection(query, limit)`：
+独立的 Attention AI Agent 服务统一负责：
 
-- 只检索当前账号自己的 Collection。
-- 同时包含自己的公开和私密收藏。
-- 每个结果显式返回 `scope: my_collection` 和可见性。
+- 对话上下文。
+- 意图识别和任务规划。
+- 链接、短链和平台分享消息解析。
+- 调用受控 Web/Browser MCP 获取公开元数据。
+- 调用 Attention MCP 完成收藏、搜索、找回、发现和提醒。
 
-两种范围不得静默混合。私密 Collection 在搜索索引、缓存、日志和权限层都必须按账号隔离。
+因此同一用户在网页或微信提出相同请求，应触发相同的 Agent 能力、MCP 工具和业务结果。链接解析发生在消息进入 Channel Adapter 之后，是 Agent 的能力，而不是微信或网页入口的能力。
 
-### 16.2 CLI 与 Skill
+### 16.2 Attention MCP 接口
 
-为会员的 AI 提供 CLI、Skill 和 MCP 配置，引导 Agent 调用上述检索接口。能力重点是“找回我收藏过的某篇内容”和“从公共 AI Domain 找相关来源”，而不是复制原文或代替原站阅读。
+首批工具命名空间：
+
+- `content.collect`：收藏一个链接或 Agent 已解析的内容。
+- `content.search`：搜索公共 Domain 或当前账号的收藏。
+- `content.get`：获取单条内容的元数据、摘要和原文链接。
+- `feed.list`：读取当前账号可访问的 Domain 发现流。
+- `collection.list`：读取当前账号自己的收藏。
+
+公共 Domain 和个人收藏必须显式区分 Scope，不得静默混合。私密 Collection 在搜索索引、缓存、日志和权限层都必须按账号隔离。
+
+AI 检索计数由 MCP Server 在 Content 实际进入有效结果时内部产生。客户端不能调用公开工具主动增加计数。
+
+### 16.3 外部 Agent 与 API Key
+
+Codex、Claude Code 和其他 MCP Client 可使用用户在 Attention 账号中生成的 API Key 调用同一套 MCP 工具。
+
+- 一个账号可创建多个命名 Key。
+- 原始 Key 只展示一次，服务端只保存哈希、前缀、名称和权限。
+- Key 支持独立吊销、轮换、Scope 与限流。
+- MCP 鉴权层从 Key 推导账号；客户端不能提交或覆盖任意 `account_id`。
+- 记录 Key ID、客户端、工具、时间、请求 ID 和结果状态，但默认不长期保存原始 query 或外部 Agent 对话。
+- 客户端重试按账号、客户端和请求 ID 幂等，不重复收藏或增加 AI 检索计数。
+
+### 16.4 CLI 与 Skill
+
+为会员的 AI 提供 CLI、Skill 和 MCP 配置，引导 Agent 调用上述接口。能力重点是“找回我收藏过的某篇内容”“把当前链接收藏到 Attention”和“从公共 AI Domain 找相关来源”，而不是复制原文或代替原站阅读。
 
 ## 17. 人类与 AI 事件
 
@@ -514,6 +547,8 @@ V1 MCP 是检索层，不承诺基于原文全文回答。
 - 归因顺序不影响卡片内容、排序和当前产品权限。
 
 ## 19. 数据模型
+
+> 本节的 Content/Collection 模型仍有效；旧 `Account.wechat_binding`、单一 `Entitlement.member_enabled` 和 API Key-only 模型已废弃。当前身份、grant、subscription、referral、redemption、points、ChannelIdentity 与 OAuth 模型见 [`2026-08-04 设计`](./2026-08-04-attention-identity-membership-growth-design.md#10-建议数据模型)。
 
 ### 19.1 Account
 
@@ -682,6 +717,24 @@ canonical 合并后不删除旧 Content：
 
 每个条目另存 EmailDeliveryItem，包含 account_id、content_id 和签名跳转 token 的摘要。token 不直接暴露可枚举 Content ID；内容撤回后需验证原收件账号，安全阻断或权利人下架后统一失效。
 
+### 19.14 ApiCredential
+
+- id
+- account_id
+- name
+- key_prefix
+- key_hash
+- key_version
+- scopes
+- client_id
+- status：active 或 revoked
+- created_at
+- last_used_at
+- expires_at
+- revoked_at
+
+原始 Key 只在创建时返回一次，不进入数据库、日志、异常追踪或备份。`account_id` 由 MCP 鉴权层从 Key 推导，客户端请求不能覆盖。每个 Key 可独立吊销和轮换，调用通过 `account_id + client_id + request_id` 执行幂等与审计。
+
 ## 20. 隐私、安全与内容治理
 
 - 所有标题、作者、摘要、标签和分享文本都按不可信输入处理并转义，防止 XSS。
@@ -794,12 +847,13 @@ canonical 合并后不删除旧 Content：
 在本设计确认后，按以下顺序规划实现：
 
 1. 账号、会员权益、Filter、Content、ContentLink、Collection 和 InputAttempt 基础模型。
-2. Web 输入、统一 Input Envelope 和“我的收藏”。
-3. URL 候选提取、安全重定向和四个 Source Adapter。
-4. 异步元数据、摘要、标签与失败降级。
-5. AI 瀑布流和原文跳转计数，完成 Web 收藏纵向切片。
-6. 微信官方入口、账号绑定、幂等与回执。
-7. Email。
-8. 公共/个人 MCP、CLI 与 Skill。
+2. Attention MCP 的账号上下文、核心工具契约和内部鉴权边界。
+3. 独立 Attention Agent、统一 Message Envelope、链接解析能力和受控 Web/Browser MCP。
+4. Web 对话 Adapter、Web 收藏界面和“我的收藏”。
+5. 异步元数据、摘要、标签与失败降级。
+6. AI 瀑布流和原文跳转、MCP 检索计数，完成 Web 纵向切片。
+7. 微信官方 Adapter、账号绑定、消息幂等与统一回执。
+8. OAuth + PKCE 优先的外部 Agent MCP 接入、PAT/API Key 备用路径、CLI 与 Skill。
+9. Email。
 
 第一阶段以“不同来源都能稳定收藏、不会误公开、不会因抓取失败丢链接，并能在我的收藏和最小公开流中找回”为完成标准。

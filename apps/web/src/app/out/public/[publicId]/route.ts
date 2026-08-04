@@ -2,11 +2,17 @@ import type { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getWebDatabase } from "../../../../server/db";
-import { findPublicOutboundUrl, parseSafeOutboundUrl } from "../../../../server/outbound";
+import {
+  findPublicOutboundUrl,
+  isPublicContentInsidePreview,
+  parseSafeOutboundUrl,
+} from "../../../../server/outbound";
 import {
   outboundRedirect,
   outboundUnavailable,
 } from "../../../../server/outbound-response";
+import { hasCompletePublicAccess } from "../../../../server/public-access";
+import { getRequestSession } from "../../../../server/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,13 +24,20 @@ interface RouteContext {
 }
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   context: RouteContext,
 ): Promise<NextResponse> {
   const parsed = paramsSchema.safeParse(await context.params);
   if (!parsed.success) return outboundUnavailable();
 
   try {
+    const requestSession = await getRequestSession(request);
+    const mayOpen =
+      hasCompletePublicAccess(requestSession.principal) ||
+      (await isPublicContentInsidePreview(getWebDatabase(), parsed.data.publicId));
+    if (!mayOpen) {
+      return outboundUnavailable("这篇内容需要 Member 才能打开。", 403);
+    }
     const outboundUrl = parseSafeOutboundUrl(
       await findPublicOutboundUrl(getWebDatabase(), parsed.data.publicId),
     );

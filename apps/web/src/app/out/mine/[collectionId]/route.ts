@@ -27,7 +27,7 @@ export async function GET(
 ): Promise<NextResponse> {
   const requestSession = await getRequestSession(request);
   const principal = requestSession.principal;
-  if (!principal?.isMember) {
+  if (!principal) {
     const response = outboundUnavailable("请先登录后再查看这条收藏。", 401);
     clearInvalidSessionCookie(response, requestSession);
     return response;

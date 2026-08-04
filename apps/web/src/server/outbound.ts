@@ -8,6 +8,17 @@ import {
   type AttentionDatabase,
 } from "@attention/db";
 
+import { loadPublicContents } from "./content-queries";
+import { publicFeedPreviewLimit } from "./public-access";
+
+export async function isPublicContentInsidePreview(
+  db: AttentionDatabase,
+  publicId: string,
+): Promise<boolean> {
+  const preview = (await loadPublicContents(db)).slice(0, publicFeedPreviewLimit());
+  return preview.some((content) => content.id === publicId);
+}
+
 export async function findPublicOutboundUrl(
   db: AttentionDatabase,
   publicId: string,

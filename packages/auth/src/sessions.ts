@@ -6,10 +6,13 @@ import {
   entitlements,
   filterProfiles,
   gt,
+  inArray,
   isNull,
   lte,
+  membershipGrants,
   or,
-  sessions
+  sessions,
+  subscriptions
 } from "@attention/db";
 
 import { createOpaqueToken, hashOpaqueToken } from "./tokens";
@@ -20,6 +23,10 @@ export interface SessionPrincipal {
   sessionId: string;
   accountId: string;
   stableHandle: string;
+  displayName: string;
+  primaryEmail: string | null;
+  signupSource: "direct" | "consumer_referral";
+  authenticatedAt: Date;
   expiresAt: Date;
   isMember: boolean;
   isFilter: boolean;
@@ -30,6 +37,74 @@ export interface IssuedSession {
   sessionId: string;
   accountId: string;
   expiresAt: Date;
+}
+
+export interface AccountCapabilities {
+  isFilter: boolean;
+  isMember: boolean;
+}
+
+export async function resolveAccountCapabilities(
+  db: AttentionDatabase,
+  accountId: string,
+  now = new Date(),
+): Promise<AccountCapabilities> {
+  const [filter, member, grant, subscription] = await Promise.all([
+    db
+      .select({ accountId: filterProfiles.accountId })
+      .from(filterProfiles)
+      .where(
+        and(
+          eq(filterProfiles.accountId, accountId),
+          eq(filterProfiles.active, true),
+          isNull(filterProfiles.revokedAt),
+        ),
+      )
+      .limit(1),
+    db
+      .select({ id: entitlements.id })
+      .from(entitlements)
+      .where(
+        and(
+          eq(entitlements.accountId, accountId),
+          eq(entitlements.memberEnabled, true),
+          lte(entitlements.startsAt, now),
+          or(isNull(entitlements.endsAt), gt(entitlements.endsAt, now)),
+        ),
+      )
+      .limit(1),
+    db
+      .select({ id: membershipGrants.id })
+      .from(membershipGrants)
+      .where(
+        and(
+          eq(membershipGrants.accountId, accountId),
+          inArray(membershipGrants.status, ["active", "scheduled"]),
+          lte(membershipGrants.startsAt, now),
+          gt(membershipGrants.endsAt, now),
+          isNull(membershipGrants.revokedAt),
+        ),
+      )
+      .limit(1),
+    db
+      .select({ id: subscriptions.id })
+      .from(subscriptions)
+      .where(
+        and(
+          eq(subscriptions.accountId, accountId),
+          inArray(subscriptions.status, ["trialing", "active"]),
+          lte(subscriptions.currentPeriodStart, now),
+          gt(subscriptions.currentPeriodEnd, now),
+        ),
+      )
+      .limit(1),
+  ]);
+  const isFilter = filter.length > 0;
+  return {
+    isFilter,
+    isMember:
+      isFilter || member.length > 0 || grant.length > 0 || subscription.length > 0,
+  };
 }
 
 export async function issueSession(
@@ -88,6 +163,10 @@ export async function resolveSession(
       sessionId: sessions.id,
       accountId: accounts.id,
       stableHandle: accounts.stableHandle,
+      displayName: accounts.displayName,
+      primaryEmail: accounts.primaryEmail,
+      signupSource: accounts.signupSource,
+      authenticatedAt: sessions.createdAt,
       expiresAt: sessions.expiresAt
     })
     .from(sessions)
@@ -105,40 +184,15 @@ export async function resolveSession(
     return null;
   }
 
-  const [filter] = await db
-    .select({ accountId: filterProfiles.accountId })
-    .from(filterProfiles)
-    .where(
-      and(
-        eq(filterProfiles.accountId, row.accountId),
-        eq(filterProfiles.active, true),
-        isNull(filterProfiles.revokedAt)
-      )
-    )
-    .limit(1);
-
-  const [member] = await db
-    .select({ id: entitlements.id })
-    .from(entitlements)
-    .where(
-      and(
-        eq(entitlements.accountId, row.accountId),
-        eq(entitlements.memberEnabled, true),
-        lte(entitlements.startsAt, now),
-        or(isNull(entitlements.endsAt), gt(entitlements.endsAt, now))
-      )
-    )
-    .limit(1);
+  const capabilities = await resolveAccountCapabilities(db, row.accountId, now);
 
   if (options.touch ?? true) {
     await db.update(sessions).set({ lastSeenAt: now }).where(eq(sessions.id, row.sessionId));
   }
 
-  const isFilter = Boolean(filter);
   return {
     ...row,
-    isFilter,
-    isMember: isFilter || Boolean(member)
+    ...capabilities,
   };
 }
 

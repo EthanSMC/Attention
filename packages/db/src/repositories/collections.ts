@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, lte, or, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 
 import type { AttentionDatabase, AttentionTransaction } from "../client";
 import {
@@ -8,6 +8,8 @@ import {
   contents,
   entitlements,
   filterProfiles,
+  membershipGrants,
+  subscriptions,
   type Collection
 } from "../schema";
 
@@ -81,7 +83,37 @@ async function getAccountCapabilities(
     )
     .limit(1);
 
-  return { isFilter: Boolean(filter), isMember: Boolean(member) || Boolean(filter) };
+  const [grant] = await tx
+    .select({ id: membershipGrants.id })
+    .from(membershipGrants)
+    .where(
+      and(
+        eq(membershipGrants.accountId, accountId),
+        inArray(membershipGrants.status, ["active", "scheduled"]),
+        lte(membershipGrants.startsAt, now),
+        gt(membershipGrants.endsAt, now),
+        isNull(membershipGrants.revokedAt)
+      )
+    )
+    .limit(1);
+
+  const [subscription] = await tx
+    .select({ id: subscriptions.id })
+    .from(subscriptions)
+    .where(
+      and(
+        eq(subscriptions.accountId, accountId),
+        inArray(subscriptions.status, ["trialing", "active"]),
+        lte(subscriptions.currentPeriodStart, now),
+        gt(subscriptions.currentPeriodEnd, now)
+      )
+    )
+    .limit(1);
+
+  return {
+    isFilter: Boolean(filter),
+    isMember: Boolean(member) || Boolean(grant) || Boolean(subscription) || Boolean(filter)
+  };
 }
 
 function collectionState(collection: Collection): Record<string, unknown> {
@@ -148,9 +180,6 @@ export async function upsertCollectionInTransaction(
 
   await setAccountContext(tx, input.accountId);
     const capabilities = await getAccountCapabilities(tx, input.accountId, now);
-    if (!capabilities.isMember) {
-      throw new CollectionRepositoryError("member_required");
-    }
     if (input.visibility === "public" && !capabilities.isFilter) {
       throw new CollectionRepositoryError("public_requires_filter");
     }
@@ -266,9 +295,6 @@ export async function setCollectionVisibility(
   return db.transaction(async (tx) => {
     await setAccountContext(tx, input.accountId);
     const capabilities = await getAccountCapabilities(tx, input.accountId, now);
-    if (!capabilities.isMember) {
-      throw new CollectionRepositoryError("member_required");
-    }
     if (input.visibility === "public" && !capabilities.isFilter) {
       throw new CollectionRepositoryError("public_requires_filter");
     }

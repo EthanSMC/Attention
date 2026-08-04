@@ -13,6 +13,7 @@
     "@attention/db": "workspace:*"
   },
   "devDependencies": {
+    "@types/node": "latest",
     "typescript": "^6.0.3"
   }
 }

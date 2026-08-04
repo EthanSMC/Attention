@@ -3,6 +3,7 @@ import "server-only";
 import {
   getSessionCookieName,
   readSessionToken,
+  revokeSession,
   resolveSession,
   serializeExpiredSessionCookie,
   serializeSessionCookie,
@@ -80,5 +81,12 @@ export function clearInvalidSessionCookie(
 ): void {
   if (requestSession.shouldClearCookie) {
     clearSessionCookie(response);
+  }
+}
+
+export async function revokeRequestSession(request: Request): Promise<void> {
+  const token = readSessionToken(request.headers.get("cookie"), secureCookie);
+  if (token) {
+    await revokeSession(getWebDatabase(), token);
   }
 }

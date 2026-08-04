@@ -1,13 +1,19 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 
 import {
   collectFromWeb,
   selectCandidateFromWeb
 } from "../../apps/web/src/server/collection-service";
+import type { CollectionServiceError } from "../../apps/web/src/server/collection-service";
 import {
   loadMyCollections,
   loadPublicContents
 } from "../../apps/web/src/server/content-queries";
+import {
+  pullSyncEvents,
+  pushSyncMutations,
+} from "../../apps/web/src/server/sync-service";
 import { createStubHandlers } from "../../apps/worker/src/handlers";
 import {
   claimNextJob,
@@ -18,14 +24,34 @@ import {
 import { runWorker } from "../../apps/worker/src/worker";
 
 import {
+  completeChannelPendingRequest,
+  confirmChannelBindIntent,
+  createApiCredential,
+  createAuthorizationCode,
+  createChannelBindIntent,
   createInvitation,
+  createLoginChallenge,
+  exchangeAuthorizationCode,
   hashOpaqueToken,
   inspectInvitation,
+  inspectChannelBindIntent,
+  loginWithPassword,
+  readChannelPendingResult,
   redeemInvitation,
+  registerPublicOAuthClient,
+  resolveApiCredential,
+  resolveChannelIdentity,
+  resolveOAuthAccessToken,
   resolveSession,
+  revokeApiCredential,
+  revokeOAuthClientConnection,
+  setPassword,
+  validateAuthorizationRequest,
+  verifyLoginChallenge,
   type InvitationError
 } from "@attention/auth";
 import {
+  accounts,
   collectionEvents,
   collections,
   contentLinks,
@@ -53,6 +79,10 @@ import { migrateDatabase } from "@attention/db/migrate";
 const databaseUrl = process.env.TEST_DATABASE_URL;
 process.env.ATTENTION_HMAC_SECRET ??=
   "attention-integration-test-secret-at-least-32-characters";
+process.env.ATTENTION_AUTH_SECRET ??=
+  "attention-auth-integration-test-secret-at-least-32-characters";
+process.env.ATTENTION_CHANNEL_SECRET ??=
+  "attention-channel-integration-test-secret-at-least-32-characters";
 process.env.FETCHER_BASE_URL = "http://127.0.0.1:4100";
 process.env.FETCHER_SHARED_SECRET =
   "attention-fetcher-integration-secret-at-least-32-characters";
@@ -67,7 +97,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
 
   beforeEach(async () => {
     await handle.sql.unsafe(
-      "TRUNCATE TABLE accounts, contents, jobs, event_ledger RESTART IDENTITY CASCADE"
+      "TRUNCATE TABLE login_challenges, password_login_attempts, channel_pending_requests, oauth_clients, accounts, contents, jobs, event_ledger RESTART IDENTITY CASCADE"
     );
     vi.stubGlobal(
       "fetch",
@@ -118,6 +148,233 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     if (!principal) throw new Error("Expected a resolved session principal");
     return principal;
   }
+
+  it("creates a Free account only after email verification and allows private collection", async () => {
+    const challenge = await createLoginChallenge(handle.db, {
+      email: "  NEW.User@Example.com ",
+      requesterFingerprint: "a".repeat(64),
+      returnTo: "/collect",
+    });
+    expect(await handle.db.select().from(accounts)).toHaveLength(0);
+
+    const verified = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: challenge.challengeId,
+      code: challenge.code,
+    });
+    expect(verified).toMatchObject({
+      accountCreated: true,
+      email: "new.user@example.com",
+      returnTo: "/collect",
+    });
+    expect(verified.stableHandle).toMatch(/^user-\d{9}$/u);
+    expect(verified.displayName).toMatch(/^用户\d{9}$/u);
+
+    const principal = await resolveSession(handle.db, verified.session.token, { touch: false });
+    expect(principal).toMatchObject({ isFilter: false, isMember: false });
+    const returningNow = new Date(Date.now() + 61_000);
+    const returningChallenge = await createLoginChallenge(handle.db, {
+      email: "new.user@example.com",
+      now: returningNow,
+    });
+    const returningLogin = await verifyLoginChallenge(handle.db, {
+      acceptTerms: false,
+      challengeId: returningChallenge.challengeId,
+      code: returningChallenge.code,
+      now: returningNow,
+    });
+    expect(returningLogin.accountCreated).toBe(false);
+    const collected = await collectFromWeb(handle.db, principal!, {
+      idempotency_key: "free-private-collection",
+      raw_input: "https://example.org/free-private",
+      visibility: "private",
+    });
+    expect(collected).toMatchObject({ current_visibility: "private", status: "accepted" });
+    await expect(collectFromWeb(handle.db, principal!, {
+      idempotency_key: "free-public-collection",
+      raw_input: "https://example.org/free-public",
+      visibility: "public",
+    })).rejects.toMatchObject<Partial<CollectionServiceError>>({ code: "filter_required", httpStatus: 403 });
+  });
+
+  it("syncs Free collections and forces first historical imports to remain private", async () => {
+    const challenge = await createLoginChallenge(handle.db, { email: "sync@example.com" });
+    const verified = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: challenge.challengeId,
+      code: challenge.code,
+    });
+    const principal = {
+      accountId: verified.accountId,
+      isFilter: false,
+      isMember: false,
+      scopes: ["sync:read", "sync:write"],
+    };
+    const pushed = await pushSyncMutations(handle.db, principal, [
+      {
+        clientMutationId: "historical-import-001",
+        historical: true,
+        op: "collect",
+        rawInput: "https://example.org/local-history",
+        visibility: "public",
+      },
+      {
+        clientMutationId: "private-sync-002",
+        historical: false,
+        op: "collect",
+        rawInput: "https://example.org/new-private",
+        visibility: "private",
+      },
+    ]);
+    expect(pushed.results).toMatchObject([
+      { status: "applied", result: { current_visibility: "private" } },
+      { status: "applied", result: { current_visibility: "private" } },
+    ]);
+
+    const first = await pullSyncEvents(handle.db, verified.accountId, {
+      cursor: null,
+      limit: 1,
+    });
+    expect(first.has_more).toBe(true);
+    expect(first.events[0]?.content.original_url).toMatch(/^https:\/\/example\.org\//u);
+    const second = await pullSyncEvents(handle.db, verified.accountId, {
+      cursor: first.next_cursor,
+      limit: 10,
+    });
+    expect(second.events).toHaveLength(1);
+    expect(second.has_more).toBe(false);
+  });
+
+  it("supports optional password login without changing the browser session credential", async () => {
+    const challenge = await createLoginChallenge(handle.db, { email: "password@example.com" });
+    const verified = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: challenge.challengeId,
+      code: challenge.code,
+    });
+    await setPassword(handle.db, {
+      accountId: verified.accountId,
+      authenticatedAt: new Date(),
+      password: "correct horse battery staple",
+    });
+    const passwordLogin = await loginWithPassword(handle.db, {
+      email: "password@example.com",
+      password: "correct horse battery staple",
+      returnTo: "/mine",
+    });
+    expect(passwordLogin.returnTo).toBe("/mine");
+    expect(passwordLogin.session.token).not.toBe(verified.session.token);
+    expect(await resolveSession(handle.db, verified.session.token, { touch: false })).not.toBeNull();
+    expect(await resolveSession(handle.db, passwordLogin.session.token, { touch: false })).not.toBeNull();
+  });
+
+  it("rate-limits repeated password failures even when the final password is correct", async () => {
+    const challenge = await createLoginChallenge(handle.db, { email: "password-limit@example.com" });
+    const verified = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: challenge.challengeId,
+      code: challenge.code,
+    });
+    await setPassword(handle.db, {
+      accountId: verified.accountId,
+      authenticatedAt: new Date(),
+      password: "correct horse battery staple",
+    });
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await expect(loginWithPassword(handle.db, {
+        email: "password-limit@example.com",
+        password: `incorrect password ${attempt}`,
+      })).rejects.toMatchObject({ code: "invalid_credentials" });
+    }
+    await expect(loginWithPassword(handle.db, {
+      email: "password-limit@example.com",
+      password: "correct horse battery staple",
+    })).rejects.toMatchObject({ code: "rate_limited" });
+  });
+
+  it("exchanges a one-time PKCE code and revokes OAuth without revoking the website session", async () => {
+    const challenge = await createLoginChallenge(handle.db, { email: "oauth@example.com" });
+    const verified = await verifyLoginChallenge(handle.db, { acceptTerms: true, challengeId: challenge.challengeId, code: challenge.code });
+    const verifier = "oauth-pkce-verifier-that-is-at-least-forty-three-characters-123";
+    const challengeValue = createHash("sha256").update(verifier).digest("base64url");
+    const client = await registerPublicOAuthClient(handle.db, {
+      name: "Attention Test Agent",
+      redirectUris: ["http://127.0.0.1:43819/callback"],
+    });
+    const request = await validateAuthorizationRequest(handle.db, {
+      audience: "attention-mcp",
+      clientId: client.clientId,
+      codeChallenge: challengeValue,
+      codeChallengeMethod: "S256",
+      redirectUri: "http://127.0.0.1:43819/callback",
+      responseType: "code",
+      scope: "profile:read collection:read collection:write public:read",
+      state: "test-state",
+    });
+    const code = await createAuthorizationCode(handle.db, verified.accountId, request);
+    const pair = await exchangeAuthorizationCode(handle.db, {
+      clientId: client.clientId,
+      code,
+      codeVerifier: verifier,
+      redirectUri: request.redirectUri,
+    });
+    await expect(exchangeAuthorizationCode(handle.db, {
+      clientId: client.clientId,
+      code,
+      codeVerifier: verifier,
+      redirectUri: request.redirectUri,
+    })).rejects.toMatchObject({ code: "invalid_grant" });
+    const oauthPrincipal = await resolveOAuthAccessToken(handle.db, pair.accessToken, { audience: "attention-mcp" });
+    expect(oauthPrincipal).toMatchObject({ accountId: verified.accountId, isMember: false });
+    await revokeOAuthClientConnection(handle.db, verified.accountId, client.clientId);
+    expect(await resolveOAuthAccessToken(handle.db, pair.accessToken, { audience: "attention-mcp" })).toBeNull();
+    expect(await resolveSession(handle.db, verified.session.token, { touch: false })).not.toBeNull();
+  });
+
+  it("shows PAT plaintext once, resolves live rights, and revokes it independently", async () => {
+    const { redeemed } = await createRedeemedAccount("member", "pat-owner");
+    const credential = await createApiCredential(handle.db, {
+      accountId: redeemed.accountId,
+      name: "automation",
+      scopes: ["collection:read", "collection:write"],
+    });
+    expect(credential.key).toMatch(/^att_pat_/u);
+    expect(await resolveApiCredential(handle.db, credential.key)).toMatchObject({
+      accountId: redeemed.accountId,
+      isMember: true,
+    });
+    expect(await revokeApiCredential(handle.db, redeemed.accountId, credential.credentialId)).toBe(true);
+    expect(await resolveApiCredential(handle.db, credential.key)).toBeNull();
+    expect(await resolveSession(handle.db, redeemed.session.token, { touch: false })).not.toBeNull();
+  });
+
+  it("binds a channel explicitly to the current Member and exposes an encrypted resumed result", async () => {
+    const { redeemed } = await createRedeemedAccount("member", "channel-owner");
+    const intent = await createChannelBindIntent(handle.db, {
+      action: "collect",
+      appId: "wechat-official-account",
+      channelMessageId: "message-001",
+      provider: "wechat",
+      rawInput: "https://example.org/channel-save",
+      subjectId: "openid-secret-value",
+    });
+    expect(await inspectChannelBindIntent(handle.db, intent.bindToken)).toMatchObject({ action: "collect", provider: "wechat" });
+    const resumed = await confirmChannelBindIntent(handle.db, {
+      accountId: redeemed.accountId,
+      token: intent.bindToken,
+    });
+    expect(resumed.rawInput).toBe("https://example.org/channel-save");
+    expect(await resolveChannelIdentity(handle.db, {
+      appId: "wechat-official-account",
+      provider: "wechat",
+      subjectId: "openid-secret-value",
+    })).toMatchObject({ accountId: redeemed.accountId, isMember: true });
+    await completeChannelPendingRequest(handle.db, resumed.pendingRequestId, { status: "accepted" });
+    expect(await readChannelPendingResult(handle.db, resumed.pendingRequestId)).toEqual({
+      result: { status: "accepted" },
+      status: "completed",
+    });
+  });
 
   it("collects a direct Web URL without retaining the raw submission and replays idempotently", async () => {
     const { redeemed } = await createRedeemedAccount("filter", "web-direct");
@@ -1138,6 +1395,12 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
         current_visibility: "private",
         status: "accepted"
       });
+      const pulled = await pullSyncEvents(runtimeHandle.db, redeemed.accountId, {
+        cursor: null,
+        limit: 10,
+      });
+      expect(pulled.events).toHaveLength(1);
+      expect(pulled.events[0]?.collection_id).toBe(first.collection_id);
     } finally {
       await runtimeHandle.sql.unsafe("RESET ROLE").catch(() => undefined);
       await runtimeHandle.close();

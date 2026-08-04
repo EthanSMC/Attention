@@ -1,9 +1,16 @@
 import type { PublicContent } from "../lib/attention";
 import { ArrowUpRightIcon } from "./icons";
-import { EnrichmentBadge, SourceSignal } from "./signal-elements";
+import { EnrichmentBadge } from "./signal-elements";
+import { SourceLogo } from "./source-logo";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   month: "short",
+  day: "numeric",
+  timeZone: "Asia/Shanghai",
+});
+
+const collectedFormatter = new Intl.DateTimeFormat("zh-CN", {
+  month: "numeric",
   day: "numeric",
   timeZone: "Asia/Shanghai",
 });
@@ -20,28 +27,31 @@ function Summary({ content }: { content: PublicContent }) {
   return <p>{content.summary}</p>;
 }
 
-export function PublicContentCard({ content }: { content: PublicContent }) {
+export function PublicContentCard({
+  content,
+  display = "card",
+}: {
+  content: PublicContent;
+  display?: "card" | "list";
+}) {
   const cardBody = (
     <>
-      <SourceSignal
-        initial={content.sourceInitial}
-        source={content.source}
-        tone={content.sourceTone}
-      />
       <div className="content-card__body">
+        <SourceLogo source={content.source} />
         <div className="content-card__source-line">
-          <span>{content.source}</span>
           {content.author ? <span>{content.author}</span> : null}
           {content.publishedAt ? (
             <time dateTime={content.publishedAt}>
               {dateFormatter.format(new Date(`${content.publishedAt}T00:00:00+08:00`))}
             </time>
           ) : null}
+          <time dateTime={content.firstPublicAt}>
+            {collectedFormatter.format(new Date(content.firstPublicAt))} 收藏
+          </time>
         </div>
         <h2>{content.title}</h2>
         <section aria-label="AI 生成摘要" className="ai-summary">
           <div className="ai-summary__label">
-            <span>AI 摘要</span>
             <EnrichmentBadge status={content.summaryStatus} />
           </div>
           <Summary content={content} />
@@ -59,7 +69,7 @@ export function PublicContentCard({ content }: { content: PublicContent }) {
   );
 
   return (
-    <article className="content-card">
+    <article className={`content-card content-card--${display}`}>
       {content.outboundHref ? (
         <a
           aria-label={`查看原文：${content.title}（在新标签页打开）`}
@@ -101,7 +111,7 @@ export function PublicContentCard({ content }: { content: PublicContent }) {
             </div>
             <span>
               由 @{content.filters[0]?.handle ?? "filter"}
-              {content.filters.length > 1 ? ` 等 ${content.filters.length} 人` : ""}收藏
+              {content.filters.length > 1 ? ` 等 ${content.filters.length} 人` : ""} 收藏
             </span>
           </div>
         </div>

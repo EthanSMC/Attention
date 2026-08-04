@@ -3,13 +3,19 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { BotIcon, LibraryIcon, PlusIcon } from "./icons";
+import { BotIcon, CompassIcon, LibraryIcon, PlusIcon, UserIcon } from "./icons";
 
 const navigationItems = [
-  { href: "/ai", label: "AI 公开流", shortLabel: "AI 公开流", icon: BotIcon },
-  { href: "/collect", label: "收藏链接", shortLabel: "收藏", icon: PlusIcon },
-  { href: "/mine", label: "我的收藏", shortLabel: "我的", icon: LibraryIcon },
+  { href: "/ai", label: "发现", icon: CompassIcon },
+  { href: "/mine", label: "收藏", icon: LibraryIcon },
+  { href: "/agent", label: "Agent", icon: BotIcon },
+  { href: "/account", label: "我的", icon: UserIcon },
 ] as const;
+
+export interface NavigationIdentity {
+  isMember: boolean;
+  stableHandle: string;
+}
 
 function SignalLogo() {
   return (
@@ -20,7 +26,11 @@ function SignalLogo() {
   );
 }
 
-function NavigationLinks({ mobile = false }: { mobile?: boolean }) {
+function NavigationLinks({
+  mobile = false,
+}: {
+  mobile?: boolean;
+}) {
   const pathname = usePathname();
 
   return navigationItems.map((item) => {
@@ -33,15 +43,16 @@ function NavigationLinks({ mobile = false }: { mobile?: boolean }) {
         className={mobile ? "mobile-nav__link" : "site-nav__link"}
         href={item.href}
         key={item.href}
+        title={item.label}
       >
-        {mobile ? <Icon /> : null}
-        <span>{mobile ? item.shortLabel : item.label}</span>
+        <Icon />
+        <span>{item.label}</span>
       </Link>
     );
   });
 }
 
-export function SiteHeader() {
+export function SiteHeader({ identity }: { identity: NavigationIdentity | null }) {
   return (
     <header className="site-header">
       <div className="site-header__inner">
@@ -52,6 +63,27 @@ export function SiteHeader() {
         <nav aria-label="主导航" className="site-nav">
           <NavigationLinks />
         </nav>
+        <div className="account-nav">
+          <Link className="account-nav__collect" href="/collect">
+            <PlusIcon />
+            <span>收藏链接</span>
+          </Link>
+          {identity ? (
+            <>
+              <span className="account-nav__identity" title={`当前登录为 @${identity.stableHandle}`}>
+                <UserIcon />
+                <span className="account-nav__handle">@{identity.stableHandle}</span>
+              </span>
+              <form action="/api/auth/logout" method="post">
+                <button className="account-nav__logout" type="submit">退出</button>
+              </form>
+            </>
+          ) : (
+            <Link className="account-nav__login" href="/login">
+              登录
+            </Link>
+          )}
+        </div>
       </div>
     </header>
   );
