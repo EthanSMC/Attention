@@ -88,17 +88,19 @@ AI Provider 是可选能力。只有内容具备 Member 权益且配置了 `ATTE
 - 超时、重试、缓存、幂等、成本预算和平台熔断规则；
 - 异步处理期间，Web 与企业微信客服分别如何回执和更新状态。
 
-### 3.3 Fetcher 的调用方与编排归属
+### 3.3 Fetcher 的逻辑调用方与工具边界
 
-当前 `docs/architecture.md` 图中展示了 Hosted Attention Agent 调用 Web/Browser 能力再访问 Fetcher，但这个关系只是现阶段架构假设，尚未封口。
+已确认的长期原则是：未来 Hosted Agent 是网页采集的逻辑规划者。Agent 根据 Hosted Capture Skill 自主决定何时读取公开网页、何时升级 Browser、何时停止或向用户澄清。
 
-后续需要比较至少三种方案：
+同时需要保持以下边界：
 
-1. **Hosted Agent 直接调用 Fetcher/Browser**：对话和工具调用直观，但 Agent 会承担采集重试、升级、成本和任务生命周期，容易将渠道会话与内容基础设施耦合。
-2. **Content Acquisition / Enrichment Orchestrator 调用**：Agent、Web 收藏入口、Channel 和 MCP 都只提交统一的 Collect/Acquire Job，由确定性服务编排 Fetcher、Browser、Sufficiency 和 AI Processor。边界更稳定，但需要独立的任务状态和回执合同。
-3. **混合模式**：Agent 只决定用户意图并创建采集任务；确定性 Orchestrator 负责执行链路。只有出现多个候选或需要用户澄清时，任务才回到 Agent。
+- Agent 调用受控的 Runtime 网页工具，不直接获得 Fetcher 地址、共享密钥、任意 HTTP、JavaScript 或底层浏览器权限；
+- Fetcher 与 Browser Worker 仍是受控执行后端，负责 SSRF、跳转、动作、网络和预算硬限制；
+- 第三方 Agent 使用自己的 Browser/Search，并通过公开 Attention MCP 调用 Core 收藏与检索工具；第一阶段不向第三方开放 Attention 托管的 Fetcher/Browser；
+- 官方 Agent 与第三方 Agent 对收藏、去重、权限、可见性和贡献使用相同的 Attention Core Tool Contract；Runtime 网页能力不属于 Core 业务接口；
+- Skill 负责默认工作流和工具组合，Core 与执行器负责不可绕过的安全和业务规则。
 
-当前倾向但尚未确认的是方案 3：Hosted Agent 是用户交互和意图入口，不直接拥有 Fetcher；Fetcher 与 Browser 是 Content Acquisition 基础能力，由确定性 Orchestrator 调用。外部用户自己的 AI 仍通过 Attention MCP/Skill 使用收藏与检索服务，不获得底层浏览器权限。
+尚未确认的是 Runtime 网页工具内部的 Sufficiency、Fetcher/Browser 升级策略、开源实现与自研实现选择，以及异步执行和 Agent 控制循环之间的具体合同。
 
 ## 4. 后续独立设计需要产出的结果
 
@@ -112,4 +114,4 @@ AI Provider 是可选能力。只有内容具备 Member 权益且配置了 `ATTE
 6. SSRF、Prompt Injection、浏览器沙盒和无登录态边界；
 7. 小红书、抖音、微信公众号和普通网页的第一期验收标准。
 
-在上述设计完成前，不应把当前正则解析的成功等同于“内容已完整采集”，也不应把 Hosted Agent 直接调用 Fetcher 固化为最终接口。
+在上述设计完成前，不应把当前正则解析的成功等同于“内容已完整采集”，也不应把现有 Fetcher HTTP 合同直接固化成 Agent Tool Contract。

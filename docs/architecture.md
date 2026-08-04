@@ -1,10 +1,12 @@
 # Attention 系统架构
 
-状态：已确认；账号、连接与增长账本首版已实现
+状态：长期目标架构；账号、连接与增长账本首版已实现
 
 更新日期：2026-08-04
 
 账号、Free/Member、OAuth、Local/Cloud、Hosted MCP 和增长权益的产品边界以 [`docs/superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md`](./superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md) 为准。
+
+当前交付顺序以 [`Attention Core-first Agent 路线设计`](./superpowers/specs/2026-08-04-attention-core-first-agent-roadmap-design.md) 为准：第一阶段先向 Filter 和项目方自己的 AI 开放 Core/MCP/Skill；企业微信客服和官方 Hosted Agent 后移，并以真实使用数据完成选型和建设。下方 Hosted Agent 与 Channel 图表示长期目标，不表示第一阶段全部实现。
 
 ## 1. 架构原则
 
@@ -16,7 +18,7 @@
 6. 开源 Local Core、CLI、Local MCP 与 Skill 无需账号即可运行；Free 可连接云同步和基础 Hosted MCP，Member 获得托管 AI、完整公开流、高级 MCP 与 Hosted Channel。
 7. Attention 不保存原文，只保存链接、必要元数据、AI 派生信息、收藏关系和使用事件；阅读始终回到原作者和原平台。
 
-> 内容采集链路仍有一组未封口问题：当前静态 Fetcher、规则解析、未来 Browser Worker 与 AI Content Processor 如何判断“信息足够”，以及 Fetcher 应由 Hosted Agent 还是确定性采集编排器调用，尚未形成最终决策。当前图中的 Agent → Web/Browser → Fetcher 关系不得视为已冻结接口。详见 [`内容采集与 AI 预处理：待设计议题`](./content-acquisition-open-questions.md)。
+> 内容采集链路仍有一组未封口问题：当前静态 Fetcher、规则解析、未来 Browser Worker 与 AI Content Processor 如何判断“信息足够”，以及 Runtime 网页工具如何承载 Agent 的自主控制循环，尚未形成最终设计。长期方向已确认由 Hosted Agent 作为逻辑规划者，但当前 Fetcher HTTP 合同不得直接视为 Agent Tool Contract。详见 [`内容采集与 AI 预处理：待设计议题`](./content-acquisition-open-questions.md)。
 
 ## 2. 总体架构
 
