@@ -16,6 +16,8 @@
 6. 开源 Local Core、CLI、Local MCP 与 Skill 无需账号即可运行；Free 可连接云同步和基础 Hosted MCP，Member 获得托管 AI、完整公开流、高级 MCP 与 Hosted Channel。
 7. Attention 不保存原文，只保存链接、必要元数据、AI 派生信息、收藏关系和使用事件；阅读始终回到原作者和原平台。
 
+> 内容采集链路仍有一组未封口问题：当前静态 Fetcher、规则解析、未来 Browser Worker 与 AI Content Processor 如何判断“信息足够”，以及 Fetcher 应由 Hosted Agent 还是确定性采集编排器调用，尚未形成最终决策。当前图中的 Agent → Web/Browser → Fetcher 关系不得视为已冻结接口。详见 [`内容采集与 AI 预处理：待设计议题`](./content-acquisition-open-questions.md)。
+
 ## 2. 总体架构
 
 ```mermaid
