@@ -9,6 +9,11 @@ import {
 } from "../../../../../server/collection-service";
 import { getWebDatabase } from "../../../../../server/db";
 import {
+  InvalidRequestBodyError,
+  readJsonRequestWithinLimit,
+  RequestBodyTooLargeError,
+} from "../../../../../server/request-body";
+import {
   clearInvalidSessionCookie,
   getRequestSession,
 } from "../../../../../server/session";
@@ -16,7 +21,15 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const MAX_COLLECTION_SELECTION_BODY_BYTES = 16_384;
+
 function serviceError(error: unknown): NextResponse {
+  if (error instanceof RequestBodyTooLargeError) {
+    return noStoreJson({ error: { code: "request_too_large" } }, { status: 413 });
+  }
+  if (error instanceof InvalidRequestBodyError) {
+    return noStoreJson({ error: { code: "invalid_request" } }, { status: 400 });
+  }
   if (error instanceof CollectionServiceError) {
     return noStoreJson(
       { error: { code: error.code } },
@@ -51,7 +64,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const body: unknown = await request.json();
+    const body = await readJsonRequestWithinLimit(
+      request,
+      MAX_COLLECTION_SELECTION_BODY_BYTES,
+    );
     const result = await selectCandidateFromWeb(
       getWebDatabase(),
       requestSession.principal,

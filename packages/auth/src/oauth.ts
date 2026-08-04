@@ -12,6 +12,7 @@ import {
   oauthAuthorizationCodes,
   oauthClients,
   oauthRefreshTokens,
+  sql,
   type AttentionDatabase,
 } from "@attention/db";
 
@@ -19,6 +20,7 @@ import { resolveAccountCapabilities } from "./sessions";
 import { createOpaqueToken, hashOpaqueToken } from "./tokens";
 
 export const oauthAudiences = ["attention-mcp", "attention-sync"] as const;
+export type OAuthAudience = (typeof oauthAudiences)[number];
 export const oauthScopes = [
   "profile:read",
   "collection:read",
@@ -32,8 +34,22 @@ export const oauthScopes = [
 ] as const;
 export type OAuthScope = (typeof oauthScopes)[number];
 
+export const oauthScopesByAudience = {
+  "attention-mcp": [
+    "profile:read",
+    "collection:read",
+    "collection:write",
+    "public:read",
+    "public:full",
+    "ai:search",
+    "subscription:read",
+  ],
+  "attention-sync": ["sync:read", "sync:write"],
+} as const satisfies Record<OAuthAudience, readonly OAuthScope[]>;
+
+export type OAuthResourceMap = Readonly<Record<OAuthAudience, string>>;
+
 const scopeSet = new Set<string>(oauthScopes);
-const audienceSet = new Set<string>(oauthAudiences);
 const codeTtlMs = 10 * 60 * 1_000;
 const accessTtlMs = 60 * 60 * 1_000;
 const refreshTtlMs = 30 * 24 * 60 * 60 * 1_000;
@@ -44,6 +60,7 @@ export type OAuthErrorCode =
   | "invalid_grant"
   | "invalid_request"
   | "invalid_scope"
+  | "invalid_target"
   | "unsupported_grant_type";
 
 export class OAuthError extends Error {
@@ -55,12 +72,44 @@ export class OAuthError extends Error {
   }
 }
 
+function normalizeResourceUri(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new OAuthError("invalid_target");
+  }
+  const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]";
+  if (
+    url.hash ||
+    url.username ||
+    url.password ||
+    (url.protocol !== "https:" && !(url.protocol === "http:" && loopback))
+  ) {
+    throw new OAuthError("invalid_target");
+  }
+  return url.href;
+}
+
+export function resolveOAuthResource(
+  value: string,
+  resources: OAuthResourceMap,
+): { audience: OAuthAudience; resource: string } {
+  const requested = normalizeResourceUri(value);
+  for (const audience of oauthAudiences) {
+    const configured = normalizeResourceUri(resources[audience]);
+    if (requested === configured) return { audience, resource: configured };
+  }
+  throw new OAuthError("invalid_target");
+}
+
 export interface ValidatedAuthorizationRequest {
-  audience: (typeof oauthAudiences)[number];
+  audience: OAuthAudience;
   clientId: string;
   clientName: string;
   codeChallenge: string;
   redirectUri: string;
+  resource: string;
   scopes: OAuthScope[];
   state: string | null;
 }
@@ -80,11 +129,12 @@ function validPkceChallenge(value: string): boolean {
 export async function validateAuthorizationRequest(
   db: AttentionDatabase,
   input: {
-    audience: string;
     clientId: string;
     codeChallenge: string;
     codeChallengeMethod: string;
     redirectUri: string;
+    resource: string;
+    resources: OAuthResourceMap;
     responseType: string;
     scope: string;
     state?: string | null;
@@ -93,11 +143,11 @@ export async function validateAuthorizationRequest(
   if (
     input.responseType !== "code" ||
     input.codeChallengeMethod !== "S256" ||
-    !validPkceChallenge(input.codeChallenge) ||
-    !audienceSet.has(input.audience)
+    !validPkceChallenge(input.codeChallenge)
   ) {
     throw new OAuthError("invalid_request");
   }
+  const resolvedResource = resolveOAuthResource(input.resource, input.resources);
   const [client] = await db
     .select()
     .from(oauthClients)
@@ -106,15 +156,20 @@ export async function validateAuthorizationRequest(
   if (!client) throw new OAuthError("invalid_client");
   if (!client.redirectUris.includes(input.redirectUri)) throw new OAuthError("invalid_request");
   const scopes = normalizeScopes(input.scope);
-  if (scopes.some((scope) => !client.allowedScopes.includes(scope))) {
+  const audienceScopes = new Set<string>(oauthScopesByAudience[resolvedResource.audience]);
+  if (
+    scopes.some((scope) => !client.allowedScopes.includes(scope)) ||
+    scopes.some((scope) => !audienceScopes.has(scope))
+  ) {
     throw new OAuthError("invalid_scope");
   }
   return {
-    audience: input.audience as ValidatedAuthorizationRequest["audience"],
+    audience: resolvedResource.audience,
     clientId: client.clientId,
     clientName: client.name,
     codeChallenge: input.codeChallenge,
     redirectUri: input.redirectUri,
+    resource: resolvedResource.resource,
     scopes,
     state: input.state?.slice(0, 512) ?? null,
   };
@@ -205,6 +260,8 @@ export async function exchangeAuthorizationCode(
     code: string;
     codeVerifier: string;
     redirectUri: string;
+    resource: string;
+    resources: OAuthResourceMap;
     now?: Date;
   },
 ): Promise<OAuthTokenPair> {
@@ -212,6 +269,7 @@ export async function exchangeAuthorizationCode(
     throw new OAuthError("invalid_grant");
   }
   const now = input.now ?? new Date();
+  const requestedResource = resolveOAuthResource(input.resource, input.resources);
   let codeHash: string;
   try { codeHash = await hashOpaqueToken(input.code); } catch { throw new OAuthError("invalid_grant"); }
   return db.transaction(async (tx) => {
@@ -228,6 +286,9 @@ export async function exchangeAuthorizationCode(
     ) {
       throw new OAuthError("invalid_grant");
     }
+    if (code.audience !== requestedResource.audience) {
+      throw new OAuthError("invalid_target");
+    }
     await tx.update(oauthAuthorizationCodes).set({ consumedAt: now }).where(eq(oauthAuthorizationCodes.id, code.id));
     return issueTokenPair(tx, {
       accountId: code.accountId,
@@ -241,9 +302,17 @@ export async function exchangeAuthorizationCode(
 
 export async function rotateRefreshToken(
   db: AttentionDatabase,
-  input: { clientId: string; refreshToken: string; scope?: string; now?: Date },
+  input: {
+    clientId: string;
+    refreshToken: string;
+    resource: string;
+    resources: OAuthResourceMap;
+    scope?: string;
+    now?: Date;
+  },
 ): Promise<OAuthTokenPair> {
   const now = input.now ?? new Date();
+  const requestedResource = resolveOAuthResource(input.resource, input.resources);
   let tokenHash: string;
   try { tokenHash = await hashOpaqueToken(input.refreshToken); } catch { throw new OAuthError("invalid_grant"); }
   return db.transaction(async (tx) => {
@@ -257,6 +326,9 @@ export async function rotateRefreshToken(
       !token || token.clientId !== input.clientId || token.status !== "active" ||
       token.consumedAt || token.revokedAt || token.expiresAt <= now
     ) throw new OAuthError("invalid_grant");
+    if (token.audience !== requestedResource.audience) {
+      throw new OAuthError("invalid_target");
+    }
     const requestedScopes = input.scope ? normalizeScopes(input.scope) : [...token.scopes].sort();
     const existingScopes = [...token.scopes].sort();
     if (requestedScopes.some((scope) => !existingScopes.includes(scope))) {
@@ -370,6 +442,7 @@ export async function revokeOAuthClientConnection(
 function validRedirectUri(value: string): boolean {
   try {
     const url = new URL(value);
+    if (url.hash || url.username || url.password) return false;
     if (url.protocol === "https:") return true;
     return url.protocol === "http:" && (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]");
   } catch { return false; }
@@ -377,34 +450,67 @@ function validRedirectUri(value: string): boolean {
 
 export async function registerPublicOAuthClient(
   db: AttentionDatabase,
-  input: { name: string; redirectUris: string[] },
+  input: { name: string; redirectUris: string[]; requesterFingerprint: string },
 ): Promise<{ clientId: string }> {
   const name = input.name.normalize("NFKC").trim().slice(0, 100);
   const redirectUris = [...new Set(input.redirectUris)].slice(0, 8);
   if (!name || redirectUris.length === 0 || redirectUris.some((uri) => !validRedirectUri(uri))) {
     throw new OAuthError("invalid_request");
   }
-  const configuredLimit = Number.parseInt(
+  if (!/^[0-9a-f]{64}$/u.test(input.requesterFingerprint)) {
+    throw new OAuthError("invalid_request");
+  }
+  const configuredGlobalLimit = Number.parseInt(
     process.env.ATTENTION_OAUTH_REGISTRATION_HOURLY_LIMIT ?? "100",
     10,
   );
-  const hourlyLimit = Number.isFinite(configuredLimit)
-    ? Math.min(Math.max(configuredLimit, 10), 1_000)
+  const globalHourlyLimit = Number.isFinite(configuredGlobalLimit)
+    ? Math.min(Math.max(configuredGlobalLimit, 10), 10_000)
     : 100;
+  const configuredSourceLimit = Number.parseInt(
+    process.env.ATTENTION_OAUTH_REGISTRATION_SOURCE_HOURLY_LIMIT ?? "10",
+    10,
+  );
+  const sourceHourlyLimit = Number.isFinite(configuredSourceLimit)
+    ? Math.min(Math.max(configuredSourceLimit, 1), 100)
+    : 10;
   const hourAgo = new Date(Date.now() - 60 * 60 * 1_000);
-  const [recent] = await db
-    .select({ value: count() })
-    .from(oauthClients)
-    .where(gte(oauthClients.createdAt, hourAgo));
-  if (Number(recent?.value ?? 0) >= hourlyLimit) {
-    throw new OAuthError("invalid_request");
-  }
-  const clientId = `att_${randomUUID()}`;
-  await db.insert(oauthClients).values({
-    allowedScopes: [...oauthScopes],
-    clientId,
-    name,
-    redirectUris,
+  return db.transaction(async (tx) => {
+    // Dynamic registration is intentionally public. Lock in a fixed order so
+    // concurrent requests cannot race either the global or per-source quota.
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended('oauth-dynamic-registration-global', 0))`,
+    );
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${'oauth-dynamic-registration-source:' + input.requesterFingerprint}, 0))`,
+    );
+    const [recent] = await tx
+      .select({ value: count() })
+      .from(oauthClients)
+      .where(gte(oauthClients.createdAt, hourAgo));
+    const [recentForSource] = await tx
+      .select({ value: count() })
+      .from(oauthClients)
+      .where(
+        and(
+          eq(oauthClients.registrationFingerprint, input.requesterFingerprint),
+          gte(oauthClients.createdAt, hourAgo),
+        ),
+      );
+    if (
+      Number(recent?.value ?? 0) >= globalHourlyLimit ||
+      Number(recentForSource?.value ?? 0) >= sourceHourlyLimit
+    ) {
+      throw new OAuthError("invalid_request");
+    }
+    const clientId = `att_${randomUUID()}`;
+    await tx.insert(oauthClients).values({
+      allowedScopes: [...oauthScopes],
+      clientId,
+      name,
+      registrationFingerprint: input.requesterFingerprint,
+      redirectUris,
+    });
+    return { clientId };
   });
-  return { clientId };
 }

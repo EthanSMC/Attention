@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import {
@@ -8,26 +9,45 @@ import {
 
 import { PageIntro } from "../../../components/page-intro";
 import { getWebDatabase } from "../../../server/db";
+import { oauthResourceMapFromOrigin } from "../../../server/oauth-resources";
 import { getPagePrincipal } from "../../../server/session";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "授权 Agent" };
 
+type AuthorizationParam = string | string[] | undefined;
+
 interface AuthorizationParams {
-  audience?: string;
-  client_id?: string;
-  code_challenge?: string;
-  code_challenge_method?: string;
-  redirect_uri?: string;
-  response_type?: string;
-  scope?: string;
-  state?: string;
+  client_id?: AuthorizationParam;
+  code_challenge?: AuthorizationParam;
+  code_challenge_method?: AuthorizationParam;
+  redirect_uri?: AuthorizationParam;
+  resource?: AuthorizationParam;
+  response_type?: AuthorizationParam;
+  scope?: AuthorizationParam;
+  state?: AuthorizationParam;
 }
 
 function queryString(params: AuthorizationParams): string {
   const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) if (value) query.set(key, value);
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === "string" && value) query.set(key, value);
+  }
   return query.toString();
+}
+
+function single(value: AuthorizationParam): string {
+  return typeof value === "string" ? value : "";
+}
+
+async function authorizationOrigin(): Promise<string> {
+  if (process.env.NEXT_PUBLIC_APP_URL) return new URL(process.env.NEXT_PUBLIC_APP_URL).origin;
+  const requestHeaders = await headers();
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
+  if (!host) throw new Error("OAuth authorization requires NEXT_PUBLIC_APP_URL or a Host header");
+  const forwardedProtocol = requestHeaders.get("x-forwarded-proto")?.split(",", 1)[0]?.trim();
+  const protocol = forwardedProtocol || (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
+  return new URL(`${protocol}://${host}`).origin;
 }
 
 const scopeLabels: Record<string, string> = {
@@ -50,15 +70,17 @@ export default async function OAuthAuthorizePage({
   const params = await searchParams;
   let authorization;
   try {
+    const origin = await authorizationOrigin();
     authorization = await validateAuthorizationRequest(getWebDatabase(), {
-      audience: params.audience ?? "",
-      clientId: params.client_id ?? "",
-      codeChallenge: params.code_challenge ?? "",
-      codeChallengeMethod: params.code_challenge_method ?? "",
-      redirectUri: params.redirect_uri ?? "",
-      responseType: params.response_type ?? "",
-      scope: params.scope ?? "",
-      ...(params.state ? { state: params.state } : {}),
+      clientId: single(params.client_id),
+      codeChallenge: single(params.code_challenge),
+      codeChallengeMethod: single(params.code_challenge_method),
+      redirectUri: single(params.redirect_uri),
+      resource: single(params.resource),
+      resources: oauthResourceMapFromOrigin(origin),
+      responseType: single(params.response_type),
+      scope: single(params.scope),
+      ...(single(params.state) ? { state: single(params.state) } : {}),
     });
   } catch (error) {
     const code = error instanceof OAuthError ? error.code : "invalid_request";
@@ -76,16 +98,16 @@ export default async function OAuthAuthorizePage({
         title={`连接 ${authorization.clientName}`}
       />
       <section className="authorization-card">
-        <div className="authorization-card__client"><span>{authorization.clientName.slice(0, 1).toUpperCase()}</span><div><strong>{authorization.clientName}</strong><small>{authorization.audience}</small></div></div>
+        <div className="authorization-card__client"><span>{authorization.clientName.slice(0, 1).toUpperCase()}</span><div><strong>{authorization.clientName}</strong><small>{authorization.resource}</small></div></div>
         <h2>这个客户端将可以</h2>
         <ul>{authorization.scopes.map((scope) => <li key={scope}>{scopeLabels[scope] ?? scope}</li>)}</ul>
         <p>高级 scope 仍会在每次调用时检查当前会员权益；授权不会自动开通会员。</p>
         <form action="/oauth/authorize/confirm" method="post">
-          <input name="audience" type="hidden" value={authorization.audience} />
           <input name="client_id" type="hidden" value={authorization.clientId} />
           <input name="code_challenge" type="hidden" value={authorization.codeChallenge} />
           <input name="code_challenge_method" type="hidden" value="S256" />
           <input name="redirect_uri" type="hidden" value={authorization.redirectUri} />
+          <input name="resource" type="hidden" value={authorization.resource} />
           <input name="response_type" type="hidden" value="code" />
           <input name="scope" type="hidden" value={authorization.scopes.join(" ")} />
           {authorization.state ? <input name="state" type="hidden" value={authorization.state} /> : null}

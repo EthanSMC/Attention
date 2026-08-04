@@ -13,9 +13,16 @@ import {
 import { collectFromWeb } from "../../../../server/collection-service";
 import { noStoreJson } from "../../../../server/api-guard";
 import { getWebDatabase } from "../../../../server/db";
+import {
+  InvalidRequestBodyError,
+  readJsonRequestWithinLimit,
+  RequestBodyTooLargeError,
+} from "../../../../server/request-body";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const MAX_CHANNEL_MESSAGE_BODY_BYTES = 65_536;
 
 const bodySchema = z.object({
   action: z.enum(["collect", "agent"]),
@@ -37,7 +44,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return noStoreJson({ error: { code: "adapter_authentication_required" } }, { status: 401 });
   }
   try {
-    const body = bodySchema.parse(await request.json());
+    const body = bodySchema.parse(
+      await readJsonRequestWithinLimit(request, MAX_CHANNEL_MESSAGE_BODY_BYTES),
+    );
     const db = getWebDatabase();
     const identity = await resolveChannelIdentity(db, {
       appId: body.app_id,
@@ -94,7 +103,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       status: "completed",
     });
   } catch (error) {
-    if (error instanceof ZodError) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return noStoreJson({ error: { code: "request_too_large" } }, { status: 413 });
+    }
+    if (error instanceof InvalidRequestBodyError || error instanceof ZodError) {
       return noStoreJson({ error: { code: "invalid_request" } }, { status: 400 });
     }
     console.error("channel_message_failed", { name: error instanceof Error ? error.name : "UnknownError" });

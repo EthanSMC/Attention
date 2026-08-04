@@ -1,0 +1,2 @@
+ALTER TABLE "oauth_clients" ADD COLUMN "registration_fingerprint" char(64);--> statement-breakpoint
+CREATE INDEX "oauth_clients_registration_created_idx" ON "oauth_clients" USING btree ("registration_fingerprint","created_at");

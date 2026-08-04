@@ -12,6 +12,7 @@ interface AgentResult {
     source: string;
     title: string;
   }>;
+  mode: "deterministic" | "generated";
 }
 
 export function AgentConsole() {
@@ -59,6 +60,7 @@ export function AgentConsole() {
       {error ? <p aria-live="polite" className="field-error">{error}</p> : null}
       {result ? (
         <div className="agent-answer" aria-live="polite">
+          <small>{result.mode === "generated" ? "AI 基于引用生成" : "关键词检索降级"}</small>
           <p>{result.answer}</p>
           {result.citations.length > 0 ? (
             <ol>

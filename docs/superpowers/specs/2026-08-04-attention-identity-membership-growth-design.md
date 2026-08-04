@@ -245,10 +245,11 @@ Filter 年卡是注册后可兑换的独立 grant，不改变 `signup_source`，
 - 体验期内允许取消；取消后保留权益至体验结束。
 - Consumer 邀请注册用户不获得这项自主注册体验。
 - 自主注册用户即使曾兑换 Filter 年卡，仍保留首次订阅的 3 个月体验资格；体验期顺延到既有 grant 之后，不能与既有会员月份重叠浪费。
+- 资格是账号级 exactly-once：只有第一次绑定真实付费订阅的可信 provider 事件可以触发；Webhook 重试、重新订阅或更换支付方式不能再次生成体验。
 
 ### 9.3 Consumer 邀请季卡
 
-- 每位 eligible Consumer 有一个成功邀请名额。
+- eligible Consumer 指当前 `active` 且当前不是 Filter 的注册账号；每位账号终身只有一个成功邀请名额。
 - 邀请使用唯一链接；只有新用户通过该链接完成注册才生效。
 - 注册成功后，被邀请者获得 3 个月 Member，邀请者获得 3 个月 Member 延期。
 - 已有账号打开链接不能补绑邀请关系。
@@ -256,12 +257,14 @@ Filter 年卡是注册后可兑换的独立 grant，不改变 `signup_source`，
 - 邀请奖励不要求被邀请者先绑定支付方式。
 - 被邀请者后续发生真实现金续费时，直接邀请者获得实付价值 15% 的续费积分。
 - 返积分只存在一层，不向邀请链上游继续分配。
+- 邀请者在链接兑换前成为 Filter 时，全部未使用 Consumer 链接立即失效；已经完成的 referral 与双方 grant 不回滚。
+- Consumer 链接默认 30 天到期，可由服务端环境变量在 1 至 365 天内配置。
 
 Consumer 季卡按注册即时生效。若邀请者当前是 Free，则立即进入 3 个月 Member；若已有 Member，则在当前有效期后顺延 3 个月。
 
 ### 9.4 Filter 年卡兑换
 
-- 每位有效 Filter 每个资格年度累计最多签发 5 个单次年卡兑换码；兑换码过期、撤销或未使用都不补回当年额度。
+- 每位有效 Filter 每个 UTC 自然年累计最多签发 5 个单次年卡兑换码；兑换码过期、撤销或未使用都不补回当年额度。
 - 兑换码可以发送给新用户、现有 Free 或现有 Member；Member 兑换后在当前有效期后顺延。
 - 兑换后直接获得或顺延 12 个月 Member。
 - Filter 年卡是纯兑换，不要求绑定订阅，不建立邀请关系，不产生返积分。
@@ -270,6 +273,7 @@ Consumer 季卡按注册即时生效。若邀请者当前是 Free，则立即进
 - 原始兑换码只展示一次，服务端只保存安全哈希。
 - 每个兑换码只能使用一次，并具有明确有效期。
 - Filter 被移除后，未兑换的码作废；已经兑换的权益保留。
+- 兑换码默认 30 天到期，可由服务端环境变量在 1 至 90 天内配置。
 
 ### 9.5 续费积分
 
@@ -277,7 +281,7 @@ Consumer 季卡按注册即时生效。若邀请者当前是 Free，则立即进
 - 基数为退款、拒付、优惠和积分抵扣之后的实际现金支付价值；税费是否计入由支付实现与法务确认。
 - 邀请者获得基数的 15%。
 - 积分只能抵扣 Attention 后续续费，不能提现、转让或赠送。
-- 退款或拒付时撤销对应积分；若积分已使用，形成可审计的负余额或在后续奖励中抵扣。
+- 退款或拒付按原结算事件撤销对应积分；可用余额、预留余额与账面余额始终不得为负。若积分已使用，以单独的非负 `clawback` 待抵扣额审计，并由后续奖励优先偿还。
 - 使用积分支付的部分不再次产生积分，避免循环放大。
 - 邀请者当前不是 Member 时积分仍保留，可在重新开通或续费时使用。
 
@@ -285,6 +289,7 @@ Consumer 季卡按注册即时生效。若邀请者当前是 Free，则立即进
 
 - 季卡、年卡、直接注册体验和付费订阅都写入独立账本，不覆盖历史记录。
 - 有固定时长的新 promotional grant 在账号当前 Member 有效期之后顺延，不能因同时发放而重叠浪费。
+- 固定月份按 UTC 日历月计算；目标月份没有原日期时夹到该月最后一天，并保留原 UTC 时分秒。
 - `filter_grant` 是跟随 Filter 有效状态即时生效、即时撤销的动态权益，不排队、不延长付费订阅，也不消耗其他固定时长 grant。
 - 订阅首次扣款时间必须考虑尚未消费的有效 grant。
 - Free 表示 active account 当前没有有效 Member grant 或付费订阅，不需要单独账号类型。
@@ -362,19 +367,13 @@ Consumer 季卡按注册即时生效。若邀请者当前是 Free，则立即进
 
 兑换时必须校验 `redeemed_by_account_id != filter_account_id`，并以 `grant_year + filter_account_id` 限制当年累计签发数量，而不是限制某一时刻仍 active 的码数。
 
-### 10.6 PointsLedger
+### 10.6 GrowthBillingEvent、PointsBalance 与 PointsLedger
 
-- `id`
-- `account_id`
-- `referral_id`
-- `payment_id`
-- `entry_type`：`earn | spend | reversal | expire | adjustment`
-- `amount`
-- `currency_value_basis`
-- `occurred_at`
-- `expires_at`：规则待定
-
-积分余额由不可变账本汇总，不维护不可追溯的可覆盖余额。
+- `GrowthBillingEvent` 以 `provider + provider_event_id` 全局幂等，记录 `paid_subscription_bound | renewal_settled | renewal_refunded | renewal_chargeback`、原结算事件、真实现金 minor units、币种、referral 与积分结果。
+- `PointsBalance` 按 `account_id + currency` 唯一，维护非负 `available_minor`、`reserved_minor` 与 `clawback_minor`；它是不可变流水的并发安全投影，不是无审计的可覆盖余额。
+- `PointsReservation` 以账号内 idempotency key 唯一，状态为 `reserved | released | consumed`，预留和最终消费都必须持有余额锁且不能透支。
+- `PointsLedgerEntry` 的 `entry_type` 为 `earn | reversal | reserve | release | consume`，同时记录三个余额分量的 delta 与 after snapshot，并以 billing event 或 reservation 作为幂等来源。
+- 所有金额使用同币种 minor units；15% 使用 `floor(cash_minor * 15 / 100)`。赠送 grant、积分抵扣和其他非现金价值不进入现金基数。
 
 ### 10.7 ChannelIdentity 与 BindIntent
 
@@ -425,20 +424,17 @@ Consumer 季卡按注册即时生效。若邀请者当前是 Free，则立即进
 - Consumer 链接只对第一个通过它注册的新账号生效，双方各获得一个季度且不重叠浪费。
 - Consumer 邀请注册账号不会获得 direct 三个月订阅体验。
 - direct 账号兑换 Filter 年卡后仍保留首次订阅体验，并在年卡后顺延。
-- Filter 每个资格年度累计最多签发 5 个兑换码，过期或撤销不补额度；单个码不能重复使用或由签发者自兑。
+- Filter 每个 UTC 自然年累计最多签发 5 个兑换码，过期或撤销不补额度；单个码不能重复使用或由签发者自兑。
 - Filter 兑换不产生 referral 或积分。
 - 只有已结算现金续费产生 15% 积分，退款和拒付可完整冲正。
 
 ## 13. 待后续确定
 
 - Member 具体价格、按月/按年周期和支付服务商。
-- Consumer eligibility 的运营口径，以及用户成为 Filter 后未使用 Consumer 邀请名额的处理方式。
-- Consumer 邀请链接和 Filter 兑换码的具体有效期。
-- Filter “资格年度”使用自然年还是滚动年度。
 - 积分有效期、单次续费最大抵扣比例和跨币种价值规则。
 - 自动续费、扣款提醒、退款和消费者保护的地区化合规实现。
 - 学生认证供应商、复核周期与毕业失效规则。
 - 邮箱验证码有效期、重发与限流、邮箱更换、密码重置、账号恢复和重复账号合并规则。
 - OAuth 的精确 scopes、resource/audience、refresh token、安全存储和无图形环境授权方式。
 - 同一微信身份的并发 pending request、失败重试、显式换绑及会员到期后的 Channel 回复规则。
-- grant 的自然月/时区/端点算法、同日排序，以及订阅扣款中途获得新 grant 时的账单调整方式。
+- 订阅扣款中途获得新 grant 时的真实支付商账单调整方式。

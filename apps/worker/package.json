@@ -14,7 +14,10 @@
     "typecheck": "tsc --noEmit --rootDir ../.."
   },
   "dependencies": {
+    "@attention/ai": "workspace:*",
+    "@attention/auth": "workspace:*",
     "@attention/collector": "workspace:*",
+    "@attention/contracts": "workspace:*",
     "@attention/db": "workspace:*"
   },
   "devDependencies": {

@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@attention/ai": "workspace:*",
     "@attention/auth": "workspace:*",
     "@attention/collector": "workspace:*",
     "@attention/contracts": "workspace:*",

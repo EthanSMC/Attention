@@ -4,6 +4,8 @@
 
 更新时间：2026-08-04
 
+实现更新：`apps/wechat-adapter` 已完成第一期协议 Adapter，包括 GET 服务器验证、POST 验签、安全 XML、兼容/明文/安全模式 AES、文本与链接卡片映射、进程内重试幂等、被动回复、可选客服消息、access token 缓存和内部 Channel API 接入。单元/回调测试已覆盖这些合同；由于仓库没有真实公众号凭据与相应资质，目前没有宣称完成微信平台后台联调。
+
 ## 1. 任务目标
 
 实现 Attention 的官方微信 Channel Adapter。已绑定且具备 Member/Filter Channel 权益的用户在微信中发送文本、链接或公众号链接卡片后，获得与网页共用的 Attention Agent/MCP 业务结果；未绑定或 Free 用户进入绑定/升级路径，不直接执行私人任务。
@@ -69,9 +71,11 @@ flowchart LR
 - 已实现 `GET /channel/bind` 与 `POST /api/channels/bind`：用户通过统一登录后看到“绑定到 @handle”，Free 先升级 Member，确认后自动继续原收藏或 Agent 请求。
 - 已实现 `GET /api/channels/pending/:id` 的可信 Adapter 轮询回执，以及 `/account/connections` 中的独立 Channel 解绑。
 - 已实现网页 Agent、Hosted MCP、收藏 Service、隔离 Fetcher、URL 安全策略和确定性去重。当前 Agent 检索是可演示的确定性检索，不伪装成尚未接入的模型服务。
-- 尚未实现的是微信官方服务器回调层本身：官方签名/解密、XML/JSON 映射、微信 access token 管理和客服/模板消息回复。这部分需要认证公众号、官方凭据和实际接口权限后按本文 Adapter 边界接入。
+- 已实现微信官方服务器回调层的代码合同：官方签名/解密、安全 XML 映射、微信 access token 管理、被动回复和客服文字消息 provider。模板消息不在第一期范围内；真实平台验证仍需要认证公众号、官方凭据和实际接口权限。
 
-当前内部接口不是面向微信公网暴露的回调地址。微信 Adapter 仍应依赖内部 Channel 合同，不应复制 Collector、直接访问业务数据库或绕过 Channel 权益判断。
+内部接口不是面向微信公网暴露的回调地址。公网只暴露 Adapter 的 `/wechat/callback`，Adapter 继续依赖内部 Channel 合同，不复制 Collector、不直接访问业务数据库，也不绕过 Channel 权益判断。
+
+当前幂等缓存位于 Adapter 进程内；收藏路径还由核心服务的幂等键兜底。多副本或进程重启后的 Agent 查询若要求严格 exactly-once，需要后续把相同 `channel_message_id` 合同接到共享 Gateway 幂等存储，不能误称现阶段已具备跨实例 exactly-once。
 
 当前代码中最重要的参考：
 

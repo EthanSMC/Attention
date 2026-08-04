@@ -13,21 +13,31 @@ import {
   getEmailOtpSender,
   mayExposeDevelopmentOtp,
 } from "../../../../../server/email-otp";
+import {
+  InvalidRequestBodyError,
+  readJsonRequestWithinLimit,
+  RequestBodyTooLargeError,
+} from "../../../../../server/request-body";
+import {
+  trustedClientSource,
+  TrustedClientSourceError,
+} from "../../../../../server/trusted-client-source";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const MAX_EMAIL_START_BODY_BYTES = 8_192;
+
 const bodySchema = z
   .object({
+    consumer_invite_token: z.string().min(32).max(256).optional(),
     email: z.string().max(320),
     return_to: z.string().max(2048).optional(),
   })
   .strict();
 
 function requesterFingerprint(request: NextRequest): string {
-  const forwardedFor = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
-  const userAgent = request.headers.get("user-agent")?.slice(0, 512) ?? "";
-  return fingerprintLoginRequester(`${forwardedFor}\0${userAgent}`);
+  return fingerprintLoginRequester(trustedClientSource(request));
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -37,10 +47,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const body = bodySchema.parse(await request.json());
+    const body = bodySchema.parse(
+      await readJsonRequestWithinLimit(request, MAX_EMAIL_START_BODY_BYTES),
+    );
     const challenge = await createLoginChallenge(getWebDatabase(), {
       email: body.email,
       requesterFingerprint: requesterFingerprint(request),
+      ...(body.consumer_invite_token
+        ? { consumerInviteToken: body.consumer_invite_token }
+        : {}),
       ...(body.return_to ? { returnTo: body.return_to } : {}),
     });
     try {
@@ -63,7 +78,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       ...(mayExposeDevelopmentOtp() ? { development_code: challenge.code } : {}),
     });
   } catch (error) {
-    if (error instanceof ZodError) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return noStoreJson(
+        { error: { code: "request_too_large" } },
+        { status: 413 },
+      );
+    }
+    if (error instanceof InvalidRequestBodyError || error instanceof ZodError) {
       return noStoreJson({ error: { code: "invalid_request" } }, { status: 400 });
     }
     if (error instanceof EmailAuthError) {
@@ -79,6 +100,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         },
         { status },
       );
+    }
+    if (error instanceof TrustedClientSourceError) {
+      console.error("trusted_client_source_unavailable", { route: "email_login_start" });
+      return noStoreJson({ error: { code: "service_unavailable" } }, { status: 503 });
     }
     console.error("email_login_start_failed", {
       name: error instanceof Error ? error.name : "UnknownError",

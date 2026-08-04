@@ -3,6 +3,7 @@ export * from "./api-credentials";
 export * from "./channels";
 export * from "./email-auth";
 export * from "./guards";
+export * from "./growth";
 export * from "./invitations";
 export * from "./oauth";
 export * from "./passwords";

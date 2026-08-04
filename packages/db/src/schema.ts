@@ -1,9 +1,11 @@
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
+  bigint,
   boolean,
   char,
   check,
+  date,
   index,
   integer,
   jsonb,
@@ -56,6 +58,38 @@ export const subscriptionStatusEnum = pgEnum("subscription_status", [
   "past_due",
   "cancelled",
   "expired"
+]);
+export const consumerReferralStatusEnum = pgEnum("consumer_referral_status", [
+  "active",
+  "redeemed",
+  "invalidated"
+]);
+export const filterAnnualCodeStatusEnum = pgEnum("filter_annual_code_status", [
+  "active",
+  "redeemed",
+  "invalidated"
+]);
+export const growthTokenKindEnum = pgEnum("growth_token_kind", [
+  "consumer_referral",
+  "filter_annual"
+]);
+export const growthBillingEventTypeEnum = pgEnum("growth_billing_event_type", [
+  "paid_subscription_bound",
+  "renewal_settled",
+  "renewal_refunded",
+  "renewal_chargeback"
+]);
+export const pointsEntryTypeEnum = pgEnum("points_entry_type", [
+  "earn",
+  "reversal",
+  "reserve",
+  "release",
+  "consume"
+]);
+export const pointsReservationStatusEnum = pgEnum("points_reservation_status", [
+  "reserved",
+  "released",
+  "consumed"
 ]);
 export const oauthCredentialStatusEnum = pgEnum("oauth_credential_status", [
   "active",
@@ -127,10 +161,37 @@ export const takedownStatusEnum = pgEnum("takedown_status", ["none", "removed"])
 export const collectionVisibilityEnum = pgEnum("collection_visibility", ["public", "private"]);
 export const collectionStatusEnum = pgEnum("collection_status", ["active", "deleted"]);
 export const moderationStatusEnum = pgEnum("moderation_status", ["clear", "blocked"]);
+export const communityModerationStatusEnum = pgEnum("community_moderation_status", [
+  "clear",
+  "pending_review",
+  "hidden"
+]);
+export const contentReporterKindEnum = pgEnum("content_reporter_kind", [
+  "consumer",
+  "filter"
+]);
+export const moderationCaseStatusEnum = pgEnum("moderation_case_status", [
+  "open",
+  "resolved",
+  "requires_admin"
+]);
+export const moderationDecisionEnum = pgEnum("moderation_decision", ["public", "hidden"]);
+export const moderationCaseResolutionEnum = pgEnum("moderation_case_resolution", [
+  "public",
+  "hidden",
+  "requires_admin"
+]);
 export const jobStatusEnum = pgEnum("job_status", [
   "pending",
   "running",
   "completed",
+  "failed"
+]);
+export const digestDeliveryStatusEnum = pgEnum("digest_delivery_status", [
+  "pending",
+  "sending",
+  "sent",
+  "skipped",
   "failed"
 ]);
 export const eventScopeEnum = pgEnum("event_scope", ["public", "private", "system"]);
@@ -145,6 +206,8 @@ export const accounts = pgTable(
     stableHandle: varchar("stable_handle", { length: 64 }).notNull(),
     displayName: varchar("display_name", { length: 100 }).default("用户").notNull(),
     signupSource: signupSourceEnum("signup_source").default("direct").notNull(),
+    directTrialConsumedAt: timestamp("direct_trial_consumed_at", { withTimezone: true }),
+    directTrialSourceEventKey: varchar("direct_trial_source_event_key", { length: 320 }),
     termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
     termsVersion: varchar("terms_version", { length: 32 }),
     privacyVersion: varchar("privacy_version", { length: 32 }),
@@ -154,11 +217,18 @@ export const accounts = pgTable(
   (table) => [
     uniqueIndex("accounts_primary_email_unique").on(table.primaryEmail),
     uniqueIndex("accounts_stable_handle_unique").on(table.stableHandle),
+    uniqueIndex("accounts_direct_trial_source_event_unique").on(
+      table.directTrialSourceEventKey
+    ),
     check(
       "accounts_email_verification_shape",
       sql`${table.primaryEmail} IS NULL OR ${table.emailVerifiedAt} IS NOT NULL`
     ),
-    check("accounts_stable_handle_not_blank", sql`btrim(${table.stableHandle}) <> ''`)
+    check("accounts_stable_handle_not_blank", sql`btrim(${table.stableHandle}) <> ''`),
+    check(
+      "accounts_direct_trial_consumption_shape",
+      sql`(${table.directTrialConsumedAt} IS NULL AND ${table.directTrialSourceEventKey} IS NULL) OR (${table.directTrialConsumedAt} IS NOT NULL AND ${table.directTrialSourceEventKey} IS NOT NULL)`
+    )
   ]
 );
 
@@ -204,6 +274,210 @@ export const filterProfiles = pgTable(
     )
   ]
 );
+
+export const consumerReferrals = pgTable(
+  "consumer_referrals",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    inviterAccountId: uuid("inviter_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    tokenHash: char("token_hash", { length: 64 }).notNull(),
+    status: consumerReferralStatusEnum("status").default("active").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    inviteeAccountId: uuid("invitee_account_id").references(() => accounts.id, {
+      onDelete: "restrict"
+    }),
+    registeredAt: timestamp("registered_at", { withTimezone: true }),
+    invalidatedAt: timestamp("invalidated_at", { withTimezone: true }),
+    invalidatedReason: varchar("invalidated_reason", { length: 64 }),
+    ...timestampColumns()
+  },
+  (table) => {
+    const actorAccountId = sql`NULLIF(current_setting('app.account_id', true), '')::uuid`;
+    const tokenPredicate = sql`${table.tokenHash} = NULLIF(current_setting('app.consumer_referral_token_hash', true), '')`;
+    const intentPredicate = sql`${table.id}::text = NULLIF(current_setting('app.consumer_referral_id', true), '')`;
+    const participantPredicate = sql`${table.inviterAccountId} = ${actorAccountId} OR ${table.inviteeAccountId} = ${actorAccountId}`;
+    return [
+      uniqueIndex("consumer_referrals_token_hash_unique").on(table.tokenHash),
+      uniqueIndex("consumer_referrals_active_inviter_unique")
+        .on(table.inviterAccountId)
+        .where(sql`${table.status} = 'active'`),
+      uniqueIndex("consumer_referrals_successful_inviter_unique")
+        .on(table.inviterAccountId)
+        .where(sql`${table.status} = 'redeemed'`),
+      uniqueIndex("consumer_referrals_successful_invitee_unique")
+        .on(table.inviteeAccountId)
+        .where(sql`${table.status} = 'redeemed'`),
+      index("consumer_referrals_inviter_created_idx").on(
+        table.inviterAccountId,
+        table.createdAt
+      ),
+      check("consumer_referrals_expire_after_creation", sql`${table.expiresAt} > ${table.createdAt}`),
+      check(
+        "consumer_referrals_distinct_accounts",
+        sql`${table.inviteeAccountId} IS NULL OR ${table.inviteeAccountId} <> ${table.inviterAccountId}`
+      ),
+      check(
+        "consumer_referrals_state_shape",
+        sql`(${table.status} = 'active' AND ${table.inviteeAccountId} IS NULL AND ${table.registeredAt} IS NULL AND ${table.invalidatedAt} IS NULL AND ${table.invalidatedReason} IS NULL) OR (${table.status} = 'redeemed' AND ${table.inviteeAccountId} IS NOT NULL AND ${table.registeredAt} IS NOT NULL AND ${table.invalidatedAt} IS NULL AND ${table.invalidatedReason} IS NULL) OR (${table.status} = 'invalidated' AND ${table.inviteeAccountId} IS NULL AND ${table.registeredAt} IS NULL AND ${table.invalidatedAt} IS NOT NULL AND ${table.invalidatedReason} IS NOT NULL)`
+      ),
+      pgPolicy("consumer_referrals_web_read", {
+        as: "permissive",
+        for: "select",
+        to: "attention_web_runtime",
+        using: sql`${participantPredicate} OR ${tokenPredicate} OR ${intentPredicate}`
+      }),
+      pgPolicy("consumer_referrals_web_insert", {
+        as: "permissive",
+        for: "insert",
+        to: "attention_web_runtime",
+        withCheck: sql`${table.inviterAccountId} = ${actorAccountId}`
+      }),
+      pgPolicy("consumer_referrals_web_invalidate", {
+        as: "permissive",
+        for: "update",
+        to: "attention_web_runtime",
+        using: sql`${table.inviterAccountId} = ${actorAccountId} AND ${table.status} = 'active'`,
+        withCheck: sql`${table.inviterAccountId} = ${actorAccountId} AND ${table.status} = 'invalidated' AND ${table.inviteeAccountId} IS NULL AND ${table.registeredAt} IS NULL`
+      }),
+      pgPolicy("consumer_referrals_web_redeem", {
+        as: "permissive",
+        for: "update",
+        to: "attention_web_runtime",
+        using: sql`${intentPredicate} AND ${table.status} = 'active'`,
+        withCheck: sql`${intentPredicate} AND ${table.status} = 'redeemed' AND ${table.inviteeAccountId} = ${actorAccountId}`
+      }),
+      pgPolicy("consumer_referrals_worker_read", {
+        as: "permissive",
+        for: "select",
+        to: "attention_worker_runtime",
+        using: sql`true`
+      })
+    ];
+  }
+).enableRLS();
+
+export const filterAnnualCodes = pgTable(
+  "filter_annual_codes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    issuerFilterAccountId: uuid("issuer_filter_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    tokenHash: char("token_hash", { length: 64 }).notNull(),
+    issuanceYear: smallint("issuance_year").notNull(),
+    status: filterAnnualCodeStatusEnum("status").default("active").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    redeemedByAccountId: uuid("redeemed_by_account_id").references(() => accounts.id, {
+      onDelete: "restrict"
+    }),
+    redeemedAt: timestamp("redeemed_at", { withTimezone: true }),
+    invalidatedAt: timestamp("invalidated_at", { withTimezone: true }),
+    invalidatedReason: varchar("invalidated_reason", { length: 64 }),
+    ...timestampColumns()
+  },
+  (table) => {
+    const actorAccountId = sql`NULLIF(current_setting('app.account_id', true), '')::uuid`;
+    const tokenPredicate = sql`${table.tokenHash} = NULLIF(current_setting('app.filter_annual_token_hash', true), '')`;
+    const ownerPredicate = sql`${table.issuerFilterAccountId} = ${actorAccountId} OR ${table.redeemedByAccountId} = ${actorAccountId}`;
+    return [
+      uniqueIndex("filter_annual_codes_token_hash_unique").on(table.tokenHash),
+      index("filter_annual_codes_issuer_year_idx").on(
+        table.issuerFilterAccountId,
+        table.issuanceYear,
+        table.createdAt
+      ),
+      check("filter_annual_codes_year_range", sql`${table.issuanceYear} BETWEEN 2020 AND 9999`),
+      check("filter_annual_codes_expire_after_creation", sql`${table.expiresAt} > ${table.createdAt}`),
+      check(
+        "filter_annual_codes_distinct_accounts",
+        sql`${table.redeemedByAccountId} IS NULL OR ${table.redeemedByAccountId} <> ${table.issuerFilterAccountId}`
+      ),
+      check(
+        "filter_annual_codes_state_shape",
+        sql`(${table.status} = 'active' AND ${table.redeemedByAccountId} IS NULL AND ${table.redeemedAt} IS NULL AND ${table.invalidatedAt} IS NULL AND ${table.invalidatedReason} IS NULL) OR (${table.status} = 'redeemed' AND ${table.redeemedByAccountId} IS NOT NULL AND ${table.redeemedAt} IS NOT NULL AND ${table.invalidatedAt} IS NULL AND ${table.invalidatedReason} IS NULL) OR (${table.status} = 'invalidated' AND ${table.redeemedByAccountId} IS NULL AND ${table.redeemedAt} IS NULL AND ${table.invalidatedAt} IS NOT NULL AND ${table.invalidatedReason} IS NOT NULL)`
+      ),
+      pgPolicy("filter_annual_codes_web_read", {
+        as: "permissive",
+        for: "select",
+        to: "attention_web_runtime",
+        using: sql`${ownerPredicate} OR ${tokenPredicate}`
+      }),
+      pgPolicy("filter_annual_codes_web_insert", {
+        as: "permissive",
+        for: "insert",
+        to: "attention_web_runtime",
+        withCheck: sql`${table.issuerFilterAccountId} = ${actorAccountId}`
+      }),
+      pgPolicy("filter_annual_codes_web_redeem", {
+        as: "permissive",
+        for: "update",
+        to: "attention_web_runtime",
+        using: sql`${tokenPredicate} AND ${table.status} = 'active'`,
+        withCheck: sql`${tokenPredicate} AND ${table.status} = 'redeemed' AND ${table.redeemedByAccountId} = ${actorAccountId}`
+      })
+    ];
+  }
+).enableRLS();
+
+export const growthTokenAttempts = pgTable(
+  "growth_token_attempts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    tokenKind: growthTokenKindEnum("token_kind").notNull(),
+    tokenHash: char("token_hash", { length: 64 }).notNull(),
+    accountId: uuid("account_id").references(() => accounts.id, { onDelete: "cascade" }),
+    requesterFingerprint: char("requester_fingerprint", { length: 64 }),
+    success: boolean("success").default(false).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => {
+    const actorAccountId = sql`NULLIF(current_setting('app.account_id', true), '')::uuid`;
+    const requesterFingerprint = sql`NULLIF(current_setting('app.growth_requester_fingerprint', true), '')`;
+    return [
+      index("growth_token_attempts_account_created_idx").on(
+        table.accountId,
+        table.tokenKind,
+        table.createdAt
+      ),
+      index("growth_token_attempts_fingerprint_created_idx").on(
+        table.requesterFingerprint,
+        table.tokenKind,
+        table.createdAt
+      ),
+      check(
+        "growth_token_attempts_actor_present",
+        sql`${table.accountId} IS NOT NULL OR ${table.requesterFingerprint} IS NOT NULL`
+      ),
+      pgPolicy("growth_token_attempts_web_read_account", {
+        as: "permissive",
+        for: "select",
+        to: "attention_web_runtime",
+        using: sql`${table.accountId} = ${actorAccountId}`
+      }),
+      pgPolicy("growth_token_attempts_web_read_fingerprint", {
+        as: "permissive",
+        for: "select",
+        to: "attention_web_runtime",
+        using: sql`${table.accountId} IS NULL AND ${table.requesterFingerprint} = ${requesterFingerprint}`
+      }),
+      pgPolicy("growth_token_attempts_web_insert", {
+        as: "permissive",
+        for: "insert",
+        to: "attention_web_runtime",
+        withCheck: sql`(${table.accountId} = ${actorAccountId} AND ${table.requesterFingerprint} IS NULL) OR (${table.accountId} IS NULL AND ${table.requesterFingerprint} = ${requesterFingerprint})`
+      }),
+      pgPolicy("growth_token_attempts_web_mark_success", {
+        as: "permissive",
+        for: "update",
+        to: "attention_web_runtime",
+        using: sql`${table.accountId} = ${actorAccountId} AND ${table.tokenKind} = 'filter_annual'`,
+        withCheck: sql`${table.accountId} = ${actorAccountId} AND ${table.tokenKind} = 'filter_annual' AND ${table.success}`
+      })
+    ];
+  }
+).enableRLS();
 
 export const invitations = pgTable(
   "invitations",
@@ -264,6 +538,9 @@ export const loginChallenges = pgTable(
     email: varchar("email", { length: 320 }).notNull(),
     codeHash: char("code_hash", { length: 64 }).notNull(),
     requesterFingerprint: char("requester_fingerprint", { length: 64 }),
+    consumerReferralId: uuid("consumer_referral_id").references(() => consumerReferrals.id, {
+      onDelete: "restrict"
+    }),
     returnTo: text("return_to").default("/ai").notNull(),
     failedAttempts: smallint("failed_attempts").default(0).notNull(),
     maxAttempts: smallint("max_attempts").default(5).notNull(),
@@ -275,6 +552,10 @@ export const loginChallenges = pgTable(
     index("login_challenges_email_created_idx").on(table.email, table.createdAt),
     index("login_challenges_fingerprint_created_idx").on(
       table.requesterFingerprint,
+      table.createdAt
+    ),
+    index("login_challenges_consumer_referral_idx").on(
+      table.consumerReferralId,
       table.createdAt
     ),
     check(
@@ -322,6 +603,9 @@ export const membershipGrants = pgTable(
   },
   (table) => [
     uniqueIndex("membership_grants_kind_source_unique").on(table.kind, table.sourceId),
+    uniqueIndex("membership_grants_direct_trial_account_unique")
+      .on(table.accountId)
+      .where(sql`${table.kind} = 'direct_trial'`),
     index("membership_grants_account_window_idx").on(
       table.accountId,
       table.status,
@@ -368,6 +652,233 @@ export const subscriptions = pgTable(
   ]
 );
 
+export const growthBillingEvents = pgTable(
+  "growth_billing_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    provider: varchar("provider", { length: 64 }).notNull(),
+    providerEventId: varchar("provider_event_id", { length: 255 }).notNull(),
+    eventType: growthBillingEventTypeEnum("event_type").notNull(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    subscriptionId: uuid("subscription_id").references(() => subscriptions.id, {
+      onDelete: "restrict"
+    }),
+    referralId: uuid("referral_id").references(() => consumerReferrals.id, {
+      onDelete: "restrict"
+    }),
+    originalEventId: uuid("original_event_id").references(
+      (): AnyPgColumn => growthBillingEvents.id,
+      { onDelete: "restrict" }
+    ),
+    currency: char("currency", { length: 3 }),
+    cashAmountMinor: bigint("cash_amount_minor", { mode: "number" }),
+    pointsAmountMinor: bigint("points_amount_minor", { mode: "number" }).default(0).notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => {
+    const ownerPredicate = sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`;
+    return [
+      uniqueIndex("growth_billing_events_provider_event_unique").on(
+        table.provider,
+        table.providerEventId
+      ),
+      index("growth_billing_events_original_idx").on(table.originalEventId, table.createdAt),
+      index("growth_billing_events_account_time_idx").on(table.accountId, table.occurredAt),
+      check("growth_billing_events_provider_not_blank", sql`btrim(${table.provider}) <> ''`),
+      check(
+        "growth_billing_events_currency_shape",
+        sql`${table.currency} IS NULL OR ${table.currency} ~ '^[A-Z]{3}$'`
+      ),
+      check(
+        "growth_billing_events_amounts_nonnegative",
+        sql`(${table.cashAmountMinor} IS NULL OR ${table.cashAmountMinor} > 0) AND ${table.pointsAmountMinor} >= 0`
+      ),
+      check(
+        "growth_billing_events_event_shape",
+        sql`(${table.eventType} = 'paid_subscription_bound' AND ${table.subscriptionId} IS NOT NULL AND ${table.originalEventId} IS NULL AND ${table.referralId} IS NULL AND ${table.currency} IS NULL AND ${table.cashAmountMinor} IS NULL AND ${table.pointsAmountMinor} = 0) OR (${table.eventType} = 'renewal_settled' AND ${table.subscriptionId} IS NOT NULL AND ${table.originalEventId} IS NULL AND ${table.currency} IS NOT NULL AND ${table.cashAmountMinor} IS NOT NULL) OR (${table.eventType} IN ('renewal_refunded', 'renewal_chargeback') AND ${table.subscriptionId} IS NOT NULL AND ${table.originalEventId} IS NOT NULL AND ${table.currency} IS NOT NULL AND ${table.cashAmountMinor} IS NOT NULL)`
+      ),
+      pgPolicy("growth_billing_events_web_owner_access", {
+        as: "permissive",
+        for: "all",
+        to: "attention_web_runtime",
+        using: ownerPredicate,
+        withCheck: ownerPredicate
+      }),
+      pgPolicy("growth_billing_events_worker_access", {
+        as: "permissive",
+        for: "all",
+        to: "attention_worker_runtime",
+        using: sql`true`,
+        withCheck: sql`true`
+      })
+    ];
+  }
+).enableRLS();
+
+export const pointsBalances = pgTable(
+  "points_balances",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    currency: char("currency", { length: 3 }).notNull(),
+    availableMinor: bigint("available_minor", { mode: "number" }).default(0).notNull(),
+    reservedMinor: bigint("reserved_minor", { mode: "number" }).default(0).notNull(),
+    clawbackMinor: bigint("clawback_minor", { mode: "number" }).default(0).notNull(),
+    ...timestampColumns()
+  },
+  (table) => {
+    const ownerPredicate = sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`;
+    return [
+      uniqueIndex("points_balances_account_currency_unique").on(
+        table.accountId,
+        table.currency
+      ),
+      check("points_balances_currency_shape", sql`${table.currency} ~ '^[A-Z]{3}$'`),
+      check(
+        "points_balances_nonnegative",
+        sql`${table.availableMinor} >= 0 AND ${table.reservedMinor} >= 0 AND ${table.clawbackMinor} >= 0`
+      ),
+      pgPolicy("points_balances_web_owner_access", {
+        as: "permissive",
+        for: "all",
+        to: "attention_web_runtime",
+        using: ownerPredicate,
+        withCheck: ownerPredicate
+      }),
+      pgPolicy("points_balances_worker_access", {
+        as: "permissive",
+        for: "all",
+        to: "attention_worker_runtime",
+        using: sql`true`,
+        withCheck: sql`true`
+      })
+    ];
+  }
+).enableRLS();
+
+export const pointsReservations = pgTable(
+  "points_reservations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    currency: char("currency", { length: 3 }).notNull(),
+    amountMinor: bigint("amount_minor", { mode: "number" }).notNull(),
+    idempotencyKey: varchar("idempotency_key", { length: 255 }).notNull(),
+    status: pointsReservationStatusEnum("status").default("reserved").notNull(),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    ...timestampColumns()
+  },
+  (table) => {
+    const ownerPredicate = sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`;
+    return [
+      uniqueIndex("points_reservations_account_idempotency_unique").on(
+        table.accountId,
+        table.idempotencyKey
+      ),
+      index("points_reservations_account_status_idx").on(table.accountId, table.status),
+      check("points_reservations_currency_shape", sql`${table.currency} ~ '^[A-Z]{3}$'`),
+      check("points_reservations_amount_positive", sql`${table.amountMinor} > 0`),
+      check("points_reservations_key_not_blank", sql`btrim(${table.idempotencyKey}) <> ''`),
+      check(
+        "points_reservations_state_shape",
+        sql`(${table.status} = 'reserved' AND ${table.releasedAt} IS NULL AND ${table.consumedAt} IS NULL) OR (${table.status} = 'released' AND ${table.releasedAt} IS NOT NULL AND ${table.consumedAt} IS NULL) OR (${table.status} = 'consumed' AND ${table.releasedAt} IS NULL AND ${table.consumedAt} IS NOT NULL)`
+      ),
+      pgPolicy("points_reservations_web_owner_access", {
+        as: "permissive",
+        for: "all",
+        to: "attention_web_runtime",
+        using: ownerPredicate,
+        withCheck: ownerPredicate
+      }),
+      pgPolicy("points_reservations_worker_access", {
+        as: "permissive",
+        for: "all",
+        to: "attention_worker_runtime",
+        using: sql`true`,
+        withCheck: sql`true`
+      })
+    ];
+  }
+).enableRLS();
+
+export const pointsLedgerEntries = pgTable(
+  "points_ledger_entries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    currency: char("currency", { length: 3 }).notNull(),
+    entryType: pointsEntryTypeEnum("entry_type").notNull(),
+    amountMinor: bigint("amount_minor", { mode: "number" }).notNull(),
+    availableDeltaMinor: bigint("available_delta_minor", { mode: "number" }).notNull(),
+    reservedDeltaMinor: bigint("reserved_delta_minor", { mode: "number" }).notNull(),
+    clawbackDeltaMinor: bigint("clawback_delta_minor", { mode: "number" }).notNull(),
+    availableAfterMinor: bigint("available_after_minor", { mode: "number" }).notNull(),
+    reservedAfterMinor: bigint("reserved_after_minor", { mode: "number" }).notNull(),
+    clawbackAfterMinor: bigint("clawback_after_minor", { mode: "number" }).notNull(),
+    billingEventId: uuid("billing_event_id").references(() => growthBillingEvents.id, {
+      onDelete: "restrict"
+    }),
+    reservationId: uuid("reservation_id").references(() => pointsReservations.id, {
+      onDelete: "restrict"
+    }),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => {
+    const ownerPredicate = sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`;
+    return [
+      uniqueIndex("points_ledger_entries_billing_event_unique").on(table.billingEventId),
+      uniqueIndex("points_ledger_entries_reservation_type_unique").on(
+        table.reservationId,
+        table.entryType
+      ),
+      index("points_ledger_entries_account_time_idx").on(
+        table.accountId,
+        table.occurredAt
+      ),
+      check("points_ledger_entries_currency_shape", sql`${table.currency} ~ '^[A-Z]{3}$'`),
+      check("points_ledger_entries_amount_positive", sql`${table.amountMinor} > 0`),
+      check(
+        "points_ledger_entries_balances_nonnegative",
+        sql`${table.availableAfterMinor} >= 0 AND ${table.reservedAfterMinor} >= 0 AND ${table.clawbackAfterMinor} >= 0`
+      ),
+      check(
+        "points_ledger_entries_shape",
+        sql`(${table.entryType} = 'earn' AND ${table.availableDeltaMinor} >= 0 AND ${table.reservedDeltaMinor} = 0 AND ${table.clawbackDeltaMinor} <= 0 AND ${table.availableDeltaMinor} - ${table.clawbackDeltaMinor} = ${table.amountMinor} AND ${table.billingEventId} IS NOT NULL AND ${table.reservationId} IS NULL) OR (${table.entryType} = 'reversal' AND ${table.availableDeltaMinor} <= 0 AND ${table.reservedDeltaMinor} = 0 AND ${table.clawbackDeltaMinor} >= 0 AND -${table.availableDeltaMinor} + ${table.clawbackDeltaMinor} = ${table.amountMinor} AND ${table.billingEventId} IS NOT NULL AND ${table.reservationId} IS NULL) OR (${table.entryType} = 'reserve' AND ${table.availableDeltaMinor} = -${table.amountMinor} AND ${table.reservedDeltaMinor} = ${table.amountMinor} AND ${table.clawbackDeltaMinor} = 0 AND ${table.billingEventId} IS NULL AND ${table.reservationId} IS NOT NULL) OR (${table.entryType} = 'release' AND ${table.availableDeltaMinor} = ${table.amountMinor} AND ${table.reservedDeltaMinor} = -${table.amountMinor} AND ${table.clawbackDeltaMinor} = 0 AND ${table.billingEventId} IS NULL AND ${table.reservationId} IS NOT NULL) OR (${table.entryType} = 'consume' AND ${table.availableDeltaMinor} = 0 AND ${table.reservedDeltaMinor} = -${table.amountMinor} AND ${table.clawbackDeltaMinor} = 0 AND ${table.billingEventId} IS NULL AND ${table.reservationId} IS NOT NULL)`
+      ),
+      pgPolicy("points_ledger_entries_web_read", {
+        as: "permissive",
+        for: "select",
+        to: "attention_web_runtime",
+        using: ownerPredicate
+      }),
+      pgPolicy("points_ledger_entries_web_insert", {
+        as: "permissive",
+        for: "insert",
+        to: "attention_web_runtime",
+        withCheck: ownerPredicate
+      }),
+      pgPolicy("points_ledger_entries_worker_access", {
+        as: "permissive",
+        for: "all",
+        to: "attention_worker_runtime",
+        using: sql`true`,
+        withCheck: sql`true`
+      })
+    ];
+  }
+).enableRLS();
+
 export const oauthClients = pgTable(
   "oauth_clients",
   {
@@ -375,12 +886,20 @@ export const oauthClients = pgTable(
     name: varchar("name", { length: 100 }).notNull(),
     redirectUris: jsonb("redirect_uris").$type<string[]>().notNull(),
     allowedScopes: jsonb("allowed_scopes").$type<string[]>().notNull(),
+    registrationFingerprint: char("registration_fingerprint", { length: 64 }),
     firstParty: boolean("first_party").default(false).notNull(),
     active: boolean("active").default(true).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
   },
-  (table) => [check("oauth_clients_name_not_blank", sql`btrim(${table.name}) <> ''`)]
+  (table) => [
+    index("oauth_clients_created_idx").on(table.createdAt),
+    index("oauth_clients_registration_created_idx").on(
+      table.registrationFingerprint,
+      table.createdAt
+    ),
+    check("oauth_clients_name_not_blank", sql`btrim(${table.name}) <> ''`)
+  ]
 );
 
 export const oauthAuthorizationCodes = pgTable(
@@ -609,10 +1128,14 @@ export const contents = pgTable(
     publishedAt: timestamp("published_at", { withTimezone: true }),
     cachedFaviconAssetKey: text("cached_favicon_asset_key"),
     aiSummary: text("ai_summary"),
+    aiTags: jsonb("ai_tags").$type<string[]>().default(sql`'[]'::jsonb`).notNull(),
     summaryStatus: summaryStatusEnum("summary_status").default("pending").notNull(),
     enrichmentStatus: enrichmentStatusEnum("enrichment_status").default("pending").notNull(),
     publicSafetyStatus: safetyStatusEnum("public_safety_status").default("allowed").notNull(),
     takedownStatus: takedownStatusEnum("takedown_status").default("none").notNull(),
+    communityModerationStatus: communityModerationStatusEnum("community_moderation_status")
+      .default("clear")
+      .notNull(),
     restrictionReasonCode: varchar("restriction_reason_code", { length: 100 }),
     restrictedAt: timestamp("restricted_at", { withTimezone: true }),
     restrictedByAccountId: uuid("restricted_by_account_id").references(() => accounts.id, {
@@ -855,6 +1378,12 @@ export const collections = pgTable(
         to: "attention_web_runtime",
         using: ownerPredicate,
         withCheck: ownerPredicate
+      }),
+      pgPolicy("collections_worker_read", {
+        as: "permissive",
+        for: "select",
+        to: "attention_worker_runtime",
+        using: sql`true`
       })
     ];
   }
@@ -889,6 +1418,336 @@ export const jobs = pgTable(
     )
   ]
 );
+
+export const accountDigestPreferences = pgTable(
+  "account_digest_preferences",
+  {
+    accountId: uuid("account_id")
+      .primaryKey()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    timezone: varchar("timezone", { length: 64 }).default("Asia/Shanghai").notNull(),
+    sendWindowStartMinute: smallint("send_window_start_minute").default(480).notNull(),
+    sendWindowMinutes: smallint("send_window_minutes").default(60).notNull(),
+    enabled: boolean("enabled").default(true).notNull(),
+    ...timestampColumns()
+  },
+  (table) => {
+    const ownerPredicate = sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`;
+    return [
+      check("account_digest_preferences_timezone_not_blank", sql`btrim(${table.timezone}) <> ''`),
+      check(
+        "account_digest_preferences_window_start_range",
+        sql`${table.sendWindowStartMinute} BETWEEN 0 AND 1439`
+      ),
+      check(
+        "account_digest_preferences_window_minutes_range",
+        sql`${table.sendWindowMinutes} BETWEEN 15 AND 240`
+      ),
+      check(
+        "account_digest_preferences_window_same_day",
+        sql`${table.sendWindowStartMinute} + ${table.sendWindowMinutes} <= 1440`
+      ),
+      pgPolicy("account_digest_preferences_owner_access", {
+        as: "permissive",
+        for: "all",
+        to: "attention_web_runtime",
+        using: ownerPredicate,
+        withCheck: ownerPredicate
+      }),
+      pgPolicy("account_digest_preferences_worker_read", {
+        as: "permissive",
+        for: "select",
+        to: "attention_worker_runtime",
+        using: sql`true`
+      })
+    ];
+  }
+).enableRLS();
+
+export const domainDigestSubscriptions = pgTable(
+  "domain_digest_subscriptions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    domainId: uuid("domain_id")
+      .notNull()
+      .references(() => domains.id, { onDelete: "restrict" }),
+    active: boolean("active").default(true).notNull(),
+    ...timestampColumns()
+  },
+  (table) => {
+    const ownerPredicate = sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`;
+    return [
+      uniqueIndex("domain_digest_subscriptions_account_domain_unique").on(
+        table.accountId,
+        table.domainId
+      ),
+      index("domain_digest_subscriptions_due_idx").on(table.active, table.domainId),
+      pgPolicy("domain_digest_subscriptions_owner_access", {
+        as: "permissive",
+        for: "all",
+        to: "attention_web_runtime",
+        using: ownerPredicate,
+        withCheck: ownerPredicate
+      }),
+      pgPolicy("domain_digest_subscriptions_worker_read", {
+        as: "permissive",
+        for: "select",
+        to: "attention_worker_runtime",
+        using: sql`true`
+      })
+    ];
+  }
+).enableRLS();
+
+export const digestEmailDeliveries = pgTable(
+  "digest_email_deliveries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    domainId: uuid("domain_id")
+      .notNull()
+      .references(() => domains.id, { onDelete: "restrict" }),
+    localDate: date("local_date", { mode: "string" }).notNull(),
+    timezone: varchar("timezone", { length: 64 }).notNull(),
+    windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+    windowEnd: timestamp("window_end", { withTimezone: true }).notNull(),
+    scheduledFor: timestamp("scheduled_for", { withTimezone: true }).notNull(),
+    recipientEmail: varchar("recipient_email", { length: 320 }).notNull(),
+    status: digestDeliveryStatusEnum("status").default("pending").notNull(),
+    attempts: smallint("attempts").default(0).notNull(),
+    maxAttempts: smallint("max_attempts").default(8).notNull(),
+    availableAt: timestamp("available_at", { withTimezone: true }).defaultNow().notNull(),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    lockedBy: varchar("locked_by", { length: 100 }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    providerMessageId: varchar("provider_message_id", { length: 255 }),
+    skippedReason: varchar("skipped_reason", { length: 100 }),
+    lastErrorCode: varchar("last_error_code", { length: 100 }),
+    ...timestampColumns()
+  },
+  (table) => [
+    uniqueIndex("digest_email_deliveries_account_domain_date_unique").on(
+      table.accountId,
+      table.domainId,
+      table.localDate
+    ),
+    index("digest_email_deliveries_available_idx").on(table.status, table.availableAt),
+    check("digest_email_deliveries_window_order", sql`${table.windowEnd} > ${table.windowStart}`),
+    check("digest_email_deliveries_attempts_range", sql`${table.attempts} >= 0 AND ${table.attempts} <= ${table.maxAttempts}`),
+    check("digest_email_deliveries_max_attempts_positive", sql`${table.maxAttempts} > 0`),
+    check(
+      "digest_email_deliveries_lock_shape",
+      sql`(${table.lockedAt} IS NULL AND ${table.lockedBy} IS NULL) OR (${table.lockedAt} IS NOT NULL AND ${table.lockedBy} IS NOT NULL)`
+    ),
+    check(
+      "digest_email_deliveries_sent_shape",
+      sql`(${table.status} = 'sent' AND ${table.sentAt} IS NOT NULL) OR (${table.status} <> 'sent' AND ${table.sentAt} IS NULL)`
+    ),
+    pgPolicy("digest_email_deliveries_worker_access", {
+      as: "permissive",
+      for: "all",
+      to: "attention_worker_runtime",
+      using: sql`true`,
+      withCheck: sql`true`
+    })
+  ]
+).enableRLS();
+
+export const digestEmailDeliveryItems = pgTable(
+  "digest_email_delivery_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    deliveryId: uuid("delivery_id")
+      .notNull()
+      .references(() => digestEmailDeliveries.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    domainId: uuid("domain_id")
+      .notNull()
+      .references(() => domains.id, { onDelete: "restrict" }),
+    contentId: uuid("content_id")
+      .notNull()
+      .references(() => contents.id, { onDelete: "restrict" }),
+    visibilityVersion: integer("visibility_version").notNull(),
+    ordinal: smallint("ordinal").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    uniqueIndex("digest_email_delivery_items_delivery_content_unique").on(
+      table.deliveryId,
+      table.contentId
+    ),
+    uniqueIndex("digest_email_delivery_items_account_content_unique").on(
+      table.accountId,
+      table.contentId
+    ),
+    index("digest_email_delivery_items_delivery_order_idx").on(table.deliveryId, table.ordinal),
+    check("digest_email_delivery_items_visibility_version_nonnegative", sql`${table.visibilityVersion} >= 0`),
+    check("digest_email_delivery_items_ordinal_nonnegative", sql`${table.ordinal} >= 0`),
+    pgPolicy("digest_email_delivery_items_worker_access", {
+      as: "permissive",
+      for: "all",
+      to: "attention_worker_runtime",
+      using: sql`true`,
+      withCheck: sql`true`
+    })
+  ]
+).enableRLS();
+
+export const contentReports = pgTable(
+  "content_reports",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    contentId: uuid("content_id")
+      .notNull()
+      .references(() => contents.id, { onDelete: "restrict" }),
+    reporterAccountId: uuid("reporter_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    reporterKind: contentReporterKindEnum("reporter_kind").notNull(),
+    reasonCode: varchar("reason_code", { length: 64 }).notNull(),
+    details: text("details"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => {
+    const ownerPredicate = sql`${table.reporterAccountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`;
+    return [
+      uniqueIndex("content_reports_content_reporter_unique").on(
+        table.contentId,
+        table.reporterAccountId
+      ),
+      index("content_reports_content_created_idx").on(table.contentId, table.createdAt),
+      check("content_reports_reason_not_blank", sql`btrim(${table.reasonCode}) <> ''`),
+      check(
+        "content_reports_details_length",
+        sql`${table.details} IS NULL OR char_length(${table.details}) <= 2000`
+      ),
+      pgPolicy("content_reports_web_read", {
+        as: "permissive",
+        for: "select",
+        to: "attention_web_runtime",
+        using: sql`true`
+      }),
+      pgPolicy("content_reports_web_insert", {
+        as: "permissive",
+        for: "insert",
+        to: "attention_web_runtime",
+        withCheck: ownerPredicate
+      })
+    ];
+  }
+).enableRLS();
+
+export const moderationCases = pgTable(
+  "moderation_cases",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    contentId: uuid("content_id")
+      .notNull()
+      .references(() => contents.id, { onDelete: "restrict" }),
+    openedByReportId: uuid("opened_by_report_id")
+      .notNull()
+      .references(() => contentReports.id, { onDelete: "restrict" }),
+    status: moderationCaseStatusEnum("status").default("open").notNull(),
+    resolution: moderationCaseResolutionEnum("resolution"),
+    openedAt: timestamp("opened_at", { withTimezone: true }).defaultNow().notNull(),
+    votingEndsAt: timestamp("voting_ends_at", { withTimezone: true }).notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    consumerReportCountAtOpen: smallint("consumer_report_count_at_open").notNull(),
+    hasFilterReportAtOpen: boolean("has_filter_report_at_open").notNull(),
+    eligibleFilterCountAtResolution: smallint("eligible_filter_count_at_resolution"),
+    publicVotesAtResolution: smallint("public_votes_at_resolution"),
+    hiddenVotesAtResolution: smallint("hidden_votes_at_resolution"),
+    visibilityVersionAtOpen: integer("visibility_version_at_open").notNull(),
+    visibilityVersionAtResolution: integer("visibility_version_at_resolution"),
+    ...timestampColumns()
+  },
+  (table) => [
+    uniqueIndex("moderation_cases_active_content_unique")
+      .on(table.contentId)
+      .where(sql`${table.status} IN ('open', 'requires_admin')`),
+    index("moderation_cases_status_deadline_idx").on(table.status, table.votingEndsAt),
+    check(
+      "moderation_cases_voting_window_minimum",
+      sql`${table.votingEndsAt} >= ${table.openedAt} + interval '24 hours'`
+    ),
+    check(
+      "moderation_cases_open_counts_nonnegative",
+      sql`${table.consumerReportCountAtOpen} >= 0 AND ${table.visibilityVersionAtOpen} >= 0`
+    ),
+    check(
+      "moderation_cases_resolution_counts_nonnegative",
+      sql`(${table.eligibleFilterCountAtResolution} IS NULL OR ${table.eligibleFilterCountAtResolution} >= 0) AND (${table.publicVotesAtResolution} IS NULL OR ${table.publicVotesAtResolution} >= 0) AND (${table.hiddenVotesAtResolution} IS NULL OR ${table.hiddenVotesAtResolution} >= 0) AND (${table.visibilityVersionAtResolution} IS NULL OR ${table.visibilityVersionAtResolution} >= 0)`
+    ),
+    check(
+      "moderation_cases_resolution_shape",
+      sql`(${table.status} = 'open' AND ${table.resolution} IS NULL AND ${table.resolvedAt} IS NULL AND ${table.eligibleFilterCountAtResolution} IS NULL AND ${table.publicVotesAtResolution} IS NULL AND ${table.hiddenVotesAtResolution} IS NULL AND ${table.visibilityVersionAtResolution} IS NULL) OR (${table.status} = 'resolved' AND ${table.resolution} IN ('public', 'hidden') AND ${table.resolvedAt} IS NOT NULL AND ${table.eligibleFilterCountAtResolution} IS NOT NULL AND ${table.publicVotesAtResolution} IS NOT NULL AND ${table.hiddenVotesAtResolution} IS NOT NULL AND ${table.visibilityVersionAtResolution} IS NOT NULL) OR (${table.status} = 'requires_admin' AND ${table.resolution} = 'requires_admin' AND ${table.resolvedAt} IS NOT NULL AND ${table.eligibleFilterCountAtResolution} IS NOT NULL AND ${table.publicVotesAtResolution} IS NOT NULL AND ${table.hiddenVotesAtResolution} IS NOT NULL AND ${table.visibilityVersionAtResolution} IS NOT NULL)`
+    ),
+    pgPolicy("moderation_cases_web_access", {
+      as: "permissive",
+      for: "all",
+      to: "attention_web_runtime",
+      using: sql`true`,
+      withCheck: sql`true`
+    }),
+    pgPolicy("moderation_cases_worker_access", {
+      as: "permissive",
+      for: "all",
+      to: "attention_worker_runtime",
+      using: sql`true`,
+      withCheck: sql`true`
+    })
+  ]
+).enableRLS();
+
+export const moderationVotes = pgTable(
+  "moderation_votes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    caseId: uuid("case_id")
+      .notNull()
+      .references(() => moderationCases.id, { onDelete: "restrict" }),
+    filterAccountId: uuid("filter_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    decision: moderationDecisionEnum("decision").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => {
+    const ownerPredicate = sql`${table.filterAccountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`;
+    return [
+      uniqueIndex("moderation_votes_case_filter_unique").on(
+        table.caseId,
+        table.filterAccountId
+      ),
+      index("moderation_votes_case_created_idx").on(table.caseId, table.createdAt),
+      pgPolicy("moderation_votes_web_read", {
+        as: "permissive",
+        for: "select",
+        to: "attention_web_runtime",
+        using: sql`true`
+      }),
+      pgPolicy("moderation_votes_web_insert", {
+        as: "permissive",
+        for: "insert",
+        to: "attention_web_runtime",
+        withCheck: ownerPredicate
+      }),
+      pgPolicy("moderation_votes_worker_read", {
+        as: "permissive",
+        for: "select",
+        to: "attention_worker_runtime",
+        using: sql`true`
+      })
+    ];
+  }
+).enableRLS();
 
 export const collectionEvents = pgTable(
   "collection_events",
@@ -948,6 +1807,7 @@ export const publicContentsCurrent = pgView("public_contents_current", {
   publishedAt: timestamp("published_at", { withTimezone: true }),
   cachedFaviconAssetKey: text("cached_favicon_asset_key"),
   aiSummary: text("ai_summary"),
+  aiTags: jsonb("ai_tags").$type<string[]>().notNull(),
   summaryStatus: summaryStatusEnum("summary_status").notNull(),
   enrichmentStatus: enrichmentStatusEnum("enrichment_status").notNull(),
   publicCollectionCount: integer("public_collection_count").notNull(),
@@ -971,6 +1831,7 @@ export const publicContentsCurrent = pgView("public_contents_current", {
       c.published_at,
       c.cached_favicon_asset_key,
       c.ai_summary,
+      c.ai_tags,
       c.summary_status,
       c.enrichment_status,
       count(col.id)::integer AS public_collection_count,
@@ -984,6 +1845,7 @@ export const publicContentsCurrent = pgView("public_contents_current", {
     WHERE c.content_status = 'active'
       AND c.public_safety_status = 'allowed'
       AND c.takedown_status = 'none'
+      AND c.community_moderation_status = 'clear'
       AND c.first_public_at IS NOT NULL
       AND col.collection_status = 'active'
       AND col.visibility = 'public'
@@ -1014,15 +1876,11 @@ export const publicContentAttributionsCurrent = pgView(
       fp.display_name,
       fp.avatar_url
     FROM collections col
-    JOIN contents c ON c.id = col.content_id
+    JOIN public_contents_current pc ON pc.id = col.content_id
     JOIN filter_profiles fp ON fp.account_id = col.account_id
     JOIN accounts a ON a.id = col.account_id
     JOIN domains d ON d.id = col.domain_id
-    WHERE c.content_status = 'active'
-      AND c.public_safety_status = 'allowed'
-      AND c.takedown_status = 'none'
-      AND c.first_public_at IS NOT NULL
-      AND col.collection_status = 'active'
+    WHERE col.collection_status = 'active'
       AND col.visibility = 'public'
       AND col.public_since IS NOT NULL
       AND col.filter_revoked_at IS NULL

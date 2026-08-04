@@ -5,12 +5,19 @@ import { z, ZodError } from "zod";
 import { mutationRequestError, noStoreJson } from "../../../../server/api-guard";
 import { getWebDatabase } from "../../../../server/db";
 import {
+  InvalidRequestBodyError,
+  readJsonRequestWithinLimit,
+  RequestBodyTooLargeError,
+} from "../../../../server/request-body";
+import {
   clearInvalidSessionCookie,
   getRequestSession,
 } from "../../../../server/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const MAX_PAT_BODY_BYTES = 8_192;
 
 const bodySchema = z.object({
   expires_in_days: z.number().int().min(1).max(365).default(90),
@@ -29,7 +36,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return response;
   }
   try {
-    const body = bodySchema.parse(await request.json());
+    const body = bodySchema.parse(
+      await readJsonRequestWithinLimit(request, MAX_PAT_BODY_BYTES),
+    );
     if (!session.principal.isMember && body.scopes.some((scope) => advancedScopes.has(scope))) {
       return noStoreJson({ error: { code: "membership_required" } }, { status: 403 });
     }
@@ -49,7 +58,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       warning: "此密钥只显示一次，请立即保存。",
     }, { status: 201 });
   } catch (error) {
-    if (error instanceof ZodError || error instanceof RangeError) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return noStoreJson({ error: { code: "request_too_large" } }, { status: 413 });
+    }
+    if (
+      error instanceof InvalidRequestBodyError ||
+      error instanceof ZodError ||
+      error instanceof RangeError
+    ) {
       return noStoreJson({ error: { code: "invalid_request" } }, { status: 400 });
     }
     console.error("pat_creation_failed", { name: error instanceof Error ? error.name : "UnknownError" });

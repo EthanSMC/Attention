@@ -38,11 +38,28 @@ export default async function AccountPage() {
           <strong>Agent、MCP 与微信</strong>
           <p>管理独立凭据；撤销某一种不会退出网站或解除其他连接。</p>
         </Link>
+        <Link className="account-overview-card" href="/account/digests">
+          <span>Domain 订阅</span>
+          <strong>每日 Email</strong>
+          <p>选择 AI Domain、账号时区与发送窗口；无新增内容时不会发送。</p>
+        </Link>
+        <Link className="account-overview-card" href="/account/rewards">
+          <span>邀请与积分</span>
+          <strong>季卡、年卡与续费奖励</strong>
+          <p>创建 Consumer 邀请、兑换 Filter 年卡，并查看按币种记录的续费积分。</p>
+        </Link>
         <Link className="account-overview-card" href="/account/settings">
           <span>账号安全</span>
           <strong>网名与登录方式</strong>
           <p>修改显示网名、添加密码，验证码登录始终保留。</p>
         </Link>
+        {principal.isFilter ? (
+          <Link className="account-overview-card" href="/account/court">
+            <span>Filter 小法庭</span>
+            <strong>社区复核</strong>
+            <p>查看达到举报阈值的内容，并在 24 小时窗口内投出不可更改的一票。</p>
+          </Link>
+        ) : null}
       </section>
     </div>
   );

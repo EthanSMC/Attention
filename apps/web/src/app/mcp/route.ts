@@ -7,11 +7,18 @@ import { collectFromWeb, selectCandidateFromWeb } from "../../server/collection-
 import { resolveCloudPrincipal, type CloudPrincipal } from "../../server/cloud-credentials";
 import { loadMyCollections, loadPublicContents } from "../../server/content-queries";
 import { getWebDatabase } from "../../server/db";
+import { oauthResourceMetadataUrl } from "../../server/oauth-resources";
 import { retrieveForAgent } from "../../server/agent-retrieval";
 import { publicFeedPreviewLimit } from "../../server/public-access";
+import {
+  readRequestBytesWithinLimit,
+  RequestBodyTooLargeError,
+} from "../../server/request-body";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const MAX_MCP_BODY_BYTES = 65_536;
 
 function hasScope(principal: CloudPrincipal, scope: string): boolean {
   return principal.scopes.includes(scope);
@@ -178,16 +185,13 @@ function createMcpServer(principal: CloudPrincipal): McpServer {
   return server;
 }
 
-function unauthorized(request: NextRequest): Response {
-  const origin = process.env.NEXT_PUBLIC_APP_URL
-    ? new URL(process.env.NEXT_PUBLIC_APP_URL).origin
-    : request.nextUrl.origin;
+function unauthorized(request: Request): Response {
   return Response.json(
     { error: "invalid_token", error_description: "Connect this MCP server with Attention OAuth." },
     {
       headers: {
         "Cache-Control": "no-store",
-        "WWW-Authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource"`,
+        "WWW-Authenticate": `Bearer resource_metadata="${oauthResourceMetadataUrl(request, "attention-mcp")}"`,
       },
       status: 401,
     },
@@ -202,24 +206,54 @@ function withMcpCors(response: Response): Response {
   return response;
 }
 
-async function handle(request: NextRequest): Promise<Response> {
-  const contentLength = Number(request.headers.get("content-length") ?? "0");
-  if (Number.isFinite(contentLength) && contentLength > 65_536) {
-    return withMcpCors(Response.json({ error: "request_too_large" }, { status: 413 }));
+type CloudPrincipalResolver = (
+  request: Request,
+  audience: "attention-mcp" | "attention-sync",
+) => Promise<CloudPrincipal | null>;
+
+export async function handleMcpRequest(
+  request: Request,
+  principalResolver: CloudPrincipalResolver = resolveCloudPrincipal,
+): Promise<Response> {
+  let boundedRequest: Request;
+  try {
+    const body = await readRequestBytesWithinLimit(request, MAX_MCP_BODY_BYTES);
+    const carriesBody = request.method !== "GET" && request.method !== "HEAD" && body.byteLength > 0;
+    const boundedBody = carriesBody
+      ? new Blob([
+          body.buffer.slice(
+            body.byteOffset,
+            body.byteOffset + body.byteLength,
+          ) as ArrayBuffer,
+        ])
+      : null;
+    boundedRequest = new Request(request.url, {
+      ...(boundedBody ? { body: boundedBody } : {}),
+      headers: request.headers,
+      method: request.method,
+      signal: request.signal,
+    });
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return withMcpCors(
+        Response.json({ error: "request_too_large" }, { status: 413 }),
+      );
+    }
+    throw error;
   }
-  const principal = await resolveCloudPrincipal(request, "attention-mcp");
-  if (!principal) return withMcpCors(unauthorized(request));
+  const principal = await principalResolver(boundedRequest, "attention-mcp");
+  if (!principal) return withMcpCors(unauthorized(boundedRequest));
   const transport = new WebStandardStreamableHTTPServerTransport({
     enableJsonResponse: true,
   });
   const server = createMcpServer(principal);
   await server.connect(transport);
-  return withMcpCors(await transport.handleRequest(request));
+  return withMcpCors(await transport.handleRequest(boundedRequest));
 }
 
-export async function POST(request: NextRequest): Promise<Response> { return handle(request); }
-export async function GET(request: NextRequest): Promise<Response> { return handle(request); }
-export async function DELETE(request: NextRequest): Promise<Response> { return handle(request); }
+export async function POST(request: NextRequest): Promise<Response> { return handleMcpRequest(request); }
+export async function GET(request: NextRequest): Promise<Response> { return handleMcpRequest(request); }
+export async function DELETE(request: NextRequest): Promise<Response> { return handleMcpRequest(request); }
 
 export function OPTIONS(): Response {
   return new Response(null, {

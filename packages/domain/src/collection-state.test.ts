@@ -13,6 +13,7 @@ const now = new Date("2026-07-31T08:00:00.000Z");
 const filter = { filterActive: true, memberActive: true };
 const member = { filterActive: false, memberActive: true };
 const safeContent = {
+  communityModerationStatus: "clear" as const,
   contentStatus: "active" as const,
   publicSafetyStatus: "allowed" as const,
   takedownStatus: "none" as const
@@ -53,6 +54,22 @@ describe("collection state", () => {
 
     expect(republished.moderationStatus).toBe("blocked");
     expect(isEffectivelyPublic(republished, filter, safeContent)).toBe(false);
+  });
+
+  it("keeps pending-review and hidden content off public surfaces", () => {
+    const collection = createCollectionState(filter, now, "public");
+    expect(
+      isEffectivelyPublic(collection, filter, {
+        ...safeContent,
+        communityModerationStatus: "pending_review",
+      }),
+    ).toBe(false);
+    expect(
+      isEffectivelyPublic(collection, filter, {
+        ...safeContent,
+        communityModerationStatus: "hidden",
+      }),
+    ).toBe(false);
   });
 
   it("requires safe active content for public eligibility", () => {

@@ -3,17 +3,20 @@ import {
   asc,
   collectionEvents,
   collections,
+  CollectionRepositoryError,
   contents,
   eq,
   gt,
   or,
+  publicContentsCurrent,
   setCollectionVisibility,
   deleteCollection,
   sql,
   type AttentionDatabase,
 } from "@attention/db";
+import { resolveAccountCapabilities } from "@attention/auth";
 
-import { collectFromWeb } from "./collection-service";
+import { collectFromWeb, CollectionServiceError } from "./collection-service";
 import type { CloudPrincipal } from "./cloud-credentials";
 
 interface SyncCursor {
@@ -60,61 +63,71 @@ export async function pullSyncEvents(
 ) {
   const cursor = decodeCursor(input.cursor);
   if (input.cursor && !cursor) throw new RangeError("invalid_cursor");
-  const rows = await db.transaction(async (tx) => {
-    await tx.execute(sql`select set_config('app.account_id', ${accountId}, true)`);
-    return tx
-      .select({
-        collectionId: collectionEvents.collectionId,
-        contentId: collectionEvents.contentId,
-        eventId: collectionEvents.id,
-        eventType: collectionEvents.eventType,
-        nextState: collectionEvents.nextState,
-        occurredAt: collectionEvents.occurredAt,
-        outboundUrl: contents.outboundUrl,
-        source: contents.source,
-        summary: contents.aiSummary,
-        summaryStatus: contents.summaryStatus,
-        title: contents.title,
-      })
-      .from(collectionEvents)
-      .innerJoin(contents, eq(contents.id, collectionEvents.contentId))
-      .innerJoin(collections, eq(collections.id, collectionEvents.collectionId))
-      .where(
-        and(
-          eq(collectionEvents.accountId, accountId),
-          cursor
-            ? or(
-                gt(collectionEvents.occurredAt, new Date(cursor.occurredAt)),
-                and(
-                  eq(collectionEvents.occurredAt, new Date(cursor.occurredAt)),
-                  gt(collectionEvents.id, cursor.eventId),
-                ),
-              )
-            : undefined,
-        ),
-      )
-      .orderBy(asc(collectionEvents.occurredAt), asc(collectionEvents.id))
-      .limit(input.limit + 1);
-  });
+  const [capabilities, rows] = await Promise.all([
+    resolveAccountCapabilities(db, accountId),
+    db.transaction(async (tx) => {
+      await tx.execute(sql`select set_config('app.account_id', ${accountId}, true)`);
+      return tx
+        .select({
+          collectionId: collectionEvents.collectionId,
+          contentId: collectionEvents.contentId,
+          eventId: collectionEvents.id,
+          eventType: collectionEvents.eventType,
+          nextState: collectionEvents.nextState,
+          occurredAt: collectionEvents.occurredAt,
+          outboundUrl: contents.outboundUrl,
+          publicContentId: publicContentsCurrent.id,
+          source: contents.source,
+          summary: contents.aiSummary,
+          summaryStatus: contents.summaryStatus,
+          tags: contents.aiTags,
+          title: contents.title,
+        })
+        .from(collectionEvents)
+        .innerJoin(contents, eq(contents.id, collectionEvents.contentId))
+        .innerJoin(collections, eq(collections.id, collectionEvents.collectionId))
+        .leftJoin(publicContentsCurrent, eq(publicContentsCurrent.id, contents.id))
+        .where(
+          and(
+            eq(collectionEvents.accountId, accountId),
+            cursor
+              ? or(
+                  gt(collectionEvents.occurredAt, new Date(cursor.occurredAt)),
+                  and(
+                    eq(collectionEvents.occurredAt, new Date(cursor.occurredAt)),
+                    gt(collectionEvents.id, cursor.eventId),
+                  ),
+                )
+              : undefined,
+          ),
+        )
+        .orderBy(asc(collectionEvents.occurredAt), asc(collectionEvents.id))
+        .limit(input.limit + 1);
+    }),
+  ]);
   const hasMore = rows.length > input.limit;
   const selected = rows.slice(0, input.limit);
   const last = selected.at(-1);
   return {
-    events: selected.map((row) => ({
-      collection_id: row.collectionId,
-      content: {
-        content_id: row.contentId,
-        original_url: row.outboundUrl,
-        source: row.source,
-        summary: row.summary,
-        summary_status: row.summaryStatus,
-        title: row.title,
-      },
-      event_id: row.eventId,
-      event_type: row.eventType,
-      next_state: row.nextState,
-      occurred_at: row.occurredAt.toISOString(),
-    })),
+    events: selected.map((row) => {
+      const derivedVisible = capabilities.isMember || row.publicContentId !== null;
+      return {
+        collection_id: row.collectionId,
+        content: {
+          content_id: row.contentId,
+          original_url: row.outboundUrl,
+          source: row.source,
+          summary: derivedVisible ? row.summary : null,
+          summary_status: derivedVisible ? row.summaryStatus : "unavailable",
+          tags: derivedVisible ? row.tags : [],
+          title: row.title,
+        },
+        event_id: row.eventId,
+        event_type: row.eventType,
+        next_state: row.nextState,
+        occurred_at: row.occurredAt.toISOString(),
+      };
+    }),
     has_more: hasMore,
     next_cursor: last
       ? encodeCursor({ eventId: last.eventId, occurredAt: last.occurredAt.toISOString() })
@@ -153,9 +166,12 @@ export async function pushSyncMutations(
         results.push({ client_mutation_id: mutation.clientMutationId, collection_id: collection.id, status: "applied", visibility: collection.visibility });
       }
     } catch (error) {
+      const errorCode = error instanceof CollectionServiceError || error instanceof CollectionRepositoryError
+        ? error.code
+        : "mutation_failed";
       results.push({
         client_mutation_id: mutation.clientMutationId,
-        error: error instanceof Error ? error.message : "mutation_failed",
+        error: errorCode,
         status: "rejected",
       });
     }

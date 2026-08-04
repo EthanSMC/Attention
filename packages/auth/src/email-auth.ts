@@ -14,6 +14,11 @@ import {
 } from "@attention/db";
 
 import { type IssuedSession, defaultSessionTtlSeconds } from "./sessions";
+import {
+  GrowthError,
+  prepareConsumerReferralIntent,
+  redeemConsumerReferralRegistration,
+} from "./growth";
 import { createOpaqueToken, hashOpaqueToken } from "./tokens";
 
 export const currentTermsVersion = "2026-08-04";
@@ -34,6 +39,7 @@ export type EmailAuthErrorCode =
   | "invalid_challenge"
   | "invalid_code"
   | "invalid_email"
+  | "referral_registration_unavailable"
   | "rate_limited";
 
 export class EmailAuthError extends Error {
@@ -133,6 +139,7 @@ async function createAccount(
   db: Parameters<Parameters<AttentionDatabase["transaction"]>[0]>[0],
   email: string,
   now: Date,
+  signupSource: "consumer_referral" | "direct",
 ): Promise<{ id: string; displayName: string; stableHandle: string }> {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const identity = randomHandle();
@@ -144,7 +151,7 @@ async function createAccount(
         emailVerifiedAt: now,
         primaryEmail: email,
         privacyVersion: currentPrivacyVersion,
-        signupSource: "direct",
+        signupSource,
         stableHandle: identity.stableHandle,
         status: "active",
         termsAcceptedAt: now,
@@ -168,6 +175,7 @@ export async function createLoginChallenge(
     email: string;
     requesterFingerprint?: string;
     returnTo?: string;
+    consumerInviteToken?: string;
     now?: Date;
     ttlSeconds?: number;
   },
@@ -177,50 +185,83 @@ export async function createLoginChallenge(
   const ttlSeconds = input.ttlSeconds ?? defaultChallengeTtlSeconds;
   const hourAgo = new Date(now.getTime() - 60 * 60 * 1_000);
 
-  const recentForEmail = await db
-    .select({ createdAt: loginChallenges.createdAt })
-    .from(loginChallenges)
-    .where(and(eq(loginChallenges.email, email), gte(loginChallenges.createdAt, hourAgo)))
-    .orderBy(desc(loginChallenges.createdAt));
-
-  const newest = recentForEmail[0];
-  if (newest) {
-    const elapsedSeconds = Math.floor((now.getTime() - newest.createdAt.getTime()) / 1_000);
-    if (elapsedSeconds < defaultResendCooldownSeconds) {
-      throw new EmailAuthError("rate_limited", {
-        retryAfterSeconds: defaultResendCooldownSeconds - elapsedSeconds,
-      });
-    }
-  }
-  if (recentForEmail.length >= defaultEmailHourlyLimit) {
-    throw new EmailAuthError("rate_limited", { retryAfterSeconds: 60 * 60 });
-  }
-
-  if (input.requesterFingerprint) {
-    const recentForFingerprint = await db
-      .select({ id: loginChallenges.id })
-      .from(loginChallenges)
-      .where(
-        and(
-          eq(loginChallenges.requesterFingerprint, input.requesterFingerprint),
-          gte(loginChallenges.createdAt, hourAgo),
-        ),
-      );
-    if (recentForFingerprint.length >= defaultFingerprintHourlyLimit) {
-      throw new EmailAuthError("rate_limited", { retryAfterSeconds: 60 * 60 });
-    }
-  }
-
   const challengeId = randomUUID();
   const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
   const expiresAt = new Date(now.getTime() + ttlSeconds * 1_000);
+  let consumerReferralId: string | undefined;
+  if (input.consumerInviteToken) {
+    try {
+      consumerReferralId = await prepareConsumerReferralIntent(db, {
+        email,
+        now,
+        ...(input.requesterFingerprint
+          ? { requesterFingerprint: input.requesterFingerprint }
+          : {}),
+        token: input.consumerInviteToken,
+      });
+    } catch (error) {
+      if (error instanceof GrowthError) {
+        if (error.code === "rate_limited") {
+          throw new EmailAuthError("rate_limited", { retryAfterSeconds: 60 * 60 });
+        }
+        throw new EmailAuthError("referral_registration_unavailable");
+      }
+      throw error;
+    }
+  }
   await db.transaction(async (tx) => {
+    // Serialize the complete count-to-insert decision. Locks are always taken
+    // in email-then-source order so parallel starts cannot overrun either
+    // quota while still avoiding cross-key deadlocks.
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`email-login-challenge:${email}`}, 0))`,
+    );
+    if (input.requesterFingerprint) {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`email-login-source:${input.requesterFingerprint}`}, 0))`,
+      );
+    }
+
+    const recentForEmail = await tx
+      .select({ createdAt: loginChallenges.createdAt })
+      .from(loginChallenges)
+      .where(and(eq(loginChallenges.email, email), gte(loginChallenges.createdAt, hourAgo)))
+      .orderBy(desc(loginChallenges.createdAt));
+    const newest = recentForEmail[0];
+    if (newest) {
+      const elapsedSeconds = Math.floor((now.getTime() - newest.createdAt.getTime()) / 1_000);
+      if (elapsedSeconds < defaultResendCooldownSeconds) {
+        throw new EmailAuthError("rate_limited", {
+          retryAfterSeconds: defaultResendCooldownSeconds - elapsedSeconds,
+        });
+      }
+    }
+    if (recentForEmail.length >= defaultEmailHourlyLimit) {
+      throw new EmailAuthError("rate_limited", { retryAfterSeconds: 60 * 60 });
+    }
+
+    if (input.requesterFingerprint) {
+      const recentForFingerprint = await tx
+        .select({ id: loginChallenges.id })
+        .from(loginChallenges)
+        .where(
+          and(
+            eq(loginChallenges.requesterFingerprint, input.requesterFingerprint),
+            gte(loginChallenges.createdAt, hourAgo),
+          ),
+        );
+      if (recentForFingerprint.length >= defaultFingerprintHourlyLimit) {
+        throw new EmailAuthError("rate_limited", { retryAfterSeconds: 60 * 60 });
+      }
+    }
+
     await tx
       .update(loginChallenges)
       .set({ consumedAt: now })
       .where(and(eq(loginChallenges.email, email), isNull(loginChallenges.consumedAt)));
     await tx.insert(loginChallenges).values({
       codeHash: challengeHash(challengeId, email, code),
+      consumerReferralId,
       createdAt: now,
       email,
       expiresAt,
@@ -297,13 +338,28 @@ export async function verifyLoginChallenge(
       .for("update")
       .limit(1);
     let accountCreated = false;
+    if (account && challenge.consumerReferralId) {
+      return { error: "referral_registration_unavailable" as const };
+    }
     if (!account) {
       if (!input.acceptTerms) return { error: "consent_required" as const };
       account = {
-        ...(await createAccount(tx, challenge.email, now)),
+        ...(await createAccount(
+          tx,
+          challenge.email,
+          now,
+          challenge.consumerReferralId ? "consumer_referral" : "direct",
+        )),
         status: "active" as const,
       };
       accountCreated = true;
+      if (challenge.consumerReferralId) {
+        await redeemConsumerReferralRegistration(tx, {
+          inviteeAccountId: account.id,
+          now,
+          referralId: challenge.consumerReferralId,
+        });
+      }
     } else if (account.status !== "active") {
       return { error: "account_unavailable" as const };
     }
@@ -342,6 +398,14 @@ export async function verifyLoginChallenge(
       },
       stableHandle: account.stableHandle,
     };
+    }).catch((error: unknown) => {
+    if (
+      error instanceof GrowthError &&
+      error.code === "referral_registration_unavailable"
+    ) {
+      throw new EmailAuthError("referral_registration_unavailable");
+    }
+    throw error;
   });
 
   if ("error" in result) throw new EmailAuthError(result.error);

@@ -2,13 +2,14 @@ import { oauthScopes } from "@attention/auth";
 import type { NextRequest, NextResponse } from "next/server";
 
 import { noStoreJson } from "../../../server/api-guard";
+import { publicWebOrigin } from "../../../server/oauth-resources";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: NextRequest): Promise<NextResponse> {
-  const origin = process.env.NEXT_PUBLIC_APP_URL
-    ? new URL(process.env.NEXT_PUBLIC_APP_URL).origin
-    : request.nextUrl.origin;
+export function handleOAuthAuthorizationServerMetadataRequest(
+  request: Request,
+): NextResponse {
+  const origin = publicWebOrigin(request);
   return noStoreJson({
     authorization_endpoint: `${origin}/oauth/authorize`,
     code_challenge_methods_supported: ["S256"],
@@ -21,4 +22,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     token_endpoint: `${origin}/oauth/token`,
     token_endpoint_auth_methods_supported: ["none"],
   });
+}
+
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  return handleOAuthAuthorizationServerMetadataRequest(request);
 }

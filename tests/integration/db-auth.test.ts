@@ -1,5 +1,21 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
+
+import {
+  Client,
+  discoverOAuthServerInfo,
+  exchangeAuthorization,
+  type OAuthClientMetadata,
+  refreshAuthorization,
+  registerClient,
+  startAuthorization,
+  StreamableHTTPClientTransport,
+} from "../../apps/web/src/test-support/mcp-sdk";
+import { handleOAuthAuthorizationServerMetadataRequest } from "../../apps/web/src/app/.well-known/oauth-authorization-server/route";
+import { handleMcpProtectedResourceMetadataRequest } from "../../apps/web/src/app/.well-known/oauth-protected-resource/route";
+import { handleMcpRequest } from "../../apps/web/src/app/mcp/route";
+import { handleOAuthRegistrationRequest } from "../../apps/web/src/app/oauth/register/route";
+import { handleOAuthTokenRequest } from "../../apps/web/src/app/oauth/token/route";
 
 import {
   collectFromWeb,
@@ -7,6 +23,12 @@ import {
 } from "../../apps/web/src/server/collection-service";
 import type { CollectionServiceError } from "../../apps/web/src/server/collection-service";
 import {
+  findOwnedOutboundUrl,
+  findPublicOutboundUrl,
+  isPublicContentInsidePreview,
+} from "../../apps/web/src/server/outbound";
+import {
+  loadAgentCandidates,
   loadMyCollections,
   loadPublicContents
 } from "../../apps/web/src/server/content-queries";
@@ -14,7 +36,11 @@ import {
   pullSyncEvents,
   pushSyncMutations,
 } from "../../apps/web/src/server/sync-service";
-import { createStubHandlers } from "../../apps/worker/src/handlers";
+import {
+  createStubHandlers,
+  executeClaimedJob,
+  shouldScheduleHostedAi,
+} from "../../apps/worker/src/handlers";
 import {
   claimNextJob,
   deleteExpiredCandidateSets,
@@ -22,6 +48,23 @@ import {
   reapExhaustedJobs
 } from "../../apps/worker/src/job-repository";
 import { runWorker } from "../../apps/worker/src/worker";
+import { createProductionHandlers } from "../../apps/worker/src/production-handlers";
+import {
+  claimNextDigestDelivery,
+  createDigestDelivery,
+  listDigestScheduleCandidates,
+  loadCurrentDeliveryContext,
+  reapExhaustedDigestDeliveries,
+  revalidateDigestItems,
+} from "../../apps/worker/src/digest-repository";
+import { digestContentWindow } from "../../apps/worker/src/digest-time";
+import { processDigestDelivery } from "../../apps/worker/src/digest-worker";
+import type { WorkerConfig } from "../../apps/worker/src/config";
+import {
+  loadDigestSettings,
+  updateDigestSettings,
+} from "../../apps/web/src/server/digest-settings";
+import type { DigestSettingsError } from "../../apps/web/src/server/digest-settings";
 
 import {
   completeChannelPendingRequest,
@@ -29,14 +72,22 @@ import {
   createApiCredential,
   createAuthorizationCode,
   createChannelBindIntent,
+  createConsumerInvite,
   createInvitation,
   createLoginChallenge,
   exchangeAuthorizationCode,
   hashOpaqueToken,
   inspectInvitation,
   inspectChannelBindIntent,
+  issueFilterAnnualCode,
+  loadGrowthDashboard,
   loginWithPassword,
+  prepareConsumerReferralIntent,
+  recordPaidSubscriptionBound,
+  recordReferralRenewalReversal,
+  recordSettledReferralRenewal,
   readChannelPendingResult,
+  redeemFilterAnnualCode,
   redeemInvitation,
   registerPublicOAuthClient,
   resolveApiCredential,
@@ -45,6 +96,9 @@ import {
   resolveSession,
   revokeApiCredential,
   revokeOAuthClientConnection,
+  reserveRenewalPoints,
+  releaseRenewalPoints,
+  consumeRenewalPoints,
   setPassword,
   validateAuthorizationRequest,
   verifyLoginChallenge,
@@ -52,24 +106,44 @@ import {
 } from "@attention/auth";
 import {
   accounts,
+  castModerationVote,
   collectionEvents,
   collections,
+  consumerReferrals,
   contentLinks,
+  contentReports,
   contents,
   createDatabase,
   deleteCollection,
   domains,
+  digestEmailDeliveries,
+  digestEmailDeliveryItems,
+  entitlements,
   eq,
   filterProfiles,
+  filterAnnualCodes,
+  growthBillingEvents,
+  growthTokenAttempts,
   inputAttempts,
   invitations,
   jobs,
+  listModerationCourtCases,
+  moderationCases,
+  moderationVotes,
+  membershipGrants,
+  type ModerationRepositoryError,
   pendingCandidateSets,
   publicContentAttributionsCurrent,
   publicContentsCurrent,
+  pointsBalances,
+  pointsLedgerEntries,
+  pointsReservations,
+  resolveDueModerationCases,
   sessions,
+  subscriptions,
   setCollectionVisibility,
   sql,
+  submitContentReport,
   upsertCollection,
   upsertContentByIdentity,
   type DatabaseHandle
@@ -86,6 +160,11 @@ process.env.ATTENTION_CHANNEL_SECRET ??=
 process.env.FETCHER_BASE_URL = "http://127.0.0.1:4100";
 process.env.FETCHER_SHARED_SECRET =
   "attention-fetcher-integration-secret-at-least-32-characters";
+
+const oauthResources = {
+  "attention-mcp": "http://localhost:3000/mcp",
+  "attention-sync": "http://localhost:3000/api/sync",
+} as const;
 
 describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
   let handle: DatabaseHandle;
@@ -120,6 +199,10 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     await handle.close();
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   async function aiDomainId(): Promise<string> {
     const [domain] = await handle.db
       .select({ id: domains.id })
@@ -147,6 +230,79 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
     if (!principal) throw new Error("Expected a resolved session principal");
     return principal;
+  }
+
+  async function createEmailAccount(email: string, now: Date) {
+    const challenge = await createLoginChallenge(handle.db, { email, now });
+    return verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: challenge.challengeId,
+      code: challenge.code,
+      now,
+    });
+  }
+
+  async function createActiveSubscription(input: {
+    accountId: string;
+    currentPeriodEnd: Date;
+    currentPeriodStart: Date;
+    provider: string;
+    suffix: string;
+  }): Promise<string> {
+    const [subscription] = await handle.db
+      .insert(subscriptions)
+      .values({
+        accountId: input.accountId,
+        currentPeriodEnd: input.currentPeriodEnd,
+        currentPeriodStart: input.currentPeriodStart,
+        firstChargeAt: input.currentPeriodStart,
+        introEligible: false,
+        provider: input.provider,
+        providerCustomerId: `customer-${input.suffix}`,
+        providerSubscriptionId: `subscription-${input.suffix}`,
+        status: "active",
+      })
+      .returning({ id: subscriptions.id });
+    if (!subscription) throw new Error("Expected a subscription");
+    return subscription.id;
+  }
+
+  async function createPublicContent(
+    filterAccountId: string,
+    suffix: string,
+    firstPublicAt: Date,
+  ) {
+    const content = await upsertContentByIdentity(handle.db, {
+      adapterVersion: "1",
+      dedupeKey: `generic:v1:https://example.com/${suffix}`,
+      normalizedUrl: `https://example.com/${suffix}`,
+      outboundUrl: `https://example.com/${suffix}`,
+      source: "example.com",
+      sourceAdapter: "generic_web",
+    });
+    const collection = await upsertCollection(handle.db, {
+      accountId: filterAccountId,
+      contentId: content.content.id,
+      domainId: await aiDomainId(),
+      sourceChannel: "web",
+      visibility: "private",
+    });
+    await setCollectionVisibility(handle.db, {
+      accountId: filterAccountId,
+      collectionId: collection.collection.id,
+      now: firstPublicAt,
+      visibility: "public",
+    });
+    await handle.db
+      .update(contents)
+      .set({
+        aiSummary: `摘要 ${suffix}`,
+        author: `作者 ${suffix}`,
+        summaryStatus: "ready",
+        title: `标题 ${suffix}`,
+      })
+      .where(eq(contents.id, content.content.id));
+    return { collection, content };
   }
 
   it("creates a Free account only after email verification and allows private collection", async () => {
@@ -197,6 +353,82 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     })).rejects.toMatchObject<Partial<CollectionServiceError>>({ code: "filter_required", httpStatus: 403 });
   });
 
+  it("serializes concurrent email challenge starts before count-to-insert", async () => {
+    const firstRuntime = createDatabase(databaseUrl!, { maxConnections: 1 });
+    const secondRuntime = createDatabase(databaseUrl!, { maxConnections: 1 });
+    const now = new Date("2026-08-04T12:00:00.000Z");
+    try {
+      await Promise.all([
+        firstRuntime.sql.unsafe("SET ROLE attention_web_runtime"),
+        secondRuntime.sql.unsafe("SET ROLE attention_web_runtime"),
+      ]);
+      const results = await Promise.allSettled([
+        createLoginChallenge(firstRuntime.db, {
+          email: "concurrent-otp@example.com",
+          now,
+          requesterFingerprint: "d".repeat(64),
+        }),
+        createLoginChallenge(secondRuntime.db, {
+          email: "concurrent-otp@example.com",
+          now,
+          requesterFingerprint: "d".repeat(64),
+        }),
+      ]);
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(results.filter((result) => result.status === "rejected")).toEqual([
+        expect.objectContaining({ reason: expect.objectContaining({ code: "rate_limited" }) }),
+      ]);
+    } finally {
+      await Promise.all([
+        firstRuntime.sql.unsafe("RESET ROLE").catch(() => undefined),
+        secondRuntime.sql.unsafe("RESET ROLE").catch(() => undefined),
+      ]);
+      await Promise.all([firstRuntime.close(), secondRuntime.close()]);
+    }
+  });
+
+  it("enforces the dynamic registration source quota under concurrency", async () => {
+    vi.stubEnv("ATTENTION_OAUTH_REGISTRATION_SOURCE_HOURLY_LIMIT", "3");
+    try {
+      const results = await Promise.allSettled(
+        Array.from({ length: 5 }, (_, index) => registerPublicOAuthClient(handle.db, {
+          name: `Concurrent DCR ${index}`,
+          requesterFingerprint: "e".repeat(64),
+          redirectUris: [`http://127.0.0.1:${44000 + index}/callback`],
+        })),
+      );
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(3);
+      expect(results.filter((result) => result.status === "rejected")).toHaveLength(2);
+      for (const rejected of results.filter((result) => result.status === "rejected")) {
+        expect(rejected).toEqual(
+          expect.objectContaining({ reason: expect.objectContaining({ code: "invalid_request" }) }),
+        );
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("serializes Consumer growth-token attempt quotas under concurrency", async () => {
+    const now = new Date("2026-08-04T12:00:00.000Z");
+    const results = await Promise.allSettled(
+      Array.from({ length: 25 }, () => prepareConsumerReferralIntent(handle.db, {
+        email: "growth-attempt@example.com",
+        now,
+        requesterFingerprint: "f".repeat(64),
+        token: "not-a-valid-consumer-referral-token".repeat(2),
+      })),
+    );
+    const codes = results.map((result) =>
+      result.status === "rejected"
+        ? (result.reason as { code?: string }).code
+        : "unexpected_success",
+    );
+    expect(codes.filter((code) => code === "referral_registration_unavailable"))
+      .toHaveLength(20);
+    expect(codes.filter((code) => code === "rate_limited")).toHaveLength(5);
+  });
+
   it("syncs Free collections and forces first historical imports to remain private", async () => {
     const challenge = await createLoginChallenge(handle.db, { email: "sync@example.com" });
     const verified = await verifyLoginChallenge(handle.db, {
@@ -230,6 +462,17 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       { status: "applied", result: { current_visibility: "private" } },
       { status: "applied", result: { current_visibility: "private" } },
     ]);
+    await handle.db.update(contents).set({
+      aiSummary: "A different Member's private derived summary",
+      aiTags: ["private-derived"],
+      enrichmentStatus: "complete",
+      summaryStatus: "ready",
+    });
+    const privateCollections = await loadMyCollections(handle.db, verified.accountId);
+    expect(privateCollections).toHaveLength(2);
+    expect(privateCollections.every((item) =>
+      item.summary === null && item.summaryStatus === "unavailable" && item.tags.length === 0
+    )).toBe(true);
 
     const first = await pullSyncEvents(handle.db, verified.accountId, {
       cursor: null,
@@ -237,12 +480,71 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
     expect(first.has_more).toBe(true);
     expect(first.events[0]?.content.original_url).toMatch(/^https:\/\/example\.org\//u);
+    expect(first.events[0]?.content).toMatchObject({
+      summary: null,
+      summary_status: "unavailable",
+      tags: [],
+    });
     const second = await pullSyncEvents(handle.db, verified.accountId, {
       cursor: first.next_cursor,
       limit: 10,
     });
     expect(second.events).toHaveLength(1);
     expect(second.has_more).toBe(false);
+    expect(second.events[0]?.content).toMatchObject({
+      summary: null,
+      summary_status: "unavailable",
+      tags: [],
+    });
+  });
+
+  it("lets Free reuse derived metadata only after the canonical Content is public", async () => {
+    const challenge = await createLoginChallenge(handle.db, { email: "public-reuse@example.com" });
+    const verified = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: challenge.challengeId,
+      code: challenge.code,
+    });
+    const freePrincipal = await resolveSession(handle.db, verified.session.token, { touch: false });
+    if (!freePrincipal) throw new Error("Expected a Free principal");
+    const freeCollection = await collectFromWeb(handle.db, freePrincipal, {
+      idempotency_key: "public-reuse-free",
+      raw_input: "https://example.org/public-reuse",
+      visibility: "private",
+    });
+    if (freeCollection.status !== "accepted" &&
+      freeCollection.status !== "merged_with_existing_content") {
+      throw new Error("Expected the Free collection");
+    }
+    await handle.db
+      .update(contents)
+      .set({
+        aiSummary: "Publicly reusable derived summary",
+        aiTags: ["public-derived"],
+        enrichmentStatus: "complete",
+        summaryStatus: "ready",
+      })
+      .where(eq(contents.id, freeCollection.content_id));
+    const beforePublic = await loadMyCollections(handle.db, verified.accountId);
+    expect(beforePublic[0]).toMatchObject({
+      summary: null,
+      summaryStatus: "unavailable",
+      tags: [],
+    });
+
+    const { redeemed } = await createRedeemedAccount("filter", "public-reuse");
+    const filterPrincipal = await principalFor(redeemed);
+    await collectFromWeb(handle.db, filterPrincipal, {
+      idempotency_key: "public-reuse-filter",
+      raw_input: "https://example.org/public-reuse",
+      visibility: "public",
+    });
+    const afterPublic = await loadMyCollections(handle.db, verified.accountId);
+    expect(afterPublic[0]).toMatchObject({
+      summary: "Publicly reusable derived summary",
+      summaryStatus: "ready",
+      tags: ["public-derived"],
+    });
   });
 
   it("supports optional password login without changing the browser session credential", async () => {
@@ -297,38 +599,200 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     const verified = await verifyLoginChallenge(handle.db, { acceptTerms: true, challengeId: challenge.challengeId, code: challenge.code });
     const verifier = "oauth-pkce-verifier-that-is-at-least-forty-three-characters-123";
     const challengeValue = createHash("sha256").update(verifier).digest("base64url");
+    await expect(registerPublicOAuthClient(handle.db, {
+      name: "Unsafe redirect client",
+      requesterFingerprint: "a".repeat(64),
+      redirectUris: ["https://client.example/callback#fragment"],
+    })).rejects.toMatchObject({ code: "invalid_request" });
     const client = await registerPublicOAuthClient(handle.db, {
       name: "Attention Test Agent",
+      requesterFingerprint: "b".repeat(64),
       redirectUris: ["http://127.0.0.1:43819/callback"],
     });
     const request = await validateAuthorizationRequest(handle.db, {
-      audience: "attention-mcp",
       clientId: client.clientId,
       codeChallenge: challengeValue,
       codeChallengeMethod: "S256",
       redirectUri: "http://127.0.0.1:43819/callback",
+      resource: oauthResources["attention-mcp"],
+      resources: oauthResources,
       responseType: "code",
       scope: "profile:read collection:read collection:write public:read",
       state: "test-state",
     });
     const code = await createAuthorizationCode(handle.db, verified.accountId, request);
+    await expect(exchangeAuthorizationCode(handle.db, {
+      clientId: client.clientId,
+      code,
+      codeVerifier: verifier,
+      redirectUri: request.redirectUri,
+      resource: oauthResources["attention-sync"],
+      resources: oauthResources,
+    })).rejects.toMatchObject({ code: "invalid_target" });
     const pair = await exchangeAuthorizationCode(handle.db, {
       clientId: client.clientId,
       code,
       codeVerifier: verifier,
       redirectUri: request.redirectUri,
+      resource: request.resource,
+      resources: oauthResources,
     });
     await expect(exchangeAuthorizationCode(handle.db, {
       clientId: client.clientId,
       code,
       codeVerifier: verifier,
       redirectUri: request.redirectUri,
+      resource: request.resource,
+      resources: oauthResources,
     })).rejects.toMatchObject({ code: "invalid_grant" });
     const oauthPrincipal = await resolveOAuthAccessToken(handle.db, pair.accessToken, { audience: "attention-mcp" });
     expect(oauthPrincipal).toMatchObject({ accountId: verified.accountId, isMember: false });
     await revokeOAuthClientConnection(handle.db, verified.accountId, client.clientId);
     expect(await resolveOAuthAccessToken(handle.db, pair.accessToken, { audience: "attention-mcp" })).toBeNull();
     expect(await resolveSession(handle.db, verified.session.token, { touch: false })).not.toBeNull();
+  });
+
+  it("completes SDK DCR, RFC 8707 PKCE, token exchange, initialize, and tools/list", async () => {
+    const origin = "http://localhost:3000";
+    const redirectUri = "http://127.0.0.1:43820/callback";
+    const scope = "profile:read collection:read collection:write public:read";
+    const resource = new URL(oauthResources["attention-mcp"]);
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", origin);
+    vi.stubEnv("ATTENTION_MCP_PUBLIC_URL", oauthResources["attention-mcp"]);
+    vi.stubEnv("ATTENTION_SYNC_PUBLIC_URL", oauthResources["attention-sync"]);
+    const clientMetadata: OAuthClientMetadata = {
+      application_type: "native",
+      client_name: "Attention SDK integration client",
+      contacts: ["sdk-client@example.com"],
+      grant_types: ["authorization_code", "refresh_token"],
+      redirect_uris: [redirectUri],
+      response_types: ["code"],
+      software_id: "attention-sdk-integration-client",
+      software_version: "1.0.0",
+      token_endpoint_auth_method: "client_secret_post",
+    };
+    const routeFetch = async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const request = new Request(input, init);
+      const pathname = new URL(request.url).pathname;
+      if (pathname === "/.well-known/oauth-protected-resource/mcp") {
+        return new Response(null, { status: 404 });
+      }
+      if (pathname === "/.well-known/oauth-protected-resource") {
+        return handleMcpProtectedResourceMetadataRequest(request);
+      }
+      if (pathname === "/.well-known/oauth-authorization-server") {
+        return handleOAuthAuthorizationServerMetadataRequest(request);
+      }
+      if (pathname === "/oauth/register") {
+        return handleOAuthRegistrationRequest(request, handle.db);
+      }
+      if (pathname === "/oauth/token") {
+        return handleOAuthTokenRequest(request, handle.db);
+      }
+      throw new Error(`Unexpected OAuth test request: ${request.method} ${request.url}`);
+    };
+
+    const challenge = await createLoginChallenge(handle.db, { email: "oauth-sdk@example.com" });
+    const verified = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: challenge.challengeId,
+      code: challenge.code,
+    });
+    const serverInfo = await discoverOAuthServerInfo(resource, { fetchFn: routeFetch });
+    if (!serverInfo.authorizationServerMetadata) {
+      throw new Error("Expected OAuth authorization server metadata");
+    }
+    const metadata = serverInfo.authorizationServerMetadata;
+    expect(serverInfo).toMatchObject({
+      authorizationServerUrl: origin,
+      resourceMetadata: { resource: resource.href },
+    });
+    const clientInformation = await registerClient(serverInfo.authorizationServerUrl, {
+      clientMetadata,
+      fetchFn: routeFetch,
+      metadata,
+      scope,
+    });
+    expect(clientInformation).toMatchObject({
+      client_name: clientMetadata.client_name,
+      token_endpoint_auth_method: "none",
+    });
+
+    const started = await startAuthorization(serverInfo.authorizationServerUrl, {
+      clientInformation,
+      metadata,
+      redirectUrl: redirectUri,
+      resource,
+      scope,
+      state: "sdk-state",
+    });
+    expect(started.authorizationUrl.searchParams.get("resource")).toBe(resource.href);
+    expect(started.authorizationUrl.searchParams.has("audience")).toBe(false);
+    const query = started.authorizationUrl.searchParams;
+    const authorization = await validateAuthorizationRequest(handle.db, {
+      clientId: query.get("client_id") ?? "",
+      codeChallenge: query.get("code_challenge") ?? "",
+      codeChallengeMethod: query.get("code_challenge_method") ?? "",
+      redirectUri: query.get("redirect_uri") ?? "",
+      resource: query.get("resource") ?? "",
+      resources: oauthResources,
+      responseType: query.get("response_type") ?? "",
+      scope: query.get("scope") ?? "",
+      state: query.get("state"),
+    });
+    const code = await createAuthorizationCode(handle.db, verified.accountId, authorization);
+    const tokens = await exchangeAuthorization(serverInfo.authorizationServerUrl, {
+      authorizationCode: code,
+      clientInformation,
+      codeVerifier: started.codeVerifier,
+      fetchFn: routeFetch,
+      metadata,
+      redirectUri,
+      resource,
+    });
+    expect(tokens.access_token).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(await resolveOAuthAccessToken(handle.db, tokens.access_token, {
+      audience: "attention-sync",
+    })).toBeNull();
+    if (!tokens.refresh_token) throw new Error("Expected an OAuth refresh token");
+    const refreshedTokens = await refreshAuthorization(serverInfo.authorizationServerUrl, {
+      clientInformation,
+      fetchFn: routeFetch,
+      metadata,
+      refreshToken: tokens.refresh_token,
+      resource,
+    });
+    expect(refreshedTokens.access_token).not.toBe(tokens.access_token);
+
+    const client = new Client({ name: "attention-sdk-test", version: "1.0.0" });
+    const transport = new StreamableHTTPClientTransport(resource, {
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        return handleMcpRequest(request, async (authenticatedRequest, audience) => {
+          const bearer = /^Bearer ([^\s]+)$/u.exec(
+            authenticatedRequest.headers.get("authorization") ?? "",
+          )?.[1];
+          return bearer
+            ? resolveOAuthAccessToken(handle.db, bearer, { audience })
+            : null;
+        });
+      },
+      requestInit: {
+        headers: { Authorization: `Bearer ${refreshedTokens.access_token}` },
+      },
+    });
+    await client.connect(transport);
+    const tools = await client.listTools();
+    expect(client.getServerVersion()?.name).toBe("attention-mcp-server");
+    expect(tools.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+      "attention_collect_content",
+      "attention_list_collections",
+      "attention_list_public_content",
+    ]));
+    await client.close();
   });
 
   it("shows PAT plaintext once, resolves live rights, and revokes it independently", async () => {
@@ -418,6 +882,23 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
         raw_input: "https://example.org/a-different-article"
       })
     ).rejects.toMatchObject({ code: "idempotency_payload_mismatch", httpStatus: 409 });
+  });
+
+  it("keeps the 20-card public preview and outbound gate deterministic for timestamp ties", async () => {
+    const { redeemed } = await createRedeemedAccount("filter", "preview-ties");
+    const firstPublicAt = new Date("2026-08-04T12:30:00.000Z");
+    for (let index = 0; index < 21; index += 1) {
+      await createPublicContent(redeemed.accountId, `preview-tie-${index}`, firstPublicAt);
+    }
+
+    const ordered = await loadPublicContents(handle.db);
+    expect(ordered).toHaveLength(21);
+    expect(ordered.map((item) => item.id)).toEqual(
+      [...ordered.map((item) => item.id)].sort((left, right) => right.localeCompare(left)),
+    );
+    await expect(isPublicContentInsidePreview(handle.db, ordered[19]!.id)).resolves.toBe(true);
+    await expect(isPublicContentInsidePreview(handle.db, ordered[20]!.id)).resolves.toBe(false);
+    await expect(isPublicContentInsidePreview(handle.db, ordered[20]!.id)).resolves.toBe(false);
   });
 
   it("rolls back the collection unit of work and reclaims an expired attempt lease", async () => {
@@ -814,6 +1295,122 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
   });
 
+  it("does not backfill Free historical collections after a later membership upgrade", async () => {
+    const challenge = await createLoginChallenge(handle.db, {
+      email: "free-enrichment@example.com",
+    });
+    const verified = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: challenge.challengeId,
+      code: challenge.code,
+    });
+    const principal = await resolveSession(handle.db, verified.session.token, { touch: false });
+    if (!principal) throw new Error("Expected a Free principal");
+    const response = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "free-enrichment-history",
+      raw_input: "https://example.org/free-enrichment-history",
+      visibility: "private",
+    });
+    if (response.status !== "accepted" && response.status !== "merged_with_existing_content") {
+      throw new Error("Expected an established collection");
+    }
+    const claimed = await claimNextJob(handle.sql, {
+      leaseMs: 5_000,
+      queue: "content-enrichment",
+      workerId: "free-enrichment-worker",
+    });
+    if (!claimed) throw new Error("Expected the metadata job");
+    await executeClaimedJob(
+      handle.db,
+      claimed,
+      createProductionHandlers(),
+      new AbortController().signal,
+    );
+
+    expect(await handle.db.select().from(jobs)).toHaveLength(1);
+    const [beforeUpgrade] = await handle.db
+      .select({
+        enrichmentStatus: contents.enrichmentStatus,
+        summaryStatus: contents.summaryStatus,
+      })
+      .from(contents)
+      .where(eq(contents.id, response.content_id));
+    expect(beforeUpgrade).toEqual({
+      enrichmentStatus: "partial",
+      summaryStatus: "unavailable",
+    });
+
+    await handle.db.insert(entitlements).values({
+      accountId: verified.accountId,
+      memberEnabled: true,
+      source: "admin_grant",
+    });
+    expect(await handle.db.select().from(jobs)).toHaveLength(1);
+  });
+
+  it("does not call the AI provider after entitlement is removed from a queued summary", async () => {
+    const { redeemed } = await createRedeemedAccount("member", "ai-downgrade");
+    const principal = await principalFor(redeemed);
+    const response = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "ai-downgrade-queued-summary",
+      raw_input: "https://example.org/ai-downgrade",
+      visibility: "private",
+    });
+    if (response.status !== "accepted" && response.status !== "merged_with_existing_content") {
+      throw new Error("Expected an established collection");
+    }
+    const firstClaim = await claimNextJob(handle.sql, {
+      leaseMs: 5_000,
+      now: new Date("2100-01-01T00:00:00.000Z"),
+      queue: "content-enrichment",
+      workerId: "ai-downgrade-metadata",
+    });
+    if (!firstClaim) throw new Error("Expected the metadata job");
+    const completeJson = vi.fn().mockResolvedValue({
+      summary: "This must not be persisted after downgrade.",
+      tags: ["forbidden"],
+    });
+    const handlers = createProductionHandlers({ provider: { completeJson } });
+    await executeClaimedJob(
+      handle.db,
+      firstClaim,
+      handlers,
+      new AbortController().signal,
+    );
+    await handle.db
+      .update(entitlements)
+      .set({ memberEnabled: false })
+      .where(eq(entitlements.accountId, redeemed.accountId));
+    const summaryClaim = await claimNextJob(handle.sql, {
+      leaseMs: 5_000,
+      now: new Date("2100-01-01T00:01:00.000Z"),
+      queue: "content-enrichment",
+      workerId: "ai-downgrade-summary",
+    });
+    if (!summaryClaim) throw new Error("Expected the summary job");
+    await executeClaimedJob(
+      handle.db,
+      summaryClaim,
+      handlers,
+      new AbortController().signal,
+    );
+
+    expect(completeJson).not.toHaveBeenCalled();
+    const [stored] = await handle.db
+      .select({
+        enrichmentStatus: contents.enrichmentStatus,
+        summary: contents.aiSummary,
+        summaryStatus: contents.summaryStatus,
+      })
+      .from(contents)
+      .where(eq(contents.id, response.content_id));
+    expect(stored).toEqual({
+      enrichmentStatus: "partial",
+      summary: null,
+      summaryStatus: "unavailable",
+    });
+  });
+
   it("rolls back a terminal job transition when the matching Content update fails", async () => {
     const content = await upsertContentByIdentity(handle.db, {
       dedupeKey: "generic:v1:https://example.com/worker-atomic-failure",
@@ -943,6 +1540,54 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     expect(storedContent).toEqual({
       enrichmentStatus: "pending",
       summaryStatus: "pending"
+    });
+  });
+
+  it("keeps successful metadata partial when a summary provider fails terminally", async () => {
+    const content = await upsertContentByIdentity(handle.db, {
+      dedupeKey: "generic:v1:https://example.com/summary-terminal",
+      normalizedUrl: "https://example.com/summary-terminal",
+      outboundUrl: "https://example.com/summary-terminal",
+      source: "example.com",
+      sourceAdapter: "generic_web",
+      adapterVersion: "1",
+    });
+    await handle.db
+      .update(contents)
+      .set({ enrichmentStatus: "partial" })
+      .where(eq(contents.id, content.content.id));
+    await handle.db.insert(jobs).values({
+      availableAt: new Date("2026-07-31T11:59:00.000Z"),
+      idempotencyKey: `content.summary.v1:${content.content.id}`,
+      maxAttempts: 1,
+      payload: { contentId: content.content.id },
+      queue: "content-enrichment",
+      taskType: "content.summary.v1",
+    });
+    const claimed = await claimNextJob(handle.sql, {
+      leaseMs: 5_000,
+      now: new Date("2026-07-31T12:00:00.000Z"),
+      queue: "content-enrichment",
+      workerId: "summary-terminal-worker",
+    });
+    if (!claimed) throw new Error("Expected a summary job");
+    await failJob(handle.sql, {
+      baseRetryMs: 100,
+      errorCode: "ai_provider_unauthorized",
+      job: claimed,
+      maxRetryMs: 1_000,
+      retryable: false,
+    });
+    const [stored] = await handle.db
+      .select({
+        enrichmentStatus: contents.enrichmentStatus,
+        summaryStatus: contents.summaryStatus,
+      })
+      .from(contents)
+      .where(eq(contents.id, content.content.id));
+    expect(stored).toEqual({
+      enrichmentStatus: "partial",
+      summaryStatus: "unavailable",
     });
   });
 
@@ -1376,6 +2021,791 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     expect(result.withContext).toEqual([{ account_id: one.redeemed.accountId }]);
   });
 
+  it("lets the non-owner Worker role evaluate hosted-AI eligibility", async () => {
+    const { redeemed } = await createRedeemedAccount("member", "worker-role-ai");
+    const content = await upsertContentByIdentity(handle.db, {
+      dedupeKey: "generic:v1:https://example.com/worker-role-ai",
+      normalizedUrl: "https://example.com/worker-role-ai",
+      outboundUrl: "https://example.com/worker-role-ai",
+      source: "example.com",
+      sourceAdapter: "generic_web",
+      adapterVersion: "1",
+    });
+    await upsertCollection(handle.db, {
+      accountId: redeemed.accountId,
+      contentId: content.content.id,
+      domainId: await aiDomainId(),
+      sourceChannel: "web",
+      visibility: "private",
+    });
+    const runtimeHandle = createDatabase(databaseUrl!, { maxConnections: 1 });
+    try {
+      await runtimeHandle.sql.unsafe("SET ROLE attention_worker_runtime");
+      await expect(shouldScheduleHostedAi(runtimeHandle.db, content.content.id))
+        .resolves.toBe(true);
+    } finally {
+      await runtimeHandle.sql.unsafe("RESET ROLE").catch(() => undefined);
+      await runtimeHandle.close();
+    }
+  });
+
+  it("keeps moderation runtime grants least-privilege", async () => {
+    const [privileges] = await handle.sql<
+      {
+        webCaseInsert: boolean;
+        webCaseUpdate: boolean;
+        webVoteDelete: boolean;
+        webVoteInsert: boolean;
+        webVoteUpdate: boolean;
+        workerCaseInsert: boolean;
+        workerCaseUpdate: boolean;
+        workerVoteInsert: boolean;
+        workerVoteSelect: boolean;
+      }[]
+    >`
+      SELECT
+        has_table_privilege('attention_web_runtime', 'moderation_cases', 'INSERT') AS "webCaseInsert",
+        has_table_privilege('attention_web_runtime', 'moderation_cases', 'UPDATE') AS "webCaseUpdate",
+        has_table_privilege('attention_web_runtime', 'moderation_votes', 'DELETE') AS "webVoteDelete",
+        has_table_privilege('attention_web_runtime', 'moderation_votes', 'INSERT') AS "webVoteInsert",
+        has_table_privilege('attention_web_runtime', 'moderation_votes', 'UPDATE') AS "webVoteUpdate",
+        has_table_privilege('attention_worker_runtime', 'moderation_cases', 'INSERT') AS "workerCaseInsert",
+        has_table_privilege('attention_worker_runtime', 'moderation_cases', 'UPDATE') AS "workerCaseUpdate",
+        has_table_privilege('attention_worker_runtime', 'moderation_votes', 'INSERT') AS "workerVoteInsert",
+        has_table_privilege('attention_worker_runtime', 'moderation_votes', 'SELECT') AS "workerVoteSelect"
+    `;
+    expect(privileges).toEqual({
+      webCaseInsert: true,
+      webCaseUpdate: false,
+      webVoteDelete: false,
+      webVoteInsert: true,
+      webVoteUpdate: false,
+      workerCaseInsert: false,
+      workerCaseUpdate: true,
+      workerVoteInsert: false,
+      workerVoteSelect: true,
+    });
+  });
+
+  it("opens one case under concurrent Consumer reports and hides every public surface until a public verdict", async () => {
+    const sourceFilter = await createRedeemedAccount("filter", "court-source");
+    const secondFilter = await createRedeemedAccount("filter", "court-second");
+    const thirdFilter = await createRedeemedAccount("filter", "court-third");
+    const firstConsumer = await createRedeemedAccount("member", "court-consumer-one");
+    const secondConsumer = await createRedeemedAccount("member", "court-consumer-two");
+    const openedAt = new Date(Date.now() + 1_000);
+    const firstPublicAt = new Date(openedAt.getTime() - 60 * 60 * 1_000);
+    const published = await createPublicContent(
+      sourceFilter.redeemed.accountId,
+      "community-court-public",
+      firstPublicAt,
+    );
+    const contentId = published.content.content.id;
+    const publicId = published.content.content.publicId;
+    const [before] = await handle.db
+      .select({ visibilityVersion: contents.visibilityVersion })
+      .from(contents)
+      .where(eq(contents.id, contentId));
+
+    const firstRuntime = createDatabase(databaseUrl!, { maxConnections: 1 });
+    const secondRuntime = createDatabase(databaseUrl!, { maxConnections: 1 });
+    const thirdRuntime = createDatabase(databaseUrl!, { maxConnections: 1 });
+    const workerRuntime = createDatabase(databaseUrl!, { maxConnections: 1 });
+    try {
+      await Promise.all([
+        firstRuntime.sql.unsafe("SET ROLE attention_web_runtime"),
+        secondRuntime.sql.unsafe("SET ROLE attention_web_runtime"),
+        thirdRuntime.sql.unsafe("SET ROLE attention_web_runtime"),
+        workerRuntime.sql.unsafe("SET ROLE attention_worker_runtime"),
+      ]);
+      const reports = await Promise.all([
+        submitContentReport(firstRuntime.db, {
+          accountId: firstConsumer.redeemed.accountId,
+          now: openedAt,
+          publicContentId: publicId,
+          reasonCode: "misleading",
+        }),
+        submitContentReport(secondRuntime.db, {
+          accountId: secondConsumer.redeemed.accountId,
+          now: openedAt,
+          publicContentId: publicId,
+          reasonCode: "spam",
+        }),
+      ]);
+      expect(reports.filter((report) => report.caseOpened)).toHaveLength(1);
+      const openedCaseIds = reports.flatMap((report) =>
+        report.caseId ? [report.caseId] : [],
+      );
+      expect(new Set(openedCaseIds).size).toBe(1);
+      const caseId = openedCaseIds[0]!;
+      expect(
+        await handle.db
+          .select()
+          .from(moderationCases)
+          .where(eq(moderationCases.contentId, contentId)),
+      ).toHaveLength(1);
+      expect(
+        await handle.db
+          .select()
+          .from(contentReports)
+          .where(eq(contentReports.contentId, contentId)),
+      ).toHaveLength(2);
+
+      await expect(
+        submitContentReport(firstRuntime.db, {
+          accountId: firstConsumer.redeemed.accountId,
+          now: new Date(openedAt.getTime() + 1_000),
+          publicContentId: publicId,
+          reasonCode: "other",
+        }),
+      ).resolves.toMatchObject({ duplicate: true, reportId: reports[0]!.reportId });
+      expect(
+        await handle.db
+          .select()
+          .from(contentReports)
+          .where(eq(contentReports.contentId, contentId)),
+      ).toHaveLength(2);
+
+      const [pending] = await handle.db
+        .select({
+          communityStatus: contents.communityModerationStatus,
+          firstPublicAt: contents.firstPublicAt,
+          visibilityVersion: contents.visibilityVersion,
+        })
+        .from(contents)
+        .where(eq(contents.id, contentId));
+      expect(pending).toEqual({
+        communityStatus: "pending_review",
+        firstPublicAt,
+        visibilityVersion: before!.visibilityVersion + 1,
+      });
+      expect(await handle.db.select().from(publicContentsCurrent)).toHaveLength(0);
+      expect(await handle.db.select().from(publicContentAttributionsCurrent)).toHaveLength(0);
+      await expect(loadPublicContents(handle.db)).resolves.toEqual([]);
+      await expect(findPublicOutboundUrl(handle.db, publicId)).resolves.toBeNull();
+      await expect(
+        loadAgentCandidates(handle.db, firstConsumer.redeemed.accountId),
+      ).resolves.toEqual([]);
+
+      const mine = await loadMyCollections(
+        handle.db,
+        sourceFilter.redeemed.accountId,
+      );
+      expect(mine).toHaveLength(1);
+      expect(mine[0]).toMatchObject({
+        outboundHref: `/out/mine/${published.collection.collection.id}`,
+        summary: "摘要 community-court-public",
+      });
+      await expect(
+        findOwnedOutboundUrl(
+          handle.db,
+          sourceFilter.redeemed.accountId,
+          published.collection.collection.id,
+        ),
+      ).resolves.toBe("https://example.com/community-court-public");
+
+      const hiddenDigest = await createDigestDelivery(workerRuntime.sql, {
+        accountId: firstConsumer.redeemed.accountId,
+        availableAt: openedAt,
+        domainId: await aiDomainId(),
+        email: "court-consumer@example.com",
+        localDate: "2026-08-10",
+        maxAttempts: 8,
+        scheduledFor: openedAt,
+        timezone: "Asia/Shanghai",
+        windowEnd: new Date(firstPublicAt.getTime() + 60_000),
+        windowStart: new Date(firstPublicAt.getTime() - 60_000),
+      });
+      expect(hiddenDigest?.itemCount).toBe(0);
+
+      await expect(
+        listModerationCourtCases(firstRuntime.db, {
+          accountId: firstConsumer.redeemed.accountId,
+          now: openedAt,
+        }),
+      ).rejects.toMatchObject<Partial<ModerationRepositoryError>>({
+        code: "filter_required",
+      });
+      await expect(
+        listModerationCourtCases(firstRuntime.db, {
+          accountId: sourceFilter.redeemed.accountId,
+          now: openedAt,
+        }),
+      ).resolves.toEqual([
+        expect.objectContaining({ id: caseId, status: "open" }),
+      ]);
+
+      const voteAt = new Date(openedAt.getTime() + 60 * 60 * 1_000);
+      const concurrentVotes = await Promise.all([
+        castModerationVote(firstRuntime.db, {
+          accountId: sourceFilter.redeemed.accountId,
+          caseId,
+          decision: "public",
+          now: voteAt,
+        }),
+        castModerationVote(thirdRuntime.db, {
+          accountId: sourceFilter.redeemed.accountId,
+          caseId,
+          decision: "public",
+          now: voteAt,
+        }),
+      ]);
+      expect(concurrentVotes.filter((vote) => vote.duplicate)).toHaveLength(1);
+      expect(new Set(concurrentVotes.map((vote) => vote.voteId)).size).toBe(1);
+      const firstVote = concurrentVotes[0]!;
+      await expect(
+        castModerationVote(firstRuntime.db, {
+          accountId: sourceFilter.redeemed.accountId,
+          caseId,
+          decision: "public",
+          now: voteAt,
+        }),
+      ).resolves.toEqual({ duplicate: true, voteId: firstVote.voteId });
+      await expect(
+        castModerationVote(firstRuntime.db, {
+          accountId: sourceFilter.redeemed.accountId,
+          caseId,
+          decision: "hidden",
+          now: voteAt,
+        }),
+      ).rejects.toMatchObject<Partial<ModerationRepositoryError>>({
+        code: "vote_already_cast",
+      });
+      await Promise.all([
+        castModerationVote(secondRuntime.db, {
+          accountId: secondFilter.redeemed.accountId,
+          caseId,
+          decision: "public",
+          now: voteAt,
+        }),
+        castModerationVote(thirdRuntime.db, {
+          accountId: thirdFilter.redeemed.accountId,
+          caseId,
+          decision: "hidden",
+          now: voteAt,
+        }),
+      ]);
+      const votingEndsAt = new Date(openedAt.getTime() + 24 * 60 * 60 * 1_000);
+      await expect(
+        resolveDueModerationCases(workerRuntime.db, {
+          now: new Date(votingEndsAt.getTime() - 1),
+        }),
+      ).resolves.toBe(0);
+      expect(await handle.db.select().from(publicContentsCurrent)).toHaveLength(0);
+      await expect(
+        resolveDueModerationCases(workerRuntime.db, { now: votingEndsAt }),
+      ).resolves.toBe(1);
+
+      const [resolvedContent] = await handle.db
+        .select({
+          communityStatus: contents.communityModerationStatus,
+          firstPublicAt: contents.firstPublicAt,
+          visibilityVersion: contents.visibilityVersion,
+        })
+        .from(contents)
+        .where(eq(contents.id, contentId));
+      expect(resolvedContent).toEqual({
+        communityStatus: "clear",
+        firstPublicAt,
+        visibilityVersion: before!.visibilityVersion + 2,
+      });
+      const [resolvedCase] = await handle.db
+        .select()
+        .from(moderationCases)
+        .where(eq(moderationCases.id, caseId));
+      expect(resolvedCase).toMatchObject({
+        eligibleFilterCountAtResolution: 3,
+        hiddenVotesAtResolution: 1,
+        publicVotesAtResolution: 2,
+        resolution: "public",
+        status: "resolved",
+      });
+      expect(await handle.db.select().from(publicContentsCurrent)).toHaveLength(1);
+      expect(await handle.db.select().from(publicContentAttributionsCurrent)).toHaveLength(1);
+      await expect(
+        loadAgentCandidates(handle.db, firstConsumer.redeemed.accountId),
+      ).resolves.toEqual([
+        expect.objectContaining({ id: publicId, scope: "public" }),
+      ]);
+
+      const noRepeatDigest = await createDigestDelivery(workerRuntime.sql, {
+        accountId: firstConsumer.redeemed.accountId,
+        availableAt: votingEndsAt,
+        domainId: await aiDomainId(),
+        email: "court-consumer@example.com",
+        localDate: "2026-08-11",
+        maxAttempts: 8,
+        scheduledFor: votingEndsAt,
+        timezone: "Asia/Shanghai",
+        windowEnd: new Date(votingEndsAt.getTime() + 60_000),
+        windowStart: new Date(votingEndsAt.getTime() - 60_000),
+      });
+      expect(noRepeatDigest?.itemCount).toBe(0);
+    } finally {
+      await Promise.all([
+        firstRuntime.sql.unsafe("RESET ROLE").catch(() => undefined),
+        secondRuntime.sql.unsafe("RESET ROLE").catch(() => undefined),
+        thirdRuntime.sql.unsafe("RESET ROLE").catch(() => undefined),
+        workerRuntime.sql.unsafe("RESET ROLE").catch(() => undefined),
+      ]);
+      await Promise.all([
+        firstRuntime.close(),
+        secondRuntime.close(),
+        thirdRuntime.close(),
+        workerRuntime.close(),
+      ]);
+    }
+  });
+
+  it("resolves hidden verdicts and never lets a public verdict override hard takedown", async () => {
+    const firstFilter = await createRedeemedAccount("filter", "court-hard-one");
+    const secondFilter = await createRedeemedAccount("filter", "court-hard-two");
+    const thirdFilter = await createRedeemedAccount("filter", "court-hard-three");
+    const openedAt = new Date(Date.now() + 1_000);
+    const firstPublicAt = new Date(openedAt.getTime() - 60 * 60 * 1_000);
+    const hiddenContent = await createPublicContent(
+      firstFilter.redeemed.accountId,
+      "community-court-hidden",
+      firstPublicAt,
+    );
+    const hardContent = await createPublicContent(
+      firstFilter.redeemed.accountId,
+      "community-court-hard",
+      new Date(firstPublicAt.getTime() + 1_000),
+    );
+    const hiddenReport = await submitContentReport(handle.db, {
+      accountId: firstFilter.redeemed.accountId,
+      now: openedAt,
+      publicContentId: hiddenContent.content.content.publicId,
+      reasonCode: "unsafe",
+    });
+    const hardReport = await submitContentReport(handle.db, {
+      accountId: secondFilter.redeemed.accountId,
+      now: openedAt,
+      publicContentId: hardContent.content.content.publicId,
+      reasonCode: "rights",
+    });
+    expect(hiddenReport.caseOpened).toBe(true);
+    expect(hardReport.caseOpened).toBe(true);
+    const voteAt = new Date(openedAt.getTime() + 60 * 60 * 1_000);
+    await Promise.all([
+      castModerationVote(handle.db, {
+        accountId: firstFilter.redeemed.accountId,
+        caseId: hiddenReport.caseId!,
+        decision: "hidden",
+        now: voteAt,
+      }),
+      castModerationVote(handle.db, {
+        accountId: secondFilter.redeemed.accountId,
+        caseId: hiddenReport.caseId!,
+        decision: "hidden",
+        now: voteAt,
+      }),
+      castModerationVote(handle.db, {
+        accountId: thirdFilter.redeemed.accountId,
+        caseId: hiddenReport.caseId!,
+        decision: "public",
+        now: voteAt,
+      }),
+      castModerationVote(handle.db, {
+        accountId: firstFilter.redeemed.accountId,
+        caseId: hardReport.caseId!,
+        decision: "public",
+        now: voteAt,
+      }),
+      castModerationVote(handle.db, {
+        accountId: secondFilter.redeemed.accountId,
+        caseId: hardReport.caseId!,
+        decision: "public",
+        now: voteAt,
+      }),
+      castModerationVote(handle.db, {
+        accountId: thirdFilter.redeemed.accountId,
+        caseId: hardReport.caseId!,
+        decision: "public",
+        now: voteAt,
+      }),
+    ]);
+    await handle.db
+      .update(contents)
+      .set({
+        restrictedAt: voteAt,
+        restrictionReasonCode: "legal_takedown",
+        takedownStatus: "removed",
+      })
+      .where(eq(contents.id, hardContent.content.content.id));
+    const resolveAt = new Date(openedAt.getTime() + 24 * 60 * 60 * 1_000);
+    await expect(resolveDueModerationCases(handle.db, { now: resolveAt })).resolves.toBe(2);
+
+    const [hidden] = await handle.db
+      .select({
+        communityStatus: contents.communityModerationStatus,
+        firstPublicAt: contents.firstPublicAt,
+      })
+      .from(contents)
+      .where(eq(contents.id, hiddenContent.content.content.id));
+    expect(hidden).toEqual({ communityStatus: "hidden", firstPublicAt });
+    const [hard] = await handle.db
+      .select({ communityStatus: contents.communityModerationStatus })
+      .from(contents)
+      .where(eq(contents.id, hardContent.content.content.id));
+    expect(hard?.communityStatus).toBe("pending_review");
+    const caseRows = await handle.db
+      .select({ resolution: moderationCases.resolution, status: moderationCases.status })
+      .from(moderationCases)
+      .orderBy(moderationCases.createdAt);
+    expect(caseRows).toEqual([
+      { resolution: "hidden", status: "resolved" },
+      { resolution: "requires_admin", status: "requires_admin" },
+    ]);
+    expect(await handle.db.select().from(publicContentsCurrent)).toHaveLength(0);
+    await expect(
+      findOwnedOutboundUrl(
+        handle.db,
+        firstFilter.redeemed.accountId,
+        hiddenContent.collection.collection.id,
+      ),
+    ).resolves.toBe("https://example.com/community-court-hidden");
+    await expect(
+      findOwnedOutboundUrl(
+        handle.db,
+        firstFilter.redeemed.accountId,
+        hardContent.collection.collection.id,
+      ),
+    ).resolves.toBeNull();
+    expect(await handle.db.select().from(moderationVotes)).toHaveLength(6);
+  });
+
+  it("schedules Domain digests idempotently and removes stale visibility snapshots before send", async () => {
+    const subscriber = await createRedeemedAccount("member", "digest-subscriber");
+    const filter = await createRedeemedAccount("filter", "digest-filter");
+    const subscriberEmail = "digest-subscriber@example.com";
+    await handle.db
+      .update(accounts)
+      .set({ emailVerifiedAt: new Date(), primaryEmail: subscriberEmail })
+      .where(eq(accounts.id, subscriber.redeemed.accountId));
+    const domainId = await aiDomainId();
+    const firstPublicAt = new Date("2026-08-03T02:00:00.000Z");
+
+    for (const index of [1, 2, 3]) {
+      const content = await upsertContentByIdentity(handle.db, {
+        adapterVersion: "1",
+        dedupeKey: `generic:v1:https://example.com/digest-${index}`,
+        normalizedUrl: `https://example.com/digest-${index}`,
+        outboundUrl: `https://example.com/digest-${index}`,
+        source: "example.com",
+        sourceAdapter: "generic_web",
+      });
+      const saved = await upsertCollection(handle.db, {
+        accountId: filter.redeemed.accountId,
+        contentId: content.content.id,
+        domainId,
+        sourceChannel: "web",
+        visibility: "private",
+      });
+      await setCollectionVisibility(handle.db, {
+        accountId: filter.redeemed.accountId,
+        collectionId: saved.collection.id,
+        now: new Date(firstPublicAt.getTime() + index * 1_000),
+        visibility: "public",
+      });
+      await handle.db
+        .update(contents)
+        .set({
+          aiSummary: index === 1 ? "会在发送前失效" : null,
+          author: index === 1 ? "作者一" : null,
+          summaryStatus:
+            index === 1 ? "ready" : index === 2 ? "unavailable" : "hidden",
+          title: `日报条目 ${index}`,
+        })
+        .where(eq(contents.id, content.content.id));
+    }
+
+    const webRuntimeHandle = createDatabase(databaseUrl!, { maxConnections: 1 });
+    try {
+      await webRuntimeHandle.sql.unsafe("SET ROLE attention_web_runtime");
+      await updateDigestSettings(webRuntimeHandle.db, subscriber.redeemed.accountId, {
+        domainSlugs: ["ai"],
+        enabled: true,
+        timezone: "Asia/Shanghai",
+        windowMinutes: 60,
+        windowStart: "08:00",
+      });
+      await expect(
+        loadDigestSettings(webRuntimeHandle.db, subscriber.redeemed.accountId),
+      ).resolves.toMatchObject({
+        domains: [{ active: true, slug: "ai" }],
+        timezone: "Asia/Shanghai",
+        windowStart: "08:00",
+      });
+    } finally {
+      await webRuntimeHandle.sql.unsafe("RESET ROLE").catch(() => undefined);
+      await webRuntimeHandle.close();
+    }
+
+    const runtimeHandle = createDatabase(databaseUrl!, { maxConnections: 2 });
+    try {
+      await runtimeHandle.sql.unsafe("SET ROLE attention_worker_runtime");
+      const candidates = await listDigestScheduleCandidates(runtimeHandle.sql);
+      expect(candidates).toEqual([
+        expect.objectContaining({
+          accountId: subscriber.redeemed.accountId,
+          domainId,
+          timezone: "Asia/Shanghai",
+        }),
+      ]);
+      const sendAt = new Date("2026-08-04T00:15:00.000Z");
+      const window = digestContentWindow("2026-08-04", "Asia/Shanghai");
+      const delivery = await createDigestDelivery(runtimeHandle.sql, {
+        accountId: subscriber.redeemed.accountId,
+        availableAt: sendAt,
+        domainId,
+        email: subscriberEmail,
+        localDate: "2026-08-04",
+        maxAttempts: 8,
+        scheduledFor: sendAt,
+        timezone: "Asia/Shanghai",
+        windowEnd: window.end,
+        windowStart: window.start,
+      });
+      expect(delivery?.itemCount).toBe(2);
+      await expect(
+        createDigestDelivery(runtimeHandle.sql, {
+          accountId: subscriber.redeemed.accountId,
+          availableAt: sendAt,
+          domainId,
+          email: subscriberEmail,
+          localDate: "2026-08-04",
+          maxAttempts: 8,
+          scheduledFor: sendAt,
+          timezone: "Asia/Shanghai",
+          windowEnd: window.end,
+          windowStart: window.start,
+        }),
+      ).resolves.toBeNull();
+
+      const claimed = await claimNextDigestDelivery(runtimeHandle.sql, {
+        leaseMs: 60_000,
+        now: sendAt,
+        workerId: "digest-test",
+      });
+      expect(claimed?.id).toBe(delivery?.deliveryId);
+      await expect(
+        loadCurrentDeliveryContext(runtimeHandle.sql, claimed!.id),
+      ).resolves.toMatchObject({
+        domainName: "AI",
+        email: subscriberEmail,
+      });
+
+      const [staleItem] = await handle.db
+        .select({ contentId: digestEmailDeliveryItems.contentId })
+        .from(digestEmailDeliveryItems)
+        .where(eq(digestEmailDeliveryItems.deliveryId, claimed!.id))
+        .orderBy(digestEmailDeliveryItems.ordinal);
+      await handle.db
+        .update(contents)
+        .set({ visibilityVersion: sql`${contents.visibilityVersion} + 1` })
+        .where(eq(contents.id, staleItem!.contentId));
+
+      const valid = await revalidateDigestItems(runtimeHandle.sql, claimed!.id);
+      expect(valid).toEqual([
+        expect.objectContaining({
+          summary: null,
+          summaryStatus: "unavailable",
+          title: "日报条目 2",
+        }),
+      ]);
+      expect(
+        await handle.db
+          .select()
+          .from(digestEmailDeliveryItems)
+          .where(eq(digestEmailDeliveryItems.deliveryId, claimed!.id)),
+      ).toHaveLength(1);
+      expect(
+        await handle.db
+          .select()
+          .from(digestEmailDeliveries)
+          .where(eq(digestEmailDeliveries.id, claimed!.id)),
+      ).toHaveLength(1);
+
+      const sentMessages: Array<{ html: string; idempotencyKey: string }> = [];
+      const config: WorkerConfig = {
+        baseRetryMs: 1_000,
+        concurrency: 1,
+        databaseUrl: databaseUrl!,
+        digestBatchSize: 10,
+        digestEnabled: true,
+        digestMaxAttempts: 8,
+        digestPollIntervalMs: 60_000,
+        leaseMs: 60_000,
+        maxRetryMs: 60_000,
+        pollIntervalMs: 1_000,
+        publicOrigin: "https://attention.example",
+        queue: "content-enrichment",
+        workerId: "digest-integration",
+      };
+      const logger = {
+        error: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+      };
+      await processDigestDelivery({
+        config,
+        delivery: claimed!,
+        handle: runtimeHandle,
+        logger,
+        now: new Date(),
+        provider: {
+          send: async (message) => {
+            sentMessages.push(message);
+            return { providerMessageId: "mail-1" };
+          },
+        },
+      });
+      expect(sentMessages).toHaveLength(1);
+      expect(sentMessages[0]).toMatchObject({ idempotencyKey: claimed!.id });
+      expect(sentMessages[0]!.html).toContain("暂时无法生成摘要");
+      expect(sentMessages[0]!.html).toContain("作者：未提供");
+      expect(sentMessages[0]!.html).toContain("查看原文");
+      expect(
+        await handle.db
+          .select({ status: digestEmailDeliveries.status })
+          .from(digestEmailDeliveries)
+          .where(eq(digestEmailDeliveries.id, claimed!.id)),
+      ).toEqual([{ status: "sent" }]);
+
+      const laterContent = await upsertContentByIdentity(handle.db, {
+        adapterVersion: "1",
+        dedupeKey: "generic:v1:https://example.com/digest-entitlement-recheck",
+        normalizedUrl: "https://example.com/digest-entitlement-recheck",
+        outboundUrl: "https://example.com/digest-entitlement-recheck",
+        source: "example.com",
+        sourceAdapter: "generic_web",
+      });
+      const laterCollection = await upsertCollection(handle.db, {
+        accountId: filter.redeemed.accountId,
+        contentId: laterContent.content.id,
+        domainId,
+        sourceChannel: "web",
+        visibility: "private",
+      });
+      await setCollectionVisibility(handle.db, {
+        accountId: filter.redeemed.accountId,
+        collectionId: laterCollection.collection.id,
+        now: new Date("2026-08-04T02:00:00.000Z"),
+        visibility: "public",
+      });
+      const laterSendAt = new Date("2026-08-05T00:15:00.000Z");
+      const laterWindow = digestContentWindow("2026-08-05", "Asia/Shanghai");
+      const laterDelivery = await createDigestDelivery(runtimeHandle.sql, {
+        accountId: subscriber.redeemed.accountId,
+        availableAt: laterSendAt,
+        domainId,
+        email: subscriberEmail,
+        localDate: "2026-08-05",
+        maxAttempts: 8,
+        scheduledFor: laterSendAt,
+        timezone: "Asia/Shanghai",
+        windowEnd: laterWindow.end,
+        windowStart: laterWindow.start,
+      });
+      expect(laterDelivery?.itemCount).toBe(1);
+      const laterClaim = await claimNextDigestDelivery(runtimeHandle.sql, {
+        leaseMs: 60_000,
+        now: laterSendAt,
+        workerId: "digest-test",
+      });
+      await handle.db
+        .update(entitlements)
+        .set({ memberEnabled: false })
+        .where(eq(entitlements.accountId, subscriber.redeemed.accountId));
+      await processDigestDelivery({
+        config,
+        delivery: laterClaim!,
+        handle: runtimeHandle,
+        logger,
+        now: laterSendAt,
+        provider: {
+          send: async (message) => {
+            sentMessages.push(message);
+            return { providerMessageId: "must-not-send" };
+          },
+        },
+      });
+      expect(sentMessages).toHaveLength(1);
+      expect(
+        await handle.db
+          .select({
+            reason: digestEmailDeliveries.skippedReason,
+            status: digestEmailDeliveries.status,
+          })
+          .from(digestEmailDeliveries)
+          .where(eq(digestEmailDeliveries.id, laterClaim!.id)),
+      ).toEqual([{ reason: "entitlement_inactive", status: "skipped" }]);
+
+      const crashedAt = new Date("2026-08-05T00:00:00.000Z");
+      const exhausted = await createDigestDelivery(runtimeHandle.sql, {
+        accountId: subscriber.redeemed.accountId,
+        availableAt: crashedAt,
+        domainId,
+        email: subscriberEmail,
+        localDate: "2026-08-06",
+        maxAttempts: 8,
+        scheduledFor: crashedAt,
+        timezone: "Asia/Shanghai",
+        windowEnd: new Date("2026-08-05T16:00:00.000Z"),
+        windowStart: new Date("2026-08-04T16:00:00.000Z"),
+      });
+      await handle.db
+        .update(digestEmailDeliveries)
+        .set({
+          attempts: 8,
+          lockedAt: crashedAt,
+          lockedBy: "crashed-worker",
+          status: "sending",
+        })
+        .where(eq(digestEmailDeliveries.id, exhausted!.deliveryId));
+      await expect(
+        reapExhaustedDigestDeliveries(runtimeHandle.sql, {
+          leaseMs: 60_000,
+          now: new Date("2026-08-05T00:02:00.000Z"),
+        }),
+      ).resolves.toBe(1);
+      expect(
+        await handle.db
+          .select({
+            errorCode: digestEmailDeliveries.lastErrorCode,
+            status: digestEmailDeliveries.status,
+          })
+          .from(digestEmailDeliveries)
+          .where(eq(digestEmailDeliveries.id, exhausted!.deliveryId)),
+      ).toEqual([{ errorCode: "lease_expired", status: "failed" }]);
+    } finally {
+      await runtimeHandle.sql.unsafe("RESET ROLE").catch(() => undefined);
+      await runtimeHandle.close();
+    }
+
+    const freeChallenge = await createLoginChallenge(handle.db, {
+      email: "digest-free@example.com",
+    });
+    const free = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: freeChallenge.challengeId,
+      code: freeChallenge.code,
+    });
+    await expect(
+      updateDigestSettings(handle.db, free.accountId, {
+        domainSlugs: ["ai"],
+        enabled: true,
+        timezone: "Asia/Shanghai",
+        windowMinutes: 60,
+        windowStart: "08:00",
+      }),
+    ).rejects.toMatchObject<Partial<DigestSettingsError>>({
+      code: "digest_entitlement_required",
+    });
+  });
+
   it("collects and replays idempotently through the non-owner Web runtime role", async () => {
     const { redeemed } = await createRedeemedAccount("member", "runtime-replay");
     const principal = await principalFor(redeemed);
@@ -1404,6 +2834,871 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     } finally {
       await runtimeHandle.sql.unsafe("RESET ROLE").catch(() => undefined);
       await runtimeHandle.close();
+    }
+  });
+
+  it("redeems exactly one Consumer referral registration under non-owner concurrency", async () => {
+    const accountCreatedAt = new Date("2026-01-02T00:00:00.000Z");
+    const now = new Date("2026-08-04T08:00:00.000Z");
+    const inviter = await createEmailAccount("growth-inviter@example.com", accountCreatedAt);
+    const existingGrantEndsAt = new Date("2026-09-30T08:00:00.000Z");
+    await handle.db.insert(membershipGrants).values({
+      accountId: inviter.accountId,
+      endsAt: existingGrantEndsAt,
+      kind: "admin_grant",
+      sourceId: "growth-existing-grant",
+      startsAt: new Date("2026-07-01T08:00:00.000Z"),
+      status: "active",
+    });
+
+    const firstRuntime = createDatabase(databaseUrl!, { maxConnections: 1 });
+    const secondRuntime = createDatabase(databaseUrl!, { maxConnections: 1 });
+    const workerRuntime = createDatabase(databaseUrl!, { maxConnections: 1 });
+    try {
+      await Promise.all([
+        firstRuntime.sql.unsafe("SET ROLE attention_web_runtime"),
+        secondRuntime.sql.unsafe("SET ROLE attention_web_runtime"),
+        workerRuntime.sql.unsafe("SET ROLE attention_worker_runtime"),
+      ]);
+      const invitation = await createConsumerInvite(firstRuntime.db, {
+        accountId: inviter.accountId,
+        now,
+        ttlDays: 30,
+      });
+      const [storedInvitation] = await handle.db
+        .select({ tokenHash: consumerReferrals.tokenHash })
+        .from(consumerReferrals)
+        .where(eq(consumerReferrals.id, invitation.invitationId));
+      expect(storedInvitation?.tokenHash).toHaveLength(64);
+      expect(storedInvitation?.tokenHash).not.toBe(invitation.token);
+
+      await expect(
+        createLoginChallenge(firstRuntime.db, {
+          consumerInviteToken: invitation.token,
+          email: "growth-inviter@example.com",
+          now,
+          requesterFingerprint: "a".repeat(64),
+        }),
+      ).rejects.toMatchObject({ code: "referral_registration_unavailable" });
+
+      const [firstChallenge, secondChallenge] = await Promise.all([
+        createLoginChallenge(firstRuntime.db, {
+          consumerInviteToken: invitation.token,
+          email: "growth-invitee-one@example.com",
+          now,
+          requesterFingerprint: "b".repeat(64),
+        }),
+        createLoginChallenge(secondRuntime.db, {
+          consumerInviteToken: invitation.token,
+          email: "growth-invitee-two@example.com",
+          now,
+          requesterFingerprint: "c".repeat(64),
+        }),
+      ]);
+      const verified = await Promise.allSettled([
+        verifyLoginChallenge(firstRuntime.db, {
+          acceptTerms: true,
+          challengeId: firstChallenge.challengeId,
+          code: firstChallenge.code,
+          now,
+        }),
+        verifyLoginChallenge(secondRuntime.db, {
+          acceptTerms: true,
+          challengeId: secondChallenge.challengeId,
+          code: secondChallenge.code,
+          now,
+        }),
+      ]);
+      const successful = verified.flatMap((result) =>
+        result.status === "fulfilled" ? [result.value] : [],
+      );
+      const rejected = verified.flatMap((result) =>
+        result.status === "rejected" ? [result.reason as { code?: string }] : [],
+      );
+      expect(successful).toHaveLength(1);
+      expect(rejected).toEqual([
+        expect.objectContaining({ code: "referral_registration_unavailable" }),
+      ]);
+      const invitee = successful[0]!;
+
+      const [referral] = await handle.db
+        .select()
+        .from(consumerReferrals)
+        .where(eq(consumerReferrals.id, invitation.invitationId));
+      expect(referral).toMatchObject({
+        inviteeAccountId: invitee.accountId,
+        inviterAccountId: inviter.accountId,
+        status: "redeemed",
+      });
+      const referralGrants = await handle.db
+        .select()
+        .from(membershipGrants)
+        .where(eq(membershipGrants.sourceId, invitation.invitationId));
+      expect(referralGrants).toHaveLength(2);
+      expect(
+        referralGrants.find((grant) => grant.kind === "consumer_inviter_quarter"),
+      ).toMatchObject({ accountId: inviter.accountId, startsAt: existingGrantEndsAt });
+      expect(
+        referralGrants.find((grant) => grant.kind === "consumer_invitee_quarter"),
+      ).toMatchObject({ accountId: invitee.accountId, startsAt: now });
+      expect(
+        await handle.db
+          .select({ signupSource: accounts.signupSource })
+          .from(accounts)
+          .where(eq(accounts.id, invitee.accountId)),
+      ).toEqual([{ signupSource: "consumer_referral" }]);
+
+      await expect(
+        createConsumerInvite(firstRuntime.db, { accountId: inviter.accountId, now }),
+      ).rejects.toMatchObject({ code: "consumer_invite_used" });
+      const downstreamInvite = await createConsumerInvite(firstRuntime.db, {
+        accountId: invitee.accountId,
+        now,
+      });
+      await handle.db.insert(filterProfiles).values({
+        accountId: invitee.accountId,
+        active: true,
+        displayName: "New Filter",
+        invitedAt: now,
+        updatedAt: now,
+      });
+      await expect(
+        createLoginChallenge(firstRuntime.db, {
+          consumerInviteToken: downstreamInvite.token,
+          email: "growth-downstream-invitee@example.com",
+          now,
+          requesterFingerprint: "9".repeat(64),
+        }),
+      ).rejects.toMatchObject({ code: "referral_registration_unavailable" });
+      await expect(
+        createConsumerInvite(firstRuntime.db, { accountId: invitee.accountId, now }),
+      ).rejects.toMatchObject({ code: "consumer_invite_ineligible" });
+      const dashboard = await loadGrowthDashboard(firstRuntime.db, inviter.accountId, now);
+      expect(dashboard.consumerInvite).toMatchObject({
+        canCreate: false,
+        status: "redeemed",
+      });
+      expect(dashboard.consumerInvite).not.toHaveProperty("token");
+
+      const subscriptionId = await createActiveSubscription({
+        accountId: invitee.accountId,
+        currentPeriodEnd: new Date("2027-08-04T08:00:00.000Z"),
+        currentPeriodStart: now,
+        provider: "testpay",
+        suffix: "referral-no-direct-trial",
+      });
+      await expect(
+        recordPaidSubscriptionBound(workerRuntime.db, {
+          accountId: invitee.accountId,
+          occurredAt: now,
+          provider: "testpay",
+          providerEventId: "bound-referral-account",
+          subscriptionId,
+        }),
+      ).resolves.toMatchObject({ trialGranted: false });
+      expect(
+        await handle.db
+          .select()
+          .from(membershipGrants)
+          .where(eq(membershipGrants.kind, "direct_trial")),
+      ).toHaveLength(0);
+    } finally {
+      await Promise.all([
+        firstRuntime.sql.unsafe("RESET ROLE").catch(() => undefined),
+        secondRuntime.sql.unsafe("RESET ROLE").catch(() => undefined),
+        workerRuntime.sql.unsafe("RESET ROLE").catch(() => undefined),
+      ]);
+      await Promise.all([
+        firstRuntime.close(),
+        secondRuntime.close(),
+        workerRuntime.close(),
+      ]);
+    }
+  });
+
+  it("caps Filter annual codes at five and redeems one code only once", async () => {
+    const now = new Date("2026-08-04T09:00:00.000Z");
+    const filter = await createRedeemedAccount("filter", "growth-filter-codes");
+    const issued = await Promise.allSettled(
+      Array.from({ length: 6 }, () =>
+        issueFilterAnnualCode(handle.db, {
+          accountId: filter.redeemed.accountId,
+          now,
+          ttlDays: 30,
+        }),
+      ),
+    );
+    const codes = issued.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
+    );
+    expect(codes).toHaveLength(5);
+    expect(
+      issued.flatMap((result) =>
+        result.status === "rejected" ? [result.reason as { code?: string }] : [],
+      ),
+    ).toEqual([expect.objectContaining({ code: "filter_code_annual_limit" })]);
+    expect(
+      await handle.db
+        .select()
+        .from(filterAnnualCodes)
+        .where(eq(filterAnnualCodes.issuerFilterAccountId, filter.redeemed.accountId)),
+    ).toHaveLength(5);
+    const storedHashes = await handle.db
+      .select({ tokenHash: filterAnnualCodes.tokenHash })
+      .from(filterAnnualCodes);
+    expect(storedHashes.every((row) => row.tokenHash.length === 64)).toBe(true);
+    expect(storedHashes.some((row) => codes.some((code) => code.token === row.tokenHash))).toBe(false);
+
+    const firstMember = await createEmailAccount(
+      "filter-code-member-one@example.com",
+      new Date("2026-01-03T00:00:00.000Z"),
+    );
+    const secondMember = await createEmailAccount(
+      "filter-code-member-two@example.com",
+      new Date("2026-01-04T00:00:00.000Z"),
+    );
+    const existingEndsAt = new Date("2026-10-31T09:00:00.000Z");
+    await handle.db.insert(membershipGrants).values([
+      {
+        accountId: firstMember.accountId,
+        endsAt: existingEndsAt,
+        kind: "admin_grant",
+        sourceId: "filter-code-existing-one",
+        startsAt: new Date("2026-07-01T09:00:00.000Z"),
+        status: "active",
+      },
+      {
+        accountId: secondMember.accountId,
+        endsAt: existingEndsAt,
+        kind: "admin_grant",
+        sourceId: "filter-code-existing-two",
+        startsAt: new Date("2026-07-01T09:00:00.000Z"),
+        status: "active",
+      },
+    ]);
+    const firstRuntime = createDatabase(databaseUrl!, { maxConnections: 1 });
+    const secondRuntime = createDatabase(databaseUrl!, { maxConnections: 1 });
+    const redemption = await (async () => {
+      try {
+        await Promise.all([
+          firstRuntime.sql.unsafe("SET ROLE attention_web_runtime"),
+          secondRuntime.sql.unsafe("SET ROLE attention_web_runtime"),
+        ]);
+        return await Promise.allSettled([
+          redeemFilterAnnualCode(firstRuntime.db, {
+            accountId: firstMember.accountId,
+            now,
+            token: codes[0]!.token,
+          }),
+          redeemFilterAnnualCode(secondRuntime.db, {
+            accountId: secondMember.accountId,
+            now,
+            token: codes[0]!.token,
+          }),
+        ]);
+      } finally {
+        await Promise.all([
+          firstRuntime.sql.unsafe("RESET ROLE").catch(() => undefined),
+          secondRuntime.sql.unsafe("RESET ROLE").catch(() => undefined),
+        ]);
+        await Promise.all([firstRuntime.close(), secondRuntime.close()]);
+      }
+    })();
+    const winnerIndex = redemption.findIndex((result) => result.status === "fulfilled");
+    expect(winnerIndex).toBeGreaterThanOrEqual(0);
+    expect(redemption.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(redemption.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const winner = [firstMember, secondMember][winnerIndex]!;
+    const annualGrants = await handle.db
+      .select()
+      .from(membershipGrants)
+      .where(eq(membershipGrants.kind, "filter_annual_redemption"));
+    expect(annualGrants).toEqual([
+      expect.objectContaining({ accountId: winner.accountId, startsAt: existingEndsAt }),
+    ]);
+    expect(
+      await handle.db
+        .select({ signupSource: accounts.signupSource })
+        .from(accounts)
+        .where(eq(accounts.id, winner.accountId)),
+    ).toEqual([{ signupSource: "direct" }]);
+    expect(await handle.db.select().from(consumerReferrals)).toHaveLength(0);
+    expect(await handle.db.select().from(pointsBalances)).toHaveLength(0);
+
+    const winnerSubscriptionId = await createActiveSubscription({
+      accountId: winner.accountId,
+      currentPeriodEnd: new Date("2028-08-04T09:00:00.000Z"),
+      currentPeriodStart: now,
+      provider: "testpay",
+      suffix: "filter-code-direct-trial",
+    });
+    const workerRuntime = createDatabase(databaseUrl!, { maxConnections: 1 });
+    try {
+      await workerRuntime.sql.unsafe("SET ROLE attention_worker_runtime");
+      await expect(
+        recordPaidSubscriptionBound(workerRuntime.db, {
+          accountId: winner.accountId,
+          occurredAt: now,
+          provider: "testpay",
+          providerEventId: "bound-after-filter-code",
+          subscriptionId: winnerSubscriptionId,
+        }),
+      ).resolves.toMatchObject({
+        grant: expect.objectContaining({ startsAt: annualGrants[0]!.endsAt }),
+        trialGranted: true,
+      });
+    } finally {
+      await workerRuntime.sql.unsafe("RESET ROLE").catch(() => undefined);
+      await workerRuntime.close();
+    }
+
+    const unused = codes[1]!;
+    await expect(
+      redeemFilterAnnualCode(handle.db, {
+        accountId: filter.redeemed.accountId,
+        now,
+        token: unused.token,
+      }),
+    ).rejects.toMatchObject({ code: "filter_code_invalid" });
+    await handle.db
+      .update(filterProfiles)
+      .set({ active: false, revokedAt: now, updatedAt: now })
+      .where(eq(filterProfiles.accountId, filter.redeemed.accountId));
+    await expect(
+      redeemFilterAnnualCode(handle.db, {
+        accountId: winner.accountId,
+        now,
+        token: unused.token,
+      }),
+    ).rejects.toMatchObject({ code: "filter_code_invalid" });
+    expect(
+      await handle.db
+        .select()
+        .from(membershipGrants)
+        .where(eq(membershipGrants.kind, "filter_annual_redemption")),
+    ).toHaveLength(1);
+  });
+
+  it("grants the direct first-subscription trial exactly once under Worker concurrency", async () => {
+    const now = new Date("2026-08-04T10:00:00.000Z");
+    const account = await createEmailAccount(
+      "direct-trial-ledger@example.com",
+      new Date("2026-01-05T00:00:00.000Z"),
+    );
+    const existingEndsAt = new Date("2026-11-30T10:00:00.000Z");
+    await handle.db.insert(membershipGrants).values({
+      accountId: account.accountId,
+      endsAt: existingEndsAt,
+      kind: "admin_grant",
+      sourceId: "direct-trial-existing",
+      startsAt: new Date("2026-07-01T10:00:00.000Z"),
+      status: "active",
+    });
+    const subscriptionId = await createActiveSubscription({
+      accountId: account.accountId,
+      currentPeriodEnd: new Date("2027-08-04T10:00:00.000Z"),
+      currentPeriodStart: now,
+      provider: "testpay",
+      suffix: "direct-trial",
+    });
+    const firstWorker = createDatabase(databaseUrl!, { maxConnections: 1 });
+    const secondWorker = createDatabase(databaseUrl!, { maxConnections: 1 });
+    try {
+      await Promise.all([
+        firstWorker.sql.unsafe("SET ROLE attention_worker_runtime"),
+        secondWorker.sql.unsafe("SET ROLE attention_worker_runtime"),
+      ]);
+      const eventIds = ["bound-direct-one", "bound-direct-two"] as const;
+      const results = await Promise.all([
+        recordPaidSubscriptionBound(firstWorker.db, {
+          accountId: account.accountId,
+          occurredAt: now,
+          provider: "testpay",
+          providerEventId: eventIds[0],
+          subscriptionId,
+        }),
+        recordPaidSubscriptionBound(secondWorker.db, {
+          accountId: account.accountId,
+          occurredAt: now,
+          provider: "testpay",
+          providerEventId: eventIds[1],
+          subscriptionId,
+        }),
+      ]);
+      expect(results.filter((result) => result.trialGranted)).toHaveLength(1);
+      const winnerIndex = results.findIndex((result) => result.trialGranted);
+      const winnerEventId = eventIds[winnerIndex]!;
+      const replay = await recordPaidSubscriptionBound(firstWorker.db, {
+        accountId: account.accountId,
+        occurredAt: now,
+        provider: "testpay",
+        providerEventId: winnerEventId,
+        subscriptionId,
+      });
+      expect(replay).toMatchObject({ duplicate: true, trialGranted: true });
+
+      const directGrants = await handle.db
+        .select()
+        .from(membershipGrants)
+        .where(eq(membershipGrants.kind, "direct_trial"));
+      expect(directGrants).toEqual([
+        expect.objectContaining({ accountId: account.accountId, startsAt: existingEndsAt }),
+      ]);
+      expect(
+        await handle.db
+          .select({
+            consumedAt: accounts.directTrialConsumedAt,
+            sourceEvent: accounts.directTrialSourceEventKey,
+          })
+          .from(accounts)
+          .where(eq(accounts.id, account.accountId)),
+      ).toEqual([
+        expect.objectContaining({
+          consumedAt: now,
+          sourceEvent: `testpay:${winnerEventId}`,
+        }),
+      ]);
+      expect(
+        await handle.db
+          .select()
+          .from(growthBillingEvents)
+          .where(eq(growthBillingEvents.eventType, "paid_subscription_bound")),
+      ).toHaveLength(2);
+    } finally {
+      await Promise.all([
+        firstWorker.sql.unsafe("RESET ROLE").catch(() => undefined),
+        secondWorker.sql.unsafe("RESET ROLE").catch(() => undefined),
+      ]);
+      await Promise.all([firstWorker.close(), secondWorker.close()]);
+    }
+  });
+
+  it("audits referral cash points, idempotent reversals, and nonnegative reservations", async () => {
+    const now = new Date("2026-08-04T11:00:00.000Z");
+    const inviter = await createEmailAccount(
+      "points-inviter@example.com",
+      new Date("2026-01-06T00:00:00.000Z"),
+    );
+    const invitation = await createConsumerInvite(handle.db, {
+      accountId: inviter.accountId,
+      now,
+      ttlDays: 30,
+    });
+    const inviteeChallenge = await createLoginChallenge(handle.db, {
+      consumerInviteToken: invitation.token,
+      email: "points-invitee@example.com",
+      now,
+      requesterFingerprint: "d".repeat(64),
+    });
+    const invitee = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: inviteeChallenge.challengeId,
+      code: inviteeChallenge.code,
+      now,
+    });
+    const subscriptionId = await createActiveSubscription({
+      accountId: invitee.accountId,
+      currentPeriodEnd: new Date("2027-08-04T11:00:00.000Z"),
+      currentPeriodStart: now,
+      provider: "testpay",
+      suffix: "points-invitee",
+    });
+    const worker = createDatabase(databaseUrl!, { maxConnections: 1 });
+    const secondWorker = createDatabase(databaseUrl!, { maxConnections: 1 });
+    const firstWeb = createDatabase(databaseUrl!, { maxConnections: 1 });
+    const secondWeb = createDatabase(databaseUrl!, { maxConnections: 1 });
+    try {
+      await Promise.all([
+        worker.sql.unsafe("SET ROLE attention_worker_runtime"),
+        secondWorker.sql.unsafe("SET ROLE attention_worker_runtime"),
+        firstWeb.sql.unsafe("SET ROLE attention_web_runtime"),
+        secondWeb.sql.unsafe("SET ROLE attention_web_runtime"),
+      ]);
+      const settled = await recordSettledReferralRenewal(worker.db, {
+        accountId: invitee.accountId,
+        cashPaidMinor: 101,
+        currency: "cny",
+        occurredAt: now,
+        provider: "testpay",
+        providerEventId: "renewal-settled-101",
+        subscriptionId,
+      });
+      expect(settled).toMatchObject({
+        creditedAccountId: inviter.accountId,
+        duplicate: false,
+        pointsMinor: 15,
+      });
+      await expect(
+        recordSettledReferralRenewal(worker.db, {
+          accountId: invitee.accountId,
+          cashPaidMinor: 101,
+          currency: "CNY",
+          occurredAt: now,
+          provider: "testpay",
+          providerEventId: "renewal-settled-101",
+          subscriptionId,
+        }),
+      ).resolves.toMatchObject({ duplicate: true, pointsMinor: 15 });
+      await expect(
+        recordSettledReferralRenewal(worker.db, {
+          accountId: invitee.accountId,
+          cashPaidMinor: 102,
+          currency: "CNY",
+          occurredAt: now,
+          provider: "testpay",
+          providerEventId: "renewal-settled-101",
+          subscriptionId,
+        }),
+      ).rejects.toMatchObject({ code: "billing_event_conflict" });
+
+      const reservations = await Promise.allSettled([
+        reserveRenewalPoints(firstWeb.db, {
+          accountId: inviter.accountId,
+          amountMinor: 10,
+          currency: "CNY",
+          idempotencyKey: "renewal-reservation-one",
+          now,
+        }),
+        reserveRenewalPoints(secondWeb.db, {
+          accountId: inviter.accountId,
+          amountMinor: 10,
+          currency: "CNY",
+          idempotencyKey: "renewal-reservation-two",
+          now,
+        }),
+      ]);
+      const reserved = reservations.flatMap((result) =>
+        result.status === "fulfilled" ? [result.value] : [],
+      );
+      expect(reserved).toHaveLength(1);
+      expect(
+        reservations.flatMap((result) =>
+          result.status === "rejected" ? [result.reason as { code?: string }] : [],
+        ),
+      ).toEqual([expect.objectContaining({ code: "insufficient_points" })]);
+
+      const firstReversal = await recordReferralRenewalReversal(worker.db, {
+        cashReversedMinor: 50,
+        eventType: "renewal_refunded",
+        occurredAt: now,
+        originalProvider: "testpay",
+        originalProviderEventId: "renewal-settled-101",
+        provider: "testpay",
+        providerEventId: "renewal-refund-50",
+      });
+      const secondReversal = await recordReferralRenewalReversal(worker.db, {
+        cashReversedMinor: 51,
+        eventType: "renewal_chargeback",
+        occurredAt: now,
+        originalProvider: "testpay",
+        originalProviderEventId: "renewal-settled-101",
+        provider: "testpay",
+        providerEventId: "renewal-chargeback-51",
+      });
+      expect(firstReversal.pointsReversedMinor).toBe(7);
+      expect(secondReversal.pointsReversedMinor).toBe(8);
+      await expect(
+        recordReferralRenewalReversal(worker.db, {
+          cashReversedMinor: 50,
+          eventType: "renewal_refunded",
+          occurredAt: now,
+          originalProvider: "testpay",
+          originalProviderEventId: "different-original-event",
+          provider: "testpay",
+          providerEventId: "renewal-refund-50",
+        }),
+      ).rejects.toMatchObject({ code: "billing_event_conflict" });
+
+      expect(
+        await handle.db
+          .select({
+            availableMinor: pointsBalances.availableMinor,
+            clawbackMinor: pointsBalances.clawbackMinor,
+            reservedMinor: pointsBalances.reservedMinor,
+          })
+          .from(pointsBalances)
+          .where(eq(pointsBalances.accountId, inviter.accountId)),
+      ).toEqual([{ availableMinor: 0, clawbackMinor: 10, reservedMinor: 10 }]);
+      await expect(
+        consumeRenewalPoints(firstWeb.db, {
+          accountId: inviter.accountId,
+          now,
+          reservationId: reserved[0]!.reservationId,
+        }),
+      ).rejects.toMatchObject({ code: "points_clawback_pending" });
+      await expect(
+        releaseRenewalPoints(firstWeb.db, {
+          accountId: inviter.accountId,
+          now,
+          reservationId: reserved[0]!.reservationId,
+        }),
+      ).resolves.toEqual({ duplicate: false });
+
+      await expect(
+        recordSettledReferralRenewal(worker.db, {
+          accountId: invitee.accountId,
+          cashPaidMinor: 67,
+          currency: "CNY",
+          occurredAt: new Date("2026-09-04T11:00:00.000Z"),
+          provider: "testpay",
+          providerEventId: "renewal-settled-67",
+          subscriptionId,
+        }),
+      ).resolves.toMatchObject({ pointsMinor: 10 });
+      const spendable = await reserveRenewalPoints(firstWeb.db, {
+        accountId: inviter.accountId,
+        amountMinor: 10,
+        currency: "CNY",
+        idempotencyKey: "renewal-reservation-spendable",
+        now: new Date("2026-09-04T11:00:00.000Z"),
+      });
+      await expect(
+        consumeRenewalPoints(firstWeb.db, {
+          accountId: inviter.accountId,
+          now: new Date("2026-09-04T11:00:00.000Z"),
+          reservationId: spendable.reservationId,
+        }),
+      ).resolves.toEqual({ duplicate: false });
+      const [balance] = await handle.db
+        .select()
+        .from(pointsBalances)
+        .where(eq(pointsBalances.accountId, inviter.accountId));
+      expect(balance).toMatchObject({
+        availableMinor: 0,
+        clawbackMinor: 0,
+        reservedMinor: 0,
+      });
+      expect(
+        await handle.db
+          .select()
+          .from(pointsLedgerEntries)
+          .where(eq(pointsLedgerEntries.accountId, inviter.accountId)),
+      ).toHaveLength(8);
+      expect(
+        await handle.db
+          .select()
+          .from(pointsReservations)
+          .where(eq(pointsReservations.accountId, inviter.accountId)),
+      ).toHaveLength(2);
+
+      const concurrentSettlement = await recordSettledReferralRenewal(worker.db, {
+        accountId: invitee.accountId,
+        cashPaidMinor: 100,
+        currency: "CNY",
+        occurredAt: new Date("2026-10-04T11:00:00.000Z"),
+        provider: "testpay",
+        providerEventId: "renewal-settled-concurrent-100",
+        subscriptionId,
+      });
+      expect(concurrentSettlement).toMatchObject({
+        creditedAccountId: inviter.accountId,
+        duplicate: false,
+        pointsMinor: 15,
+      });
+      const concurrentReversals = await Promise.allSettled([
+        recordReferralRenewalReversal(worker.db, {
+          cashReversedMinor: 60,
+          eventType: "renewal_refunded",
+          occurredAt: new Date("2026-10-05T11:00:00.000Z"),
+          originalProvider: "testpay",
+          originalProviderEventId: "renewal-settled-concurrent-100",
+          provider: "testpay",
+          providerEventId: "renewal-concurrent-refund-60",
+        }),
+        recordReferralRenewalReversal(secondWorker.db, {
+          cashReversedMinor: 60,
+          eventType: "renewal_chargeback",
+          occurredAt: new Date("2026-10-05T11:00:00.000Z"),
+          originalProvider: "testpay",
+          originalProviderEventId: "renewal-settled-concurrent-100",
+          provider: "testpay",
+          providerEventId: "renewal-concurrent-chargeback-60",
+        }),
+      ]);
+      expect(
+        concurrentReversals.filter((result) => result.status === "fulfilled"),
+      ).toHaveLength(1);
+      expect(
+        concurrentReversals.flatMap((result) =>
+          result.status === "rejected" ? [result.reason as { code?: string }] : [],
+        ),
+      ).toEqual([expect.objectContaining({ code: "invalid_event" })]);
+      expect(
+        await handle.db
+          .select({
+            cashAmountMinor: growthBillingEvents.cashAmountMinor,
+            pointsAmountMinor: growthBillingEvents.pointsAmountMinor,
+          })
+          .from(growthBillingEvents)
+          .where(eq(growthBillingEvents.originalEventId, concurrentSettlement.eventId)),
+      ).toEqual([{ cashAmountMinor: 60, pointsAmountMinor: 9 }]);
+      expect(
+        await handle.db
+          .select({
+            availableMinor: pointsBalances.availableMinor,
+            clawbackMinor: pointsBalances.clawbackMinor,
+            reservedMinor: pointsBalances.reservedMinor,
+          })
+          .from(pointsBalances)
+          .where(eq(pointsBalances.accountId, inviter.accountId)),
+      ).toEqual([{ availableMinor: 6, clawbackMinor: 0, reservedMinor: 0 }]);
+    } finally {
+      await Promise.all([
+        worker.sql.unsafe("RESET ROLE").catch(() => undefined),
+        secondWorker.sql.unsafe("RESET ROLE").catch(() => undefined),
+        firstWeb.sql.unsafe("RESET ROLE").catch(() => undefined),
+        secondWeb.sql.unsafe("RESET ROLE").catch(() => undefined),
+      ]);
+      await Promise.all([
+        worker.close(),
+        secondWorker.close(),
+        firstWeb.close(),
+        secondWeb.close(),
+      ]);
+    }
+  });
+
+  it("scopes growth attempt visibility and blocks token identity mutation for Web runtime", async () => {
+    const now = new Date("2026-08-04T12:00:00.000Z");
+    const first = await createEmailAccount(
+      "growth-rls-one@example.com",
+      new Date("2026-01-07T00:00:00.000Z"),
+    );
+    const second = await createEmailAccount(
+      "growth-rls-two@example.com",
+      new Date("2026-01-08T00:00:00.000Z"),
+    );
+    const invitation = await createConsumerInvite(handle.db, {
+      accountId: first.accountId,
+      now,
+    });
+    const fingerprint = "e".repeat(64);
+    await handle.db.insert(growthTokenAttempts).values([
+      {
+        accountId: first.accountId,
+        createdAt: now,
+        tokenHash: "1".repeat(64),
+        tokenKind: "filter_annual",
+      },
+      {
+        accountId: second.accountId,
+        createdAt: now,
+        tokenHash: "2".repeat(64),
+        tokenKind: "filter_annual",
+      },
+      {
+        createdAt: now,
+        requesterFingerprint: fingerprint,
+        tokenHash: "3".repeat(64),
+        tokenKind: "consumer_referral",
+      },
+    ]);
+    const runtime = createDatabase(databaseUrl!, { maxConnections: 1 });
+    try {
+      await runtime.sql.unsafe("SET ROLE attention_web_runtime");
+      const visibility = await runtime.sql.begin(async (transaction) => {
+        const withoutContext = await transaction<{ id: string }[]>`
+          SELECT id FROM growth_token_attempts
+        `;
+        await transaction`SELECT set_config('app.account_id', ${first.accountId}, true)`;
+        const accountScoped = await transaction<{ account_id: string | null }[]>`
+          SELECT account_id FROM growth_token_attempts ORDER BY account_id NULLS LAST
+        `;
+        await transaction`SELECT set_config('app.account_id', '', true)`;
+        await transaction`
+          SELECT set_config('app.growth_requester_fingerprint', ${fingerprint}, true)
+        `;
+        const fingerprintScoped = await transaction<{ requester_fingerprint: string | null }[]>`
+          SELECT requester_fingerprint FROM growth_token_attempts
+        `;
+        return { accountScoped, fingerprintScoped, withoutContext };
+      });
+      expect(visibility.withoutContext).toEqual([]);
+      expect(visibility.accountScoped).toEqual([{ account_id: first.accountId }]);
+      expect(visibility.fingerprintScoped).toEqual([
+        { requester_fingerprint: fingerprint },
+      ]);
+
+      await expect(
+        runtime.sql.begin(async (transaction) => {
+          await transaction`SELECT set_config('app.account_id', ${first.accountId}, true)`;
+          await transaction`
+            UPDATE consumer_referrals
+            SET token_hash = ${"9".repeat(64)}
+            WHERE id = ${invitation.invitationId}::uuid
+          `;
+        }),
+      ).rejects.toThrow();
+      await expect(
+        runtime.sql.begin(async (transaction) => {
+          await transaction`SELECT set_config('app.account_id', ${first.accountId}, true)`;
+          await transaction`
+            UPDATE consumer_referrals
+            SET status = 'redeemed',
+                invitee_account_id = ${second.accountId}::uuid,
+                registered_at = ${now}
+            WHERE id = ${invitation.invitationId}::uuid
+          `;
+        }),
+      ).rejects.toThrow();
+      await expect(
+        runtime.sql`
+          UPDATE growth_token_attempts
+          SET requester_fingerprint = ${"f".repeat(64)}
+        `,
+      ).rejects.toThrow();
+
+      const privileges = await handle.sql<{
+        can_update_attempt_actor: boolean;
+        can_update_consumer_token: boolean;
+        can_update_filter_issuer: boolean;
+        worker_can_update_direct_trial: boolean;
+        worker_can_update_password: boolean;
+      }[]>`
+        SELECT
+          has_column_privilege(
+            'attention_web_runtime',
+            'growth_token_attempts',
+            'requester_fingerprint',
+            'UPDATE'
+          ) AS can_update_attempt_actor,
+          has_column_privilege(
+            'attention_web_runtime',
+            'consumer_referrals',
+            'token_hash',
+            'UPDATE'
+          ) AS can_update_consumer_token,
+          has_column_privilege(
+            'attention_web_runtime',
+            'filter_annual_codes',
+            'issuer_filter_account_id',
+            'UPDATE'
+          ) AS can_update_filter_issuer,
+          has_column_privilege(
+            'attention_worker_runtime',
+            'accounts',
+            'direct_trial_consumed_at',
+            'UPDATE'
+          ) AS worker_can_update_direct_trial,
+          has_column_privilege(
+            'attention_worker_runtime',
+            'accounts',
+            'password_hash',
+            'UPDATE'
+          ) AS worker_can_update_password
+      `;
+      expect(privileges).toEqual([
+        {
+          can_update_attempt_actor: false,
+          can_update_consumer_token: false,
+          can_update_filter_issuer: false,
+          worker_can_update_direct_trial: true,
+          worker_can_update_password: false,
+        },
+      ]);
+    } finally {
+      await runtime.sql.unsafe("RESET ROLE").catch(() => undefined);
+      await runtime.close();
     }
   });
 });

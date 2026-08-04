@@ -1,4 +1,4 @@
-import type { DatabaseHandle } from "@attention/db";
+import { resolveDueModerationCases, type DatabaseHandle } from "@attention/db";
 
 import type { WorkerConfig } from "./config.js";
 import { LostLeaseError, toSafeJobFailure } from "./errors.js";
@@ -156,17 +156,23 @@ async function runSlot(
     cycles += 1;
     if (slot === 0 && cycles % 30 === 1) {
       try {
-        const [reaped, expiredCandidates] = await Promise.all([
+        const [reaped, expiredCandidates, resolvedModerationCases] = await Promise.all([
           reapExhaustedJobs(handle.sql, {
             leaseMs: config.leaseMs,
             queue: config.queue,
           }),
           deleteExpiredCandidateSets(handle.sql),
+          resolveDueModerationCases(handle.db),
         ]);
         if (reaped > 0) logger.warn("exhausted_jobs_reaped", { count: reaped });
         if (expiredCandidates > 0) {
           logger.info("expired_candidate_sets_deleted", {
             count: expiredCandidates,
+          });
+        }
+        if (resolvedModerationCases > 0) {
+          logger.info("moderation_cases_resolved", {
+            count: resolvedModerationCases,
           });
         }
       } catch {

@@ -57,7 +57,10 @@ import { FetcherClientError, resolveExternalUrl } from "./fetcher-client";
 const parserVersion = "web-v1";
 const selectionTtlMilliseconds = 24 * 60 * 60 * 1_000;
 const attemptLeaseMilliseconds = 5 * 60 * 1_000;
-type CollectionPrincipal = Pick<SessionPrincipal, "accountId" | "isFilter">;
+type CollectionPrincipal = Pick<
+  SessionPrincipal,
+  "accountId" | "isFilter" | "isMember"
+>;
 
 export const collectRequestSchema = z
   .object({
@@ -741,6 +744,29 @@ async function establishCollection(
         taskType: "content.metadata.v1",
       })
       .onConflictDoNothing({ target: jobs.idempotencyKey });
+    if (
+      principal.isMember &&
+      !contentResult.created &&
+      contentResult.content.summaryStatus !== "ready" &&
+      contentResult.content.summaryStatus !== "hidden"
+    ) {
+      const [summaryJob] = await tx
+        .insert(jobs)
+        .values({
+          idempotencyKey: `content.summary.v1:${contentResult.content.id}`,
+          payload: { contentId: contentResult.content.id },
+          queue: "content-enrichment",
+          taskType: "content.summary.v1",
+        })
+        .onConflictDoNothing({ target: jobs.idempotencyKey })
+        .returning({ id: jobs.id });
+      if (summaryJob) {
+        await tx
+          .update(contents)
+          .set({ enrichmentStatus: "partial", summaryStatus: "pending", updatedAt: now })
+          .where(eq(contents.id, contentResult.content.id));
+      }
+    }
     const [updatedAttempt] = await tx
       .update(inputAttempts)
       .set({

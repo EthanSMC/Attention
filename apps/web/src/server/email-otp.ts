@@ -1,5 +1,7 @@
 import "server-only";
 
+import { normalizeCredentialEndpoint } from "@attention/contracts";
+
 export interface EmailOtpMessage {
   code: string;
   email: string;
@@ -42,6 +44,7 @@ class WebhookEmailOtpSender implements EmailOtpSender {
         "Content-Type": "application/json",
       },
       method: "POST",
+      redirect: "error",
       signal: AbortSignal.timeout(8_000),
     });
     if (!response.ok) {
@@ -50,18 +53,23 @@ class WebhookEmailOtpSender implements EmailOtpSender {
   }
 }
 
-export function getEmailOtpSender(): EmailOtpSender {
-  const provider = process.env.ATTENTION_EMAIL_PROVIDER?.trim() || "console";
+export function getEmailOtpSender(
+  env: NodeJS.ProcessEnv = process.env,
+): EmailOtpSender {
+  const provider = env.ATTENTION_EMAIL_PROVIDER?.trim() || "console";
   if (provider === "console") return new ConsoleEmailOtpSender();
   if (provider === "webhook") {
-    const endpoint = process.env.ATTENTION_EMAIL_WEBHOOK_URL?.trim();
-    const bearerToken = process.env.ATTENTION_EMAIL_WEBHOOK_TOKEN?.trim();
+    const endpoint = env.ATTENTION_EMAIL_WEBHOOK_URL?.trim();
+    const bearerToken = env.ATTENTION_EMAIL_WEBHOOK_TOKEN?.trim();
     if (!endpoint || !bearerToken) {
       throw new Error(
         "ATTENTION_EMAIL_WEBHOOK_URL and ATTENTION_EMAIL_WEBHOOK_TOKEN are required",
       );
     }
-    return new WebhookEmailOtpSender(endpoint, bearerToken);
+    return new WebhookEmailOtpSender(
+      normalizeCredentialEndpoint(endpoint, "ATTENTION_EMAIL_WEBHOOK_URL"),
+      bearerToken,
+    );
   }
   throw new Error(`Unsupported ATTENTION_EMAIL_PROVIDER: ${provider}`);
 }

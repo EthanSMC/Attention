@@ -1,4 +1,12 @@
-import { and, contents, eq, jobs, type AttentionDatabase } from "@attention/db";
+import { resolveAccountCapabilities } from "@attention/auth";
+import {
+  and,
+  collections,
+  contents,
+  eq,
+  jobs,
+  type AttentionDatabase,
+} from "@attention/db";
 
 import {
   ENRICHMENT_QUEUE,
@@ -59,6 +67,7 @@ async function loadEligibleContent(db: AttentionDatabase, contentId: string) {
       publicSafetyStatus: contents.publicSafetyStatus,
       publishedAt: contents.publishedAt,
       source: contents.source,
+      summaryStatus: contents.summaryStatus,
       takedownStatus: contents.takedownStatus,
       title: contents.title,
     })
@@ -125,18 +134,58 @@ function validateMetadata(result: MetadataResult): MetadataResult {
 }
 
 function validateSummary(result: SummaryResult): SummaryResult {
+  if (result.status !== "ready" && result.status !== "unavailable") {
+    throw new JobExecutionError("invalid_summary_result", { retryable: false });
+  }
+  if (!Array.isArray(result.tags) || result.tags.length > 8) {
+    throw new JobExecutionError("invalid_summary_tags", { retryable: false });
+  }
+  const tags = [...new Set(result.tags.map((tag) => {
+    if (typeof tag !== "string") {
+      throw new JobExecutionError("invalid_summary_tags", { retryable: false });
+    }
+    const normalized = tag.trim();
+    if (!normalized || normalized.length > 64) {
+      throw new JobExecutionError("invalid_summary_tags", { retryable: false });
+    }
+    return normalized;
+  }))];
   if (result.status === "unavailable") {
     if (result.summary !== null) {
       throw new JobExecutionError("invalid_summary_result", { retryable: false });
     }
-    return result;
+    return { ...result, tags };
   }
 
   const summary = validateNullableText(result.summary, "summary", 2_000);
   if (!summary) {
     throw new JobExecutionError("invalid_summary_result", { retryable: false });
   }
-  return { status: "ready", summary };
+  return { status: "ready", summary, tags };
+}
+
+/**
+ * Hosted AI is decided when the metadata job runs. An account upgrading later
+ * does not scan or enqueue its historical Free collections.
+ */
+export async function shouldScheduleHostedAi(
+  db: AttentionDatabase,
+  contentId: string,
+): Promise<boolean> {
+  const owners = await db
+    .select({ accountId: collections.accountId })
+    .from(collections)
+    .where(
+      and(
+        eq(collections.contentId, contentId),
+        eq(collections.collectionStatus, "active"),
+      ),
+    );
+  for (const accountId of new Set(owners.map((owner) => owner.accountId))) {
+    const capabilities = await resolveAccountCapabilities(db, accountId);
+    if (capabilities.isMember) return true;
+  }
+  return false;
 }
 
 async function finalizeMetadata(
@@ -144,6 +193,8 @@ async function finalizeMetadata(
   job: ClaimedJob,
   contentId: string,
   result: MetadataResult,
+  scheduleSummary: boolean,
+  summaryStatus: "failed" | "hidden" | "pending" | "ready" | "unavailable",
 ) {
   const completed = await db.transaction(async (tx) => {
     const [lease] = await tx
@@ -169,6 +220,11 @@ async function finalizeMetadata(
         cachedFaviconAssetKey: result.cachedFaviconAssetKey,
         enrichmentStatus: "partial",
         publishedAt: result.publishedAt,
+        summaryStatus: summaryStatus === "ready" || summaryStatus === "hidden"
+          ? summaryStatus
+          : scheduleSummary
+            ? "pending"
+            : "unavailable",
         title: result.title,
         updatedAt: now,
       })
@@ -186,15 +242,17 @@ async function finalizeMetadata(
       throw new JobExecutionError("content_became_ineligible", { retryable: false });
     }
 
-    await tx
-      .insert(jobs)
-      .values({
-        idempotencyKey: `${SUMMARY_TASK_TYPE}:${contentId}`,
-        payload: { contentId },
-        queue: ENRICHMENT_QUEUE,
-        taskType: SUMMARY_TASK_TYPE,
-      })
-      .onConflictDoNothing({ target: jobs.idempotencyKey });
+    if (scheduleSummary && summaryStatus !== "ready" && summaryStatus !== "hidden") {
+      await tx
+        .insert(jobs)
+        .values({
+          idempotencyKey: `${SUMMARY_TASK_TYPE}:${contentId}`,
+          payload: { contentId },
+          queue: ENRICHMENT_QUEUE,
+          taskType: SUMMARY_TASK_TYPE,
+        })
+        .onConflictDoNothing({ target: jobs.idempotencyKey });
+    }
 
     await tx
       .update(jobs)
@@ -241,6 +299,7 @@ async function finalizeSummary(
       .update(contents)
       .set({
         aiSummary: result.summary,
+        aiTags: result.tags,
         enrichmentStatus: result.status === "ready" ? "complete" : "partial",
         summaryStatus: result.status,
         updatedAt: now,
@@ -297,10 +356,26 @@ export async function executeClaimedJob(
 
   if (job.taskType === METADATA_TASK_TYPE) {
     const result = validateMetadata(await handlers.metadata(context));
-    await finalizeMetadata(db, job, content.id, result);
+    const scheduleSummary = await shouldScheduleHostedAi(db, content.id);
+    await finalizeMetadata(
+      db,
+      job,
+      content.id,
+      result,
+      scheduleSummary,
+      content.summaryStatus,
+    );
     return;
   }
 
+  if (!(await shouldScheduleHostedAi(db, content.id))) {
+    await finalizeSummary(db, job, content.id, {
+      status: "unavailable",
+      summary: null,
+      tags: [],
+    });
+    return;
+  }
   const result = validateSummary(await handlers.summary(context));
   await finalizeSummary(db, job, content.id, result);
 }

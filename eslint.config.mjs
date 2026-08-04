@@ -5,9 +5,12 @@ export default tseslint.config(
   {
     ignores: [
       "**/.next/**",
+      "**/.media/**",
       "**/coverage/**",
+      "**/deliverables/**",
       "**/dist/**",
-      "**/node_modules/**"
+      "**/node_modules/**",
+      "**/output/**"
     ]
   },
   eslint.configs.recommended,

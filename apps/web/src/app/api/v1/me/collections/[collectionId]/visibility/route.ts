@@ -8,12 +8,19 @@ import { z, ZodError } from "zod";
 import { mutationRequestError, noStoreJson } from "../../../../../../../server/api-guard";
 import { getWebDatabase } from "../../../../../../../server/db";
 import {
+  InvalidRequestBodyError,
+  readJsonRequestWithinLimit,
+  RequestBodyTooLargeError,
+} from "../../../../../../../server/request-body";
+import {
   clearInvalidSessionCookie,
   getRequestSession,
 } from "../../../../../../../server/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const MAX_VISIBILITY_BODY_BYTES = 8_192;
 
 const bodySchema = z.object({ visibility: z.enum(["public", "private"]) }).strict();
 const paramsSchema = z.object({ collectionId: z.string().uuid() });
@@ -42,7 +49,9 @@ export async function PATCH(
   }
 
   try {
-    const body = bodySchema.parse(await request.json());
+    const body = bodySchema.parse(
+      await readJsonRequestWithinLimit(request, MAX_VISIBILITY_BODY_BYTES),
+    );
     const { collectionId } = paramsSchema.parse(await context.params);
     if (body.visibility === "public" && !principal.isFilter) {
       return noStoreJson({ error: { code: "filter_required" } }, { status: 403 });
@@ -54,7 +63,10 @@ export async function PATCH(
     });
     return noStoreJson({ visibility: collection.visibility });
   } catch (error) {
-    if (error instanceof ZodError) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return noStoreJson({ error: { code: "request_too_large" } }, { status: 413 });
+    }
+    if (error instanceof InvalidRequestBodyError || error instanceof ZodError) {
       return noStoreJson({ error: { code: "invalid_request" } }, { status: 400 });
     }
     if (error instanceof CollectionRepositoryError) {

@@ -20,6 +20,7 @@ export interface MetadataResult {
 export interface SummaryResult {
   summary: string | null;
   status: "ready" | "unavailable";
+  tags: string[];
 }
 
 const UUID_PATTERN =

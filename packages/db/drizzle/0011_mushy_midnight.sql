@@ -1,0 +1,1 @@
+CREATE INDEX "oauth_clients_created_idx" ON "oauth_clients" USING btree ("created_at");

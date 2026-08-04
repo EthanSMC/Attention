@@ -15,6 +15,7 @@
     "declaration": true,
     "sourceMap": true,
     "paths": {
+      "@attention/ai": ["./packages/ai/src/index.ts"],
       "@attention/auth": ["./packages/auth/src/index.ts"],
       "@attention/collector": ["./packages/collector/src/index.ts"],
       "@attention/contracts": ["./packages/contracts/src/index.ts"],

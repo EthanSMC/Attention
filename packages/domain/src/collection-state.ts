@@ -17,6 +17,7 @@ export interface CollectionState {
 }
 
 export interface ContentPublicationState {
+  communityModerationStatus: "clear" | "hidden" | "pending_review";
   contentStatus: "active" | "merged";
   publicSafetyStatus: "allowed" | "blocked";
   takedownStatus: "none" | "removed";
@@ -63,6 +64,7 @@ export function isEffectivelyPublic(
     collection.filterRevokedAt === null &&
     collection.moderationStatus === "clear" &&
     actor.filterActive &&
+    content.communityModerationStatus === "clear" &&
     content.contentStatus === "active" &&
     content.publicSafetyStatus === "allowed" &&
     content.takedownStatus === "none"

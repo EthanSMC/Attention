@@ -4,10 +4,17 @@ import { z, ZodError } from "zod";
 
 import { mutationRequestError, noStoreJson } from "../../../../../server/api-guard";
 import { getWebDatabase } from "../../../../../server/db";
+import {
+  InvalidRequestBodyError,
+  readJsonRequestWithinLimit,
+  RequestBodyTooLargeError,
+} from "../../../../../server/request-body";
 import { setSessionCookie } from "../../../../../server/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const MAX_EMAIL_VERIFY_BODY_BYTES = 4_096;
 
 const bodySchema = z
   .object({
@@ -24,7 +31,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const body = bodySchema.parse(await request.json());
+    const body = bodySchema.parse(
+      await readJsonRequestWithinLimit(request, MAX_EMAIL_VERIFY_BODY_BYTES),
+    );
     const verified = await verifyLoginChallenge(getWebDatabase(), {
       acceptTerms: body.accept_terms,
       challengeId: body.challenge_id,
@@ -41,7 +50,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     setSessionCookie(response, verified.session);
     return response;
   } catch (error) {
-    if (error instanceof ZodError) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return noStoreJson(
+        { error: { code: "request_too_large" } },
+        { status: 413 },
+      );
+    }
+    if (error instanceof InvalidRequestBodyError || error instanceof ZodError) {
       return noStoreJson({ error: { code: "invalid_request" } }, { status: 400 });
     }
     if (error instanceof EmailAuthError) {

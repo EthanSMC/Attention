@@ -8,10 +8,21 @@ import { z, ZodError } from "zod";
 
 import { mutationRequestError, noStoreJson } from "../../../../server/api-guard";
 import { getWebDatabase } from "../../../../server/db";
+import {
+  InvalidRequestBodyError,
+  readJsonRequestWithinLimit,
+  RequestBodyTooLargeError,
+} from "../../../../server/request-body";
 import { setSessionCookie } from "../../../../server/session";
+import {
+  trustedClientSource,
+  TrustedClientSourceError,
+} from "../../../../server/trusted-client-source";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const MAX_PASSWORD_LOGIN_BODY_BYTES = 8_192;
 
 const bodySchema = z
   .object({
@@ -22,9 +33,7 @@ const bodySchema = z
   .strict();
 
 function requesterFingerprint(request: NextRequest): string {
-  const forwardedFor = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "";
-  const userAgent = request.headers.get("user-agent")?.slice(0, 512) ?? "";
-  return fingerprintLoginRequester(`${forwardedFor}\0${userAgent}`);
+  return fingerprintLoginRequester(trustedClientSource(request));
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -34,7 +43,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const body = bodySchema.parse(await request.json());
+    const body = bodySchema.parse(
+      await readJsonRequestWithinLimit(request, MAX_PASSWORD_LOGIN_BODY_BYTES),
+    );
     const result = await loginWithPassword(getWebDatabase(), {
       email: body.email,
       password: body.password,
@@ -51,7 +62,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     setSessionCookie(response, result.session);
     return response;
   } catch (error) {
-    if (error instanceof ZodError) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return noStoreJson(
+        { error: { code: "request_too_large" } },
+        { status: 413 },
+      );
+    }
+    if (error instanceof InvalidRequestBodyError || error instanceof ZodError) {
       return noStoreJson({ error: { code: "invalid_request" } }, { status: 400 });
     }
     if (error instanceof PasswordAuthError) {
@@ -61,6 +78,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           ? 403
           : 401;
       return noStoreJson({ error: { code: error.code } }, { status });
+    }
+    if (error instanceof TrustedClientSourceError) {
+      console.error("trusted_client_source_unavailable", { route: "password_login" });
+      return noStoreJson({ error: { code: "service_unavailable" } }, { status: 503 });
     }
     console.error("password_login_failed", {
       name: error instanceof Error ? error.name : "UnknownError",

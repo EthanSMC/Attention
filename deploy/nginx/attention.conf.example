@@ -1,0 +1,37 @@
+# The public edge must remove any client-supplied identity header and overwrite
+# it with the connection source before proxying to Attention.
+limit_req_zone $binary_remote_addr zone=attention_auth:10m rate=20r/m;
+limit_req_zone $binary_remote_addr zone=attention_oauth_register:10m rate=1r/m;
+
+server {
+    # Terminate TLS in this server or in a trusted load balancer in front of it.
+    # This reference listens on an internal HTTP port so `nginx -t` is runnable
+    # without repository-owned certificates.
+    listen 8080;
+    server_name attention.example.com;
+
+    client_max_body_size 2m;
+
+    location = /oauth/register {
+        limit_req zone=attention_oauth_register burst=3 nodelay;
+        proxy_set_header X-Attention-Client-Source $remote_addr;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_pass http://127.0.0.1:3000;
+    }
+
+    location ~ ^/api/auth/(email/start|password)$ {
+        limit_req zone=attention_auth burst=5 nodelay;
+        proxy_set_header X-Attention-Client-Source $remote_addr;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_pass http://127.0.0.1:3000;
+    }
+
+    location / {
+        proxy_set_header X-Attention-Client-Source $remote_addr;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_pass http://127.0.0.1:3000;
+    }
+}

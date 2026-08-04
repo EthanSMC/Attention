@@ -4,11 +4,13 @@ import type {
   PublicContent,
   SourceTone,
 } from "../lib/attention";
+import { resolveAccountCapabilities } from "@attention/auth";
 import {
   accounts,
   and,
   collections,
   contents,
+  desc,
   eq,
   filterProfiles,
   publicContentAttributionsCurrent,
@@ -16,6 +18,8 @@ import {
   sql,
   type AttentionDatabase,
 } from "@attention/db";
+
+import type { AgentCandidate } from "./agent-core";
 
 function sourcePresentation(
   source: string,
@@ -83,40 +87,46 @@ export async function loadMyCollections(
   db: AttentionDatabase,
   accountId: string,
 ): Promise<CollectionItem[]> {
-  const rows = await db.transaction(async (tx) => {
-    await tx.execute(sql`select set_config('app.account_id', ${accountId}, true)`);
-    return tx
-      .select({
-        aiSummary: contents.aiSummary,
-        author: contents.author,
-        collectedAt: collections.collectedAt,
-        collectionId: collections.id,
-        filterDisplayName: filterProfiles.displayName,
-        filterRevokedAt: collections.filterRevokedAt,
-        firstPublicAt: contents.firstPublicAt,
-        moderationStatus: collections.moderationStatus,
-        outboundUrl: contents.outboundUrl,
-        publicSafetyStatus: contents.publicSafetyStatus,
-        publishedAt: contents.publishedAt,
-        source: contents.source,
-        stableHandle: accounts.stableHandle,
-        summaryStatus: contents.summaryStatus,
-        takedownStatus: contents.takedownStatus,
-        title: contents.title,
-        visibility: collections.visibility,
-      })
-      .from(collections)
-      .innerJoin(contents, eq(contents.id, collections.contentId))
-      .innerJoin(accounts, eq(accounts.id, collections.accountId))
-      .leftJoin(filterProfiles, eq(filterProfiles.accountId, collections.accountId))
-      .where(
-        and(
-          eq(collections.accountId, accountId),
-          eq(collections.collectionStatus, "active"),
-        ),
-      )
-      .orderBy(sql`${collections.collectedAt} DESC`);
-  });
+  const [capabilities, rows] = await Promise.all([
+    resolveAccountCapabilities(db, accountId),
+    db.transaction(async (tx) => {
+      await tx.execute(sql`select set_config('app.account_id', ${accountId}, true)`);
+      return tx
+        .select({
+          aiSummary: contents.aiSummary,
+          aiTags: contents.aiTags,
+          author: contents.author,
+          collectedAt: collections.collectedAt,
+          collectionId: collections.id,
+          filterDisplayName: filterProfiles.displayName,
+          filterRevokedAt: collections.filterRevokedAt,
+          firstPublicAt: contents.firstPublicAt,
+          moderationStatus: collections.moderationStatus,
+          outboundUrl: contents.outboundUrl,
+          publicSafetyStatus: contents.publicSafetyStatus,
+          publishedAt: contents.publishedAt,
+          publicContentId: publicContentsCurrent.id,
+          source: contents.source,
+          stableHandle: accounts.stableHandle,
+          summaryStatus: contents.summaryStatus,
+          takedownStatus: contents.takedownStatus,
+          title: contents.title,
+          visibility: collections.visibility,
+        })
+        .from(collections)
+        .innerJoin(contents, eq(contents.id, collections.contentId))
+        .innerJoin(accounts, eq(accounts.id, collections.accountId))
+        .leftJoin(filterProfiles, eq(filterProfiles.accountId, collections.accountId))
+        .leftJoin(publicContentsCurrent, eq(publicContentsCurrent.id, contents.id))
+        .where(
+          and(
+            eq(collections.accountId, accountId),
+            eq(collections.collectionStatus, "active"),
+          ),
+        )
+        .orderBy(sql`${collections.collectedAt} DESC`);
+    }),
+  ]);
 
   return rows.map((row) => {
     const source = sourcePresentation(row.source, row.outboundUrl);
@@ -129,6 +139,7 @@ export async function loadMyCollections(
       : row.visibility === "public" && row.filterRevokedAt
         ? "paused"
         : row.visibility;
+    const derivedVisible = capabilities.isMember || row.publicContentId !== null;
     return {
       author: row.author,
       collectedAt: row.collectedAt.toISOString(),
@@ -149,9 +160,9 @@ export async function loadMyCollections(
       source: source.name,
       sourceInitial: source.initial,
       sourceTone: source.tone,
-      summary: row.aiSummary,
-      summaryStatus: uiSummaryStatus(row.summaryStatus),
-      tags: [],
+      summary: derivedVisible ? row.aiSummary : null,
+      summaryStatus: derivedVisible ? uiSummaryStatus(row.summaryStatus) : "unavailable",
+      tags: derivedVisible ? row.aiTags : [],
       title: row.title ?? fallbackTitle(row.outboundUrl, source.name),
       visibility: row.visibility,
     };
@@ -164,6 +175,7 @@ export async function loadPublicContents(
   const rows = await db
     .select({
       aiSummary: publicContentsCurrent.aiSummary,
+      aiTags: publicContentsCurrent.aiTags,
       author: publicContentsCurrent.author,
       displayName: publicContentAttributionsCurrent.displayName,
       firstPublicAt: publicContentsCurrent.firstPublicAt,
@@ -180,7 +192,10 @@ export async function loadPublicContents(
       publicContentAttributionsCurrent,
       eq(publicContentAttributionsCurrent.contentId, publicContentsCurrent.id),
     )
-    .orderBy(sql`${publicContentsCurrent.firstPublicAt} DESC`);
+    .orderBy(
+      desc(publicContentsCurrent.firstPublicAt),
+      desc(publicContentsCurrent.publicId),
+    );
 
   const byContent = new Map<string, PublicContent>();
   for (const row of rows) {
@@ -211,9 +226,91 @@ export async function loadPublicContents(
       sourceTone: source.tone,
       summary: row.aiSummary,
       summaryStatus: uiSummaryStatus(row.summaryStatus),
-      tags: [],
+      tags: row.aiTags,
       title: row.title ?? fallbackTitle(row.outboundUrl, source.name),
     });
   }
   return [...byContent.values()];
+}
+
+/**
+ * Returns only the current account's safe active collections plus rows from
+ * the security-barrier public view. Internal content keys are used solely to
+ * deduplicate the same canonical Content across those two authorized scopes.
+ */
+export async function loadAgentCandidates(
+  db: AttentionDatabase,
+  accountId: string,
+): Promise<AgentCandidate[]> {
+  const mine = await db.transaction(async (tx) => {
+    await tx.execute(sql`select set_config('app.account_id', ${accountId}, true)`);
+    return tx
+      .select({
+        aiSummary: contents.aiSummary,
+        aiTags: contents.aiTags,
+        author: contents.author,
+        collectionId: collections.id,
+        contentId: contents.id,
+        outboundUrl: contents.outboundUrl,
+        source: contents.source,
+        summaryStatus: contents.summaryStatus,
+        title: contents.title,
+      })
+      .from(collections)
+      .innerJoin(contents, eq(contents.id, collections.contentId))
+      .where(and(
+        eq(collections.accountId, accountId),
+        eq(collections.collectionStatus, "active"),
+        eq(collections.moderationStatus, "clear"),
+        eq(contents.contentStatus, "active"),
+        eq(contents.publicSafetyStatus, "allowed"),
+        eq(contents.takedownStatus, "none"),
+      ));
+  });
+  const mineKeys = new Set(mine.map((row) => row.contentId));
+  const publicRows = await db
+    .select({
+      aiSummary: publicContentsCurrent.aiSummary,
+      aiTags: publicContentsCurrent.aiTags,
+      author: publicContentsCurrent.author,
+      contentId: publicContentsCurrent.id,
+      outboundUrl: publicContentsCurrent.outboundUrl,
+      publicId: publicContentsCurrent.publicId,
+      source: publicContentsCurrent.source,
+      summaryStatus: publicContentsCurrent.summaryStatus,
+      title: publicContentsCurrent.title,
+    })
+    .from(publicContentsCurrent);
+
+  const ownCandidates = mine.map<AgentCandidate>((row) => {
+    const source = sourcePresentation(row.source, row.outboundUrl);
+    return {
+      author: row.author,
+      href: `/out/mine/${row.collectionId}`,
+      id: row.collectionId,
+      key: row.contentId,
+      scope: "mine",
+      source: source.name,
+      summary: row.summaryStatus === "ready" ? row.aiSummary : null,
+      tags: row.summaryStatus === "hidden" ? [] : row.aiTags,
+      title: row.title ?? fallbackTitle(row.outboundUrl, source.name),
+    };
+  });
+  const publicByContent = new Map<string, AgentCandidate>();
+  for (const row of publicRows) {
+    if (mineKeys.has(row.contentId) || publicByContent.has(row.contentId)) continue;
+    const source = sourcePresentation(row.source, row.outboundUrl);
+    publicByContent.set(row.contentId, {
+      author: row.author,
+      href: `/out/public/${row.publicId}`,
+      id: row.publicId,
+      key: row.contentId,
+      scope: "public",
+      source: source.name,
+      summary: row.summaryStatus === "ready" ? row.aiSummary : null,
+      tags: row.summaryStatus === "hidden" ? [] : row.aiTags,
+      title: row.title ?? fallbackTitle(row.outboundUrl, source.name),
+    });
+  }
+  return [...ownCandidates, ...publicByContent.values()];
 }

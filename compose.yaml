@@ -1,0 +1,201 @@
+name: attention
+
+x-app-defaults: &app-defaults
+  init: true
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  postgres:
+    image: postgres:17.6-bookworm
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-attention}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_USER:-attention_migration_owner}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - database
+
+  migrate:
+    build:
+      context: .
+      target: migrate
+    profiles: ["tools"]
+    environment:
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?set MIGRATION_DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - database
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
+  runtime-role-passwords:
+    image: postgres:17.6-bookworm
+    profiles: ["tools"]
+    entrypoint: ["/bin/sh", "-ceu"]
+    command:
+      - |
+        exec psql "$${MIGRATION_DATABASE_URL}" \
+          --file=/opt/attention/set-runtime-passwords.sql
+    environment:
+      ATTENTION_WEB_DATABASE_PASSWORD: ${ATTENTION_WEB_DATABASE_PASSWORD:?set ATTENTION_WEB_DATABASE_PASSWORD}
+      ATTENTION_WORKER_DATABASE_PASSWORD: ${ATTENTION_WORKER_DATABASE_PASSWORD:?set ATTENTION_WORKER_DATABASE_PASSWORD}
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?set MIGRATION_DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./deploy/postgres/set-runtime-passwords.sql:/opt/attention/set-runtime-passwords.sql:ro
+    networks:
+      - database
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+
+  fetcher:
+    <<: *app-defaults
+    build:
+      context: .
+      target: fetcher
+    environment:
+      FETCHER_HOST: 0.0.0.0
+      FETCHER_MAX_CONCURRENCY: ${FETCHER_MAX_CONCURRENCY:-16}
+      FETCHER_MAX_QUEUE: ${FETCHER_MAX_QUEUE:-32}
+      FETCHER_PORT: 4100
+      FETCHER_QUEUE_TIMEOUT_MS: ${FETCHER_QUEUE_TIMEOUT_MS:-1000}
+      FETCHER_SHARED_SECRET: ${FETCHER_SHARED_SECRET:?set FETCHER_SHARED_SECRET}
+    expose:
+      - "4100"
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - application
+
+  web:
+    <<: *app-defaults
+    build:
+      context: .
+      target: web
+    environment:
+      ATTENTION_AUTH_SECRET: ${ATTENTION_AUTH_SECRET:?set ATTENTION_AUTH_SECRET}
+      ATTENTION_BILLING_CHECKOUT_WEBHOOK: ${ATTENTION_BILLING_CHECKOUT_WEBHOOK:-}
+      ATTENTION_BILLING_PROVIDER: ${ATTENTION_BILLING_PROVIDER:-}
+      ATTENTION_BILLING_WEBHOOK_SECRET: ${ATTENTION_BILLING_WEBHOOK_SECRET:-}
+      ATTENTION_CHANNEL_ADAPTER_SECRET: ${ATTENTION_CHANNEL_ADAPTER_SECRET:?set ATTENTION_CHANNEL_ADAPTER_SECRET}
+      ATTENTION_CHANNEL_SECRET: ${ATTENTION_CHANNEL_SECRET:?set ATTENTION_CHANNEL_SECRET}
+      ATTENTION_EMAIL_PROVIDER: webhook
+      ATTENTION_EMAIL_WEBHOOK_TOKEN: ${ATTENTION_EMAIL_WEBHOOK_TOKEN:?set ATTENTION_EMAIL_WEBHOOK_TOKEN}
+      ATTENTION_EMAIL_WEBHOOK_URL: ${ATTENTION_EMAIL_WEBHOOK_URL:?set ATTENTION_EMAIL_WEBHOOK_URL}
+      ATTENTION_HMAC_SECRET: ${ATTENTION_HMAC_SECRET:?set ATTENTION_HMAC_SECRET}
+      ATTENTION_MCP_PUBLIC_URL: ${ATTENTION_MCP_PUBLIC_URL:?set ATTENTION_MCP_PUBLIC_URL}
+      ATTENTION_MEMBER_BILLING_INTERVAL_LABEL: ${ATTENTION_MEMBER_BILLING_INTERVAL_LABEL:-按年自动续费}
+      ATTENTION_MEMBER_FIRST_CHARGE_LABEL: ${ATTENTION_MEMBER_FIRST_CHARGE_LABEL:-价格待发布}
+      ATTENTION_MEMBER_PRICE_LABEL: ${ATTENTION_MEMBER_PRICE_LABEL:-价格待发布}
+      ATTENTION_OAUTH_REGISTRATION_HOURLY_LIMIT: ${ATTENTION_OAUTH_REGISTRATION_HOURLY_LIMIT:-100}
+      ATTENTION_OAUTH_REGISTRATION_SOURCE_HOURLY_LIMIT: ${ATTENTION_OAUTH_REGISTRATION_SOURCE_HOURLY_LIMIT:-10}
+      ATTENTION_SYNC_PUBLIC_URL: ${ATTENTION_SYNC_PUBLIC_URL:?set ATTENTION_SYNC_PUBLIC_URL}
+      ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER: ${ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER:?set ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER}
+      ATTENTION_WEB_DATABASE_ROLE: attention_web_runtime
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      FETCHER_BASE_URL: http://fetcher:4100
+      FETCHER_SHARED_SECRET: ${FETCHER_SHARED_SECRET:?set FETCHER_SHARED_SECRET}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:?set NEXT_PUBLIC_APP_URL}
+      PUBLIC_FEED_PREVIEW_LIMIT: ${PUBLIC_FEED_PREVIEW_LIMIT:-20}
+    depends_on:
+      fetcher:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${WEB_BIND_ADDRESS:-127.0.0.1}:${WEB_PUBLISH_PORT:-3000}:3000"
+    networks:
+      - application
+      - database
+
+  worker:
+    <<: *app-defaults
+    build:
+      context: .
+      target: worker
+    environment:
+      ATTENTION_AI_API_KEY: ${ATTENTION_AI_API_KEY:-}
+      ATTENTION_AI_BASE_URL: ${ATTENTION_AI_BASE_URL:-https://api.openai.com/v1}
+      ATTENTION_AI_MODEL: ${ATTENTION_AI_MODEL:-}
+      ATTENTION_AI_TIMEOUT_MS: ${ATTENTION_AI_TIMEOUT_MS:-20000}
+      ATTENTION_DIGEST_WORKER_ENABLED: ${ATTENTION_DIGEST_WORKER_ENABLED:-true}
+      ATTENTION_EMAIL_PROVIDER: webhook
+      ATTENTION_EMAIL_WEBHOOK_TOKEN: ${ATTENTION_EMAIL_WEBHOOK_TOKEN:?set ATTENTION_EMAIL_WEBHOOK_TOKEN}
+      ATTENTION_EMAIL_WEBHOOK_URL: ${ATTENTION_EMAIL_WEBHOOK_URL:?set ATTENTION_EMAIL_WEBHOOK_URL}
+      ATTENTION_WORKER_DATABASE_ROLE: attention_worker_runtime
+      DIGEST_BATCH_SIZE: ${DIGEST_BATCH_SIZE:-50}
+      DIGEST_MAX_ATTEMPTS: ${DIGEST_MAX_ATTEMPTS:-8}
+      DIGEST_POLL_INTERVAL_MS: ${DIGEST_POLL_INTERVAL_MS:-60000}
+      FETCHER_BASE_URL: http://fetcher:4100
+      FETCHER_SHARED_SECRET: ${FETCHER_SHARED_SECRET:?set FETCHER_SHARED_SECRET}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:?set NEXT_PUBLIC_APP_URL}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?set WORKER_DATABASE_URL}
+    depends_on:
+      fetcher:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - application
+      - database
+
+  wechat-adapter:
+    <<: *app-defaults
+    build:
+      context: .
+      target: wechat-adapter
+    profiles: ["wechat"]
+    environment:
+      ATTENTION_CHANNEL_ADAPTER_SECRET: ${ATTENTION_CHANNEL_ADAPTER_SECRET:?set ATTENTION_CHANNEL_ADAPTER_SECRET}
+      ATTENTION_CHANNEL_API_BASE_URL: ${ATTENTION_CHANNEL_API_BASE_URL:?set ATTENTION_CHANNEL_API_BASE_URL}
+      WECHAT_ADAPTER_HOST: 0.0.0.0
+      WECHAT_ADAPTER_PORT: 4200
+      WECHAT_API_BASE_URL: ${WECHAT_API_BASE_URL:-https://api.weixin.qq.com}
+      WECHAT_APP_ID: ${WECHAT_APP_ID:?set WECHAT_APP_ID}
+      WECHAT_APP_SECRET: ${WECHAT_APP_SECRET:?set WECHAT_APP_SECRET}
+      WECHAT_ASYNC_REPLY_PROVIDER: ${WECHAT_ASYNC_REPLY_PROVIDER:-disabled}
+      WECHAT_CALLBACK_PATH: ${WECHAT_CALLBACK_PATH:-/wechat/callback}
+      WECHAT_CALLBACK_TOKEN: ${WECHAT_CALLBACK_TOKEN:?set WECHAT_CALLBACK_TOKEN}
+      WECHAT_ENCODING_AES_KEY: ${WECHAT_ENCODING_AES_KEY:?set WECHAT_ENCODING_AES_KEY}
+      WECHAT_MESSAGE_MODE: ${WECHAT_MESSAGE_MODE:-safe}
+      WECHAT_ORIGINAL_ID: ${WECHAT_ORIGINAL_ID:-}
+    depends_on:
+      web:
+        condition: service_healthy
+    ports:
+      - "${WECHAT_BIND_ADDRESS:-127.0.0.1}:${WECHAT_PUBLISH_PORT:-4200}:4200"
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - application
+
+volumes:
+  postgres_data:
+
+networks:
+  application:
+  database:
+    internal: true

@@ -1,5 +1,6 @@
 import type { PublicContent } from "../lib/attention";
 import { ArrowUpRightIcon } from "./icons";
+import { ContentReportControl } from "./content-report-control";
 import { EnrichmentBadge } from "./signal-elements";
 import { SourceLogo } from "./source-logo";
 
@@ -115,6 +116,7 @@ export function PublicContentCard({
             </span>
           </div>
         </div>
+        <ContentReportControl publicContentId={content.id} />
       </footer>
     </article>
   );

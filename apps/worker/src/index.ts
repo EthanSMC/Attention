@@ -1,8 +1,10 @@
 import { createDatabase } from "@attention/db";
 
 import { loadWorkerConfig } from "./config.js";
-import { createStubHandlers } from "./handlers.js";
+import { runDigestWorker } from "./digest-worker.js";
+import { createConfiguredEmailProvider } from "./email-provider.js";
 import { consoleLogger } from "./logger.js";
+import { createConfiguredProductionHandlers } from "./production-handlers.js";
 import { runWorker } from "./worker.js";
 
 async function main() {
@@ -17,13 +19,26 @@ async function main() {
   process.once("SIGTERM", stop);
 
   try {
-    await runWorker({
+    const digestProvider = config.digestEnabled
+      ? createConfiguredEmailProvider()
+      : null;
+    const primaryWorker = runWorker({
       config,
       handle,
-      handlers: createStubHandlers(),
+      handlers: createConfiguredProductionHandlers(),
       logger: consoleLogger,
       signal: controller.signal,
     });
+    const digestWorker = digestProvider
+      ? runDigestWorker({
+          config,
+          handle,
+          logger: consoleLogger,
+          provider: digestProvider,
+          signal: controller.signal,
+        })
+      : Promise.resolve();
+    await Promise.all([primaryWorker, digestWorker]);
   } finally {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);

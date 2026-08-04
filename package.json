@@ -1,6 +1,7 @@
 {
   "name": "attention",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.9.0",
@@ -10,6 +11,7 @@
   "scripts": {
     "dev": "pnpm --filter @attention/web dev",
     "dev:fetcher": "pnpm --filter @attention/fetcher dev",
+    "dev:wechat": "pnpm --filter @attention/wechat-adapter dev",
     "dev:worker": "pnpm --filter @attention/worker dev",
     "build": "pnpm -r --if-present build",
     "lint": "eslint .",

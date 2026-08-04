@@ -5,12 +5,19 @@ import { z, ZodError } from "zod";
 import { mutationRequestError, noStoreJson } from "../../../../../server/api-guard";
 import { getWebDatabase } from "../../../../../server/db";
 import {
+  InvalidRequestBodyError,
+  readJsonRequestWithinLimit,
+  RequestBodyTooLargeError,
+} from "../../../../../server/request-body";
+import {
   clearInvalidSessionCookie,
   getRequestSession,
 } from "../../../../../server/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const MAX_PASSWORD_SET_BODY_BYTES = 8_192;
 
 const bodySchema = z.object({ password: z.string().max(128) }).strict();
 
@@ -30,7 +37,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const body = bodySchema.parse(await request.json());
+    const body = bodySchema.parse(
+      await readJsonRequestWithinLimit(request, MAX_PASSWORD_SET_BODY_BYTES),
+    );
     await setPassword(getWebDatabase(), {
       accountId: requestSession.principal.accountId,
       authenticatedAt: requestSession.principal.authenticatedAt,
@@ -38,7 +47,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
     return noStoreJson({ configured: true });
   } catch (error) {
-    if (error instanceof ZodError) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return noStoreJson({ error: { code: "request_too_large" } }, { status: 413 });
+    }
+    if (error instanceof InvalidRequestBodyError || error instanceof ZodError) {
       return noStoreJson({ error: { code: "invalid_request" } }, { status: 400 });
     }
     if (error instanceof PasswordAuthError) {

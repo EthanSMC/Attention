@@ -30,6 +30,7 @@ const errorMessages: Record<string, string> = {
   invalid_code: "验证码不正确。",
   invalid_credentials: "邮箱或密码不正确。",
   invalid_email: "请输入有效的邮箱地址。",
+  referral_registration_unavailable: "邀请仅适用于尚未注册的新邮箱，或该邀请已不可使用。",
   rate_limited: "请求过于频繁，请稍后再试。",
 };
 
@@ -43,9 +44,11 @@ async function readApiError(response: Response): Promise<string> {
 }
 
 export function EmailLoginForm({
+  consumerInviteToken,
   presentation = "page",
   returnTo,
 }: {
+  consumerInviteToken?: string;
   presentation?: "modal" | "page";
   returnTo: string;
 }) {
@@ -72,7 +75,13 @@ export function EmailLoginForm({
     setError(null);
     try {
       const response = await fetch("/api/auth/email/start", {
-        body: JSON.stringify({ email, return_to: returnTo }),
+        body: JSON.stringify({
+          ...(consumerInviteToken
+            ? { consumer_invite_token: consumerInviteToken }
+            : {}),
+          email,
+          return_to: returnTo,
+        }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
       });

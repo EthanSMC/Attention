@@ -13,6 +13,7 @@ import {
   subscriptions,
   type AttentionDatabase,
 } from "@attention/db";
+import { normalizeCredentialEndpoint } from "@attention/contracts";
 
 export interface MembershipOffer {
   billingIntervalLabel: string;
@@ -51,7 +52,10 @@ export async function subscriptionPreview(
   now = new Date(),
 ): Promise<{ firstChargeAt: Date; trialEligible: boolean }> {
   const [account] = await db
-    .select({ signupSource: accounts.signupSource })
+    .select({
+      directTrialConsumedAt: accounts.directTrialConsumedAt,
+      signupSource: accounts.signupSource,
+    })
     .from(accounts)
     .where(eq(accounts.id, accountId))
     .limit(1);
@@ -71,7 +75,10 @@ export async function subscriptionPreview(
     .from(membershipGrants)
     .where(and(eq(membershipGrants.accountId, accountId), eq(membershipGrants.kind, "direct_trial")))
     .limit(1);
-  const trialEligible = account.signupSource === "direct" && !existingDirectTrial;
+  const trialEligible =
+    account.signupSource === "direct" &&
+    account.directTrialConsumedAt === null &&
+    !existingDirectTrial;
   const trialStartsAt = latestGrant?.endsAt ?? now;
   return {
     firstChargeAt: trialEligible ? addCalendarMonths(trialStartsAt, 3) : now,
@@ -91,6 +98,10 @@ export function membershipOffer(): MembershipOffer {
     providerAvailable: provider === "demo" || provider === "webhook",
     trialMonths: 3,
   };
+}
+
+export function normalizeBillingCheckoutEndpoint(rawValue: string): string {
+  return normalizeCredentialEndpoint(rawValue, "ATTENTION_BILLING_CHECKOUT_WEBHOOK");
 }
 
 async function createDemoSubscription(
@@ -158,6 +169,14 @@ async function createDemoSubscription(
         startsAt,
         status: startsAt <= now ? "active" : "scheduled",
       });
+      await tx
+        .update(accounts)
+        .set({
+          directTrialConsumedAt: now,
+          directTrialSourceEventKey: `demo:${subscription.id}`,
+          updatedAt: now,
+        })
+        .where(eq(accounts.id, accountId));
     }
   });
 
@@ -172,7 +191,7 @@ class WebhookBillingProvider implements BillingProvider {
     const endpoint = process.env.ATTENTION_BILLING_CHECKOUT_WEBHOOK?.trim();
     const secret = process.env.ATTENTION_BILLING_WEBHOOK_SECRET?.trim();
     if (!endpoint || !secret) throw new Error("billing_provider_unavailable");
-    const response = await fetch(endpoint, {
+    const response = await fetch(normalizeBillingCheckoutEndpoint(endpoint), {
       body: JSON.stringify({
         account_id: input.accountId,
         return_to: input.returnTo,
@@ -182,6 +201,7 @@ class WebhookBillingProvider implements BillingProvider {
         "Content-Type": "application/json",
       },
       method: "POST",
+      redirect: "error",
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) throw new Error("billing_checkout_failed");

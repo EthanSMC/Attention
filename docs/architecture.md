@@ -1,6 +1,6 @@
 # Attention 系统架构
 
-状态：已确认；账号与连接首版已实现
+状态：已确认；账号、连接与增长账本首版已实现
 
 更新日期：2026-08-04
 
@@ -224,6 +224,21 @@ flowchart LR
 - 首次上传历史本地收藏时，`historical=true` 强制写为私密，即使当前账号是 Filter；历史导入不能批量自动公开。
 - 私密收藏同步到云端表示服务端会看见并保存原始 URL 和必要元数据。它不会进入公开流、公共检索、日报或其他账号的结果。
 - 当前协议不合并原文或富文本正文；Attention 只同步链接、Collection 状态与服务端派生元数据。
+
+### 2.4 Domain 日报
+
+- `account_digest_preferences` 保存账号 IANA 时区和同日发送窗口；`domain_digest_subscriptions` 独立保存各 Domain 的启停状态。V1 只有 AI，但调度和投递键都包含 `domain_id`。
+- `digest_email_deliveries` 是耐久邮件 outbox，唯一键为 `account_id + domain_id + local_date`；provider 请求使用 delivery UUID 作为幂等键。`digest_email_delivery_items` 保存 Content 与调度时的 `visibility_version`，并以 `account_id + content_id` 防止合并或重新公开后重复投递。
+- 发送前再次解析实时 Member/Filter 权益，检查账号当前邮箱、偏好与订阅，再通过 `public_contents_current` 和 Domain 内有效公开 Collection 复验资格。版本变化、摘要隐藏、危险阻断、下架、Filter 撤销或退订都会使条目退出本次邮件。
+- 邮件条目只包含元数据、AI 摘要或“暂时无法生成摘要”，并始终给出作者字段、来源和受 Attention 当前公开资格保护的“查看原文”链接；不嵌入原站全文。
+
+### 2.5 社区举报与 Filter 小法庭
+
+- Content 的社区状态为 `clear / pending_review / hidden`；Collection 仍只使用 `private / public`。同账号同内容只能生成一条 `content_reports` 审计记录，两个不同 Consumer 举报或一个当前有效 Filter 举报会在内容行锁内原子开案，活动案件唯一索引保证并发阈值只开一个 `moderation_cases`。
+- 开案立即把 Content 置为 `pending_review` 并递增 `visibility_version`。`public_contents_current` 是 Feed、公共搜索、日报、Agent、Hosted MCP 与公开跳转的共同资格入口；归属视图再基于它连接，避免各出口复制并漂移安全条件。普通社区隐藏不影响 owner 私密查看，hard safety、legal 与 takedown 会同时阻断 owner 原文跳转。
+- 当前有效 Filter 可查看活动案件并在至少 24 小时的窗口内一人一票。`moderation_votes` 以案件和 Filter 唯一，Web runtime 只有插入权限，没有更新或删除权限；同票重试幂等，不同票重试拒绝。案件级事务 advisory lock 让投票与 Worker 裁决串行交接。
+- Worker 只在窗口结束后裁决。至少 3 个当前有效 Filter、至少 3 张当前有效票且非平票时按简单多数公开或隐藏；否则案件进入 `requires_admin` 并继续隐藏。hard safety、legal 与 takedown 优先于任何公开票决。
+- 每次社区可见性转移都递增 `visibility_version`；公开裁决不修改 `first_public_at`，日报的账号/内容唯一投递记录也会阻止内容被重复发送。
 
 ## 3. 网页与微信的统一数据流
 

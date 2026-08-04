@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
+import { fileURLToPath } from "node:url";
+
+const workspaceRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 const nextConfig: NextConfig = {
+  output: "standalone",
+  outputFileTracingRoot: workspaceRoot,
   poweredByHeader: false,
   transpilePackages: [
     "@attention/auth",

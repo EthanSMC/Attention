@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import type { SourceAdapterId } from "@attention/contracts";
+import {
+  normalizeCredentialEndpoint,
+  type SourceAdapterId,
+} from "@attention/contracts";
 
 const redirectHopSchema = z.object({
   host: z.string().min(1).max(255),
@@ -46,7 +49,16 @@ function fetcherConfiguration(): { baseUrl: string; secret: string } {
   if (!baseUrl || !secret || secret.length < 32) {
     throw new FetcherClientError("fetcher_not_configured");
   }
-  return { baseUrl: baseUrl.replace(/\/+$/u, ""), secret };
+  try {
+    return {
+      baseUrl: normalizeCredentialEndpoint(baseUrl, "FETCHER_BASE_URL", {
+        allowedInsecureHosts: ["fetcher"],
+      }),
+      secret,
+    };
+  } catch {
+    throw new FetcherClientError("fetcher_not_configured");
+  }
 }
 
 export interface ResolvedExternalUrl {
@@ -69,6 +81,7 @@ export async function resolveExternalUrl(
         "content-type": "application/json",
       },
       method: "POST",
+      redirect: "error",
       signal: AbortSignal.timeout(12_000),
     });
   } catch {

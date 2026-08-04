@@ -7,6 +7,7 @@ import {
   gte,
   passwordLoginAttempts,
   sessions,
+  sql,
   type AttentionDatabase,
 } from "@attention/db";
 
@@ -134,35 +135,56 @@ export async function loginWithPassword(
   const now = input.now ?? new Date();
   const email = normalizeEmail(input.email);
   const hourAgo = new Date(now.getTime() - 60 * 60 * 1_000);
-  const [recentEmailFailures, recentFingerprintFailures] = await Promise.all([
-    db
-      .select({ id: passwordLoginAttempts.id })
-      .from(passwordLoginAttempts)
-      .where(
-        and(
-          eq(passwordLoginAttempts.email, email),
-          eq(passwordLoginAttempts.success, false),
-          gte(passwordLoginAttempts.createdAt, hourAgo),
-        ),
-      )
-      .limit(10),
-    input.requesterFingerprint
-      ? db
-          .select({ id: passwordLoginAttempts.id })
-          .from(passwordLoginAttempts)
-          .where(
-            and(
-              eq(passwordLoginAttempts.requesterFingerprint, input.requesterFingerprint),
-              eq(passwordLoginAttempts.success, false),
-              gte(passwordLoginAttempts.createdAt, hourAgo),
-            ),
-          )
-          .limit(30)
-      : Promise.resolve([]),
-  ]);
-  if (recentEmailFailures.length >= 10 || recentFingerprintFailures.length >= 30) {
-    throw new PasswordAuthError("rate_limited");
-  }
+  const attemptId = await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`password-login-email:${email}`}, 0))`,
+    );
+    if (input.requesterFingerprint) {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`password-login-source:${input.requesterFingerprint}`}, 0))`,
+      );
+    }
+    const [recentEmailFailures, recentFingerprintFailures] = await Promise.all([
+      tx
+        .select({ id: passwordLoginAttempts.id })
+        .from(passwordLoginAttempts)
+        .where(
+          and(
+            eq(passwordLoginAttempts.email, email),
+            eq(passwordLoginAttempts.success, false),
+            gte(passwordLoginAttempts.createdAt, hourAgo),
+          ),
+        )
+        .limit(10),
+      input.requesterFingerprint
+        ? tx
+            .select({ id: passwordLoginAttempts.id })
+            .from(passwordLoginAttempts)
+            .where(
+              and(
+                eq(passwordLoginAttempts.requesterFingerprint, input.requesterFingerprint),
+                eq(passwordLoginAttempts.success, false),
+                gte(passwordLoginAttempts.createdAt, hourAgo),
+              ),
+            )
+            .limit(30)
+        : Promise.resolve([]),
+    ]);
+    if (recentEmailFailures.length >= 10 || recentFingerprintFailures.length >= 30) {
+      throw new PasswordAuthError("rate_limited");
+    }
+    const [attempt] = await tx
+      .insert(passwordLoginAttempts)
+      .values({
+        createdAt: now,
+        email,
+        requesterFingerprint: input.requesterFingerprint,
+        success: false,
+      })
+      .returning({ id: passwordLoginAttempts.id });
+    if (!attempt) throw new Error("Failed to reserve password login attempt");
+    return attempt.id;
+  });
   const [account] = await db
     .select({
       displayName: accounts.displayName,
@@ -180,12 +202,6 @@ export async function loginWithPassword(
     account?.passwordHash ?? dummyPasswordHash,
   );
   const validCredential = Boolean(account?.passwordHash) && passwordMatches;
-  await db.insert(passwordLoginAttempts).values({
-    createdAt: now,
-    email,
-    requesterFingerprint: input.requesterFingerprint,
-    success: validCredential,
-  });
   if (!account || !validCredential) {
     throw new PasswordAuthError("invalid_credentials");
   }
@@ -194,16 +210,22 @@ export async function loginWithPassword(
   const ttlSeconds = input.sessionTtlSeconds ?? defaultSessionTtlSeconds;
   const token = createOpaqueToken();
   const expiresAt = new Date(now.getTime() + ttlSeconds * 1_000);
-  const [session] = await db
-    .insert(sessions)
-    .values({
-      accountId: account.id,
-      createdAt: now,
-      expiresAt,
-      lastSeenAt: now,
-      tokenHash: await hashOpaqueToken(token),
-    })
-    .returning({ id: sessions.id });
+  const [session] = await db.transaction(async (tx) => {
+    await tx
+      .update(passwordLoginAttempts)
+      .set({ success: true })
+      .where(eq(passwordLoginAttempts.id, attemptId));
+    return tx
+      .insert(sessions)
+      .values({
+        accountId: account.id,
+        createdAt: now,
+        expiresAt,
+        lastSeenAt: now,
+        tokenHash: await hashOpaqueToken(token),
+      })
+      .returning({ id: sessions.id });
+  });
   if (!session) throw new Error("Failed to issue password session");
 
   return {

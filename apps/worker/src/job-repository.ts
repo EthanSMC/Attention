@@ -219,10 +219,13 @@ export async function failJob(
       WHERE id = ${input.job.id}
         AND status = 'running'
         AND locked_by = ${input.job.lockedBy}
-      RETURNING status, payload
+      RETURNING status, payload, task_type
     ), content_terminal AS (
       UPDATE contents AS content
-      SET enrichment_status = 'failed',
+      SET enrichment_status = CASE
+            WHEN transitioned.task_type = ${SUMMARY_TASK_TYPE} THEN 'partial'::enrichment_status
+            ELSE 'failed'::enrichment_status
+          END,
           summary_status = 'unavailable',
           updated_at = ${nowValue}
       FROM transitioned
@@ -268,10 +271,13 @@ export async function reapExhaustedJobs(
         AND status = 'running'
         AND attempts >= max_attempts
         AND locked_at <= ${staleBeforeValue}
-      RETURNING id, payload
+      RETURNING id, payload, task_type
     ), content_terminal AS (
       UPDATE contents AS content
-      SET enrichment_status = 'failed',
+      SET enrichment_status = CASE
+            WHEN transitioned.task_type = ${SUMMARY_TASK_TYPE} THEN 'partial'::enrichment_status
+            ELSE 'failed'::enrichment_status
+          END,
           summary_status = 'unavailable',
           updated_at = ${nowValue}
       FROM transitioned

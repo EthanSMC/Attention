@@ -9,6 +9,7 @@ import { type NextRequest, NextResponse } from "next/server";
 
 import { mutationRequestError } from "../../../server/api-guard";
 import { getWebDatabase } from "../../../server/db";
+import { readUrlEncodedRequestWithinLimit } from "../../../server/request-body";
 import {
   clearInvalidSessionCookie,
   getRequestSession,
@@ -172,7 +173,7 @@ export async function POST(
   const requestError = mutationRequestError(request);
   let submittedToken = "";
   try {
-    const formData = await request.formData();
+    const formData = await readUrlEncodedRequestWithinLimit(request, 8_192);
     const value = formData.get("confirmation_token");
     submittedToken = typeof value === "string" ? value : "";
   } catch {

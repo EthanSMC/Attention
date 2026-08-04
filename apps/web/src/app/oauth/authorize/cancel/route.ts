@@ -2,6 +2,7 @@ import { OAuthError, validateAuthorizationRequest } from "@attention/auth";
 import type { NextRequest, NextResponse } from "next/server";
 
 import { getWebDatabase } from "../../../../server/db";
+import { oauthResourceMap } from "../../../../server/oauth-resources";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,12 +10,14 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const query = request.nextUrl.searchParams;
+    const resources = query.getAll("resource");
     const authorization = await validateAuthorizationRequest(getWebDatabase(), {
-      audience: query.get("audience") ?? "",
       clientId: query.get("client_id") ?? "",
       codeChallenge: query.get("code_challenge") ?? "",
       codeChallengeMethod: query.get("code_challenge_method") ?? "",
       redirectUri: query.get("redirect_uri") ?? "",
+      resource: resources.length === 1 ? resources[0]! : "",
+      resources: oauthResourceMap(request),
       responseType: query.get("response_type") ?? "",
       scope: query.get("scope") ?? "",
       state: query.get("state"),
