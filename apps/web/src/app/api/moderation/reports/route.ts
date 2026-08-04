@@ -21,6 +21,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_REPORT_BODY_BYTES = 8_192;
+const DEFAULT_FILTER_REPORT_CASE_LIMIT_24H = 10;
+const MAX_FILTER_REPORT_CASE_LIMIT_24H = 100;
 
 const bodySchema = z
   .object({
@@ -29,6 +31,37 @@ const bodySchema = z
     reason_code: z.string().min(1).max(64),
   })
   .strict();
+
+function filterReportCaseLimit(): number {
+  const raw = process.env.ATTENTION_FILTER_REPORT_CASE_LIMIT_24H?.trim();
+  if (!raw) return DEFAULT_FILTER_REPORT_CASE_LIMIT_24H;
+  const configured = Number(raw);
+  return Number.isSafeInteger(configured) && configured >= 1 &&
+    configured <= MAX_FILTER_REPORT_CASE_LIMIT_24H
+    ? configured
+    : DEFAULT_FILTER_REPORT_CASE_LIMIT_24H;
+}
+
+export function moderationRepositoryErrorResponse(
+  error: ModerationRepositoryError,
+): NextResponse {
+  const status =
+    error.code === "report_rate_limited"
+      ? 429
+      : error.code === "content_not_reportable"
+        ? 404
+        : error.code === "account_not_active"
+          ? 403
+          : 400;
+  const response = noStoreJson({ error: { code: error.code } }, { status });
+  if (error.code === "report_rate_limited") {
+    response.headers.set(
+      "Retry-After",
+      String(Math.max(1, error.retryAfterSeconds ?? 1)),
+    );
+  }
+  return response;
+}
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const guardError = mutationRequestError(request);
@@ -51,6 +84,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const result = await submitContentReport(getWebDatabase(), {
       accountId: requestSession.principal.accountId,
       details: body.details ?? null,
+      filterCaseOpenLimit: filterReportCaseLimit(),
       publicContentId: body.public_content_id,
       reasonCode: body.reason_code,
     });
@@ -69,13 +103,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return noStoreJson({ error: { code: "invalid_report" } }, { status: 400 });
     }
     if (error instanceof ModerationRepositoryError) {
-      const status =
-        error.code === "content_not_reportable"
-          ? 404
-          : error.code === "account_not_active"
-            ? 403
-            : 400;
-      return noStoreJson({ error: { code: error.code } }, { status });
+      return moderationRepositoryErrorResponse(error);
     }
     console.error("content_report_failed", {
       name: error instanceof Error ? error.name : "UnknownError",

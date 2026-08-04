@@ -9,6 +9,91 @@ export class WechatXmlError extends Error {
   }
 }
 
+function asciiLetter(character: string | undefined): boolean {
+  return Boolean(character && /[A-Za-z]/u.test(character));
+}
+
+function fieldNameCharacter(character: string | undefined): boolean {
+  return Boolean(character && /[A-Za-z0-9_]/u.test(character));
+}
+
+function whitespace(character: string | undefined): boolean {
+  return character === " " || character === "\n" ||
+    character === "\r" || character === "\t";
+}
+
+function encryptedFieldValue(raw: string): string {
+  if (raw.startsWith("<![CDATA[")) {
+    if (!raw.endsWith("]]>") || raw.indexOf("]]>", 9) !== raw.length - 3) {
+      throw new WechatXmlError("invalid_xml");
+    }
+    return raw.slice(9, -3);
+  }
+  if (raw.includes("<") || raw.includes("&")) {
+    throw new WechatXmlError("invalid_xml");
+  }
+  return raw;
+}
+
+export function extractWechatEncryptedValue(
+  xml: string,
+  maxLength: number,
+): string {
+  if (!Number.isSafeInteger(maxLength) || maxLength < 1) {
+    throw new RangeError("maxLength must be a positive safe integer");
+  }
+  if (!xml || forbiddenXml.test(xml) || xml.includes("\0")) {
+    throw new WechatXmlError("unsafe_xml");
+  }
+  const normalized = xml
+    .replace(/^\s*<\?xml\s+version=["']1\.0["']\s*\?>\s*/iu, "")
+    .trim();
+  if (!normalized.startsWith("<xml>") || !normalized.endsWith("</xml>")) {
+    throw new WechatXmlError("invalid_xml");
+  }
+
+  const contentEnd = normalized.length - "</xml>".length;
+  let cursor = "<xml>".length;
+  let encryptValue: string | null = null;
+  let fieldCount = 0;
+  while (cursor < contentEnd) {
+    while (cursor < contentEnd && whitespace(normalized[cursor])) cursor += 1;
+    if (cursor === contentEnd) break;
+    if (normalized[cursor] !== "<" || !asciiLetter(normalized[cursor + 1])) {
+      throw new WechatXmlError("invalid_xml");
+    }
+    const nameStart = cursor + 1;
+    let nameEnd = nameStart + 1;
+    while (nameEnd < contentEnd && fieldNameCharacter(normalized[nameEnd])) {
+      nameEnd += 1;
+    }
+    if (normalized[nameEnd] !== ">") throw new WechatXmlError("invalid_xml");
+    const name = normalized.slice(nameStart, nameEnd);
+    const valueStart = nameEnd + 1;
+    const closingTag = `</${name}>`;
+    const closingIndex = normalized.indexOf(closingTag, valueStart);
+    if (closingIndex < 0 || closingIndex > contentEnd) {
+      throw new WechatXmlError("invalid_xml");
+    }
+    if (name === "Encrypt") {
+      if (encryptValue !== null) throw new WechatXmlError("duplicate_xml_field");
+      encryptValue = encryptedFieldValue(
+        normalized.slice(valueStart, closingIndex),
+      );
+      if (!encryptValue || encryptValue.length > maxLength) {
+        throw new WechatXmlError("invalid_xml");
+      }
+    }
+    cursor = closingIndex + closingTag.length;
+    fieldCount += 1;
+    if (fieldCount > 64) throw new WechatXmlError("invalid_xml");
+  }
+  if (cursor !== contentEnd || encryptValue === null) {
+    throw new WechatXmlError("invalid_xml");
+  }
+  return encryptValue;
+}
+
 function decodeXml(value: string): string {
   const named: Record<string, string> = {
     amp: "&",

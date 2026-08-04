@@ -80,4 +80,32 @@ describe("Attention internal channel gateway", () => {
     expect(String(error)).not.toContain("sensitive");
     expect(String(error)).not.toContain("database trace");
   });
+
+  it("cancels a chunked gateway response as soon as it crosses the byte limit", async () => {
+    let cancelled = false;
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        cancel() {
+          cancelled = true;
+        },
+        pull(controller) {
+          pulls += 1;
+          if (pulls === 1) {
+            controller.enqueue(new Uint8Array(1_000_001));
+            return;
+          }
+          controller.error(new Error("gateway response continued after cancellation"));
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(body));
+
+    await expect(gateway(fetchMock as typeof fetch).send(message)).rejects.toMatchObject({
+      code: "gateway_invalid_response",
+    });
+    expect(cancelled).toBe(true);
+    expect(pulls).toBe(1);
+  });
 });

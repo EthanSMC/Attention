@@ -9,6 +9,7 @@ import {
   asc,
   count,
   eq,
+  gte,
   inArray,
   isNull,
   lte,
@@ -32,17 +33,37 @@ export type ModerationRepositoryErrorCode =
   | "content_not_reportable"
   | "filter_required"
   | "invalid_report"
+  | "report_rate_limited"
   | "vote_already_cast"
   | "voting_closed";
 
 export class ModerationRepositoryError extends Error {
-  constructor(readonly code: ModerationRepositoryErrorCode) {
+  readonly retryAfterSeconds: number | null;
+
+  constructor(
+    readonly code: ModerationRepositoryErrorCode,
+    options: { retryAfterSeconds?: number } = {},
+  ) {
     super(code);
     this.name = "ModerationRepositoryError";
+    this.retryAfterSeconds = options.retryAfterSeconds ?? null;
   }
 }
 
 const REPORT_REASON_PATTERN = /^[a-z][a-z0-9_]{0,63}$/u;
+const FILTER_CASE_OPEN_DEFAULT_LIMIT = 10;
+const FILTER_CASE_OPEN_MAX_LIMIT = 100;
+const FILTER_CASE_OPEN_WINDOW_MS = 24 * 60 * 60 * 1_000;
+
+function normalizeFilterCaseOpenLimit(value: number | undefined): number {
+  if (value === undefined) return FILTER_CASE_OPEN_DEFAULT_LIMIT;
+  if (!Number.isSafeInteger(value) || value < 1 || value > FILTER_CASE_OPEN_MAX_LIMIT) {
+    throw new RangeError(
+      `filterCaseOpenLimit must be an integer between 1 and ${FILTER_CASE_OPEN_MAX_LIMIT}`,
+    );
+  }
+  return value;
+}
 
 async function setAccountContext(
   tx: AttentionTransaction,
@@ -58,6 +79,54 @@ async function lockModerationCase(
   await tx.execute(
     sql`select pg_advisory_xact_lock(hashtextextended(${caseId}::text, 0))`,
   );
+}
+
+async function lockModerationReporter(
+  tx: AttentionTransaction,
+  accountId: string,
+): Promise<void> {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${`moderation-report:${accountId}`}::text, 0))`,
+  );
+}
+
+async function enforceFilterCaseOpenLimit(
+  tx: AttentionTransaction,
+  input: { accountId: string; limit: number; now: Date },
+): Promise<void> {
+  const windowStart = new Date(input.now.getTime() - FILTER_CASE_OPEN_WINDOW_MS);
+  const recentOpenings = await tx
+    .select({ openedAt: moderationCases.openedAt })
+    .from(moderationCases)
+    .innerJoin(
+      contentReports,
+      eq(contentReports.id, moderationCases.openedByReportId),
+    )
+    .where(
+      and(
+        eq(contentReports.reporterAccountId, input.accountId),
+        eq(contentReports.reporterKind, "filter"),
+        gte(contentReports.createdAt, windowStart),
+        gte(moderationCases.openedAt, windowStart),
+      ),
+    )
+    .orderBy(asc(moderationCases.openedAt))
+    .limit(input.limit);
+  const oldestOpening = recentOpenings[0];
+  if (recentOpenings.length < input.limit || !oldestOpening) return;
+
+  const retryAfterSeconds = Math.max(
+    1,
+    Math.ceil(
+      (oldestOpening.openedAt.getTime() +
+        FILTER_CASE_OPEN_WINDOW_MS -
+        input.now.getTime()) /
+        1_000,
+    ),
+  );
+  throw new ModerationRepositoryError("report_rate_limited", {
+    retryAfterSeconds,
+  });
 }
 
 async function activeFilter(
@@ -105,12 +174,16 @@ export async function submitContentReport(
   input: {
     accountId: string;
     details?: string | null;
+    filterCaseOpenLimit?: number;
     now?: Date;
     publicContentId: string;
     reasonCode: string;
   },
 ): Promise<SubmitContentReportResult> {
   const now = input.now ?? new Date();
+  const filterCaseOpenLimit = normalizeFilterCaseOpenLimit(
+    input.filterCaseOpenLimit,
+  );
   const reasonCode = input.reasonCode.trim().toLowerCase();
   const details = input.details?.normalize("NFKC").trim() || null;
   if (
@@ -123,6 +196,9 @@ export async function submitContentReport(
   return db.transaction(async (tx) => {
     await setAccountContext(tx, input.accountId);
     await requireActiveAccount(tx, input.accountId);
+    // Keep this before content row locks so one Filter cannot race the
+    // rolling case-opening budget across distinct content IDs.
+    await lockModerationReporter(tx, input.accountId);
     const reporterIsFilter = await activeFilter(tx, input.accountId);
     const [content] = await tx
       .select({
@@ -176,6 +252,17 @@ export async function submitContentReport(
         duplicate: true,
         reportId: existing.id,
       };
+    }
+    if (
+      reporterIsFilter &&
+      !activeCaseBefore &&
+      content.communityStatus === "clear"
+    ) {
+      await enforceFilterCaseOpenLimit(tx, {
+        accountId: input.accountId,
+        limit: filterCaseOpenLimit,
+        now,
+      });
     }
 
     const [report] = await tx

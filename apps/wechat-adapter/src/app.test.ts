@@ -136,7 +136,10 @@ describe("WeChat callback application", () => {
       now: () => now,
     });
     const response = await app.request(`${config.callbackPath}?${safeQuery(ciphertext)}`, {
-      body: serializeWechatXml({ Encrypt: ciphertext }),
+      body: serializeWechatXml({
+        ToUserName: config.originalId ?? "",
+        Encrypt: ciphertext,
+      }),
       headers: { "content-type": "application/xml" },
       method: "POST",
     });
@@ -209,6 +212,65 @@ describe("WeChat callback application", () => {
     await expect(response.text()).resolves.toBe("payload_too_large");
     expect(cancelled).toBe(true);
     expect(pulls).toBe(1);
+  });
+
+  it("rejects an adversarial encrypted envelope in bounded time", async () => {
+    const delivery = completedDelivery();
+    const app = createWechatApp(
+      { ...config, messageMode: "safe" },
+      { delivery, logger, now: () => now },
+    );
+    const repeats = Math.floor((config.maxBodyBytes - 11) / 3);
+    const body = `<xml>${"<A>".repeat(repeats)}</xml>`;
+    const query = new URLSearchParams({
+      encrypt_type: "aes",
+      msg_signature: "0".repeat(40),
+      nonce,
+      timestamp,
+    });
+
+    const startedAt = performance.now();
+    const response = await app.request(
+      `${config.callbackPath}?${query.toString()}`,
+      {
+        body,
+        headers: { "content-type": "text/xml" },
+        method: "POST",
+      },
+    );
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(response.status).toBe(400);
+    await expect(response.text()).resolves.toBe("invalid_message");
+    expect(elapsedMs).toBeLessThan(500);
+    expect(delivery.deliver).not.toHaveBeenCalled();
+  });
+
+  it("rejects encrypted envelopes with missing or duplicate Encrypt fields", async () => {
+    const ciphertext = encryptWechatMessage({
+      appId: config.appId,
+      encodingAesKey: config.encodingAesKey,
+      message: messageXml(),
+      randomBytesImplementation: () => Buffer.alloc(16, 6),
+    });
+    const app = createWechatApp(
+      { ...config, messageMode: "safe" },
+      { delivery: completedDelivery(), logger, now: () => now },
+    );
+    const requests = [
+      serializeWechatXml({ Other: ciphertext }),
+      `<xml><Encrypt><![CDATA[${ciphertext}]]></Encrypt><Encrypt><![CDATA[${ciphertext}]]></Encrypt></xml>`,
+    ];
+
+    for (const body of requests) {
+      const response = await app.request(`${config.callbackPath}?${safeQuery(ciphertext)}`, {
+        body,
+        headers: { "content-type": "text/xml" },
+        method: "POST",
+      });
+      expect(response.status).toBe(400);
+      await expect(response.text()).resolves.toBe("invalid_message");
+    }
   });
 
   it("coalesces callback retries and degrades internal API errors safely", async () => {

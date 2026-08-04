@@ -1,4 +1,5 @@
 import { truncateUtf8 } from "./text.js";
+import { readJsonObjectResponse } from "./json-response.js";
 
 export class WechatApiError extends Error {
   constructor(
@@ -16,16 +17,11 @@ interface CachedToken {
 }
 
 async function safeJson(response: Response): Promise<Record<string, unknown>> {
-  const raw = await response.text();
-  if (raw.length > 1_000_000) throw new WechatApiError("invalid_wechat_response", true);
-  let value: unknown;
-  try { value = JSON.parse(raw); } catch {
+  try {
+    return await readJsonObjectResponse(response);
+  } catch {
     throw new WechatApiError("invalid_wechat_response", true);
   }
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new WechatApiError("invalid_wechat_response", true);
-  }
-  return value as Record<string, unknown>;
 }
 
 export class WechatAccessTokenProvider {

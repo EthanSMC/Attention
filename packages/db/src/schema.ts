@@ -1623,6 +1623,10 @@ export const contentReports = pgTable(
         table.reporterAccountId
       ),
       index("content_reports_content_created_idx").on(table.contentId, table.createdAt),
+      index("content_reports_reporter_created_idx").on(
+        table.reporterAccountId,
+        table.createdAt,
+      ),
       check("content_reports_reason_not_blank", sql`btrim(${table.reasonCode}) <> ''`),
       check(
         "content_reports_details_length",
@@ -1672,6 +1676,10 @@ export const moderationCases = pgTable(
     uniqueIndex("moderation_cases_active_content_unique")
       .on(table.contentId)
       .where(sql`${table.status} IN ('open', 'requires_admin')`),
+    index("moderation_cases_opening_report_time_idx").on(
+      table.openedByReportId,
+      table.openedAt,
+    ),
     index("moderation_cases_status_deadline_idx").on(table.status, table.votingEndsAt),
     check(
       "moderation_cases_voting_window_minimum",

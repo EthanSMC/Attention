@@ -23,6 +23,25 @@ describe("trusted client source", () => {
     )).toThrow(TrustedClientSourceError);
   });
 
+  it.each([
+    "forwarded",
+    "x-forwarded-for",
+    "x-real-ip",
+    "cf-connecting-ip",
+    "true-client-ip",
+    "fastly-client-ip",
+  ])("rejects conventional forwarding header configuration: %s", (headerName) => {
+    expect(() => trustedClientSource(
+      new Request("https://attention.example/login", {
+        headers: { [headerName]: "203.0.113.8" },
+      }),
+      {
+        ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER: headerName,
+        NODE_ENV: "production",
+      },
+    )).toThrow(TrustedClientSourceError);
+  });
+
   it("uses one local bucket outside production without trusting forwarded headers", () => {
     const request = new Request("http://localhost:3000/login", {
       headers: { "x-forwarded-for": "198.51.100.4" },

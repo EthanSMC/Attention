@@ -10,7 +10,11 @@ import {
   verifyPlaintextSignature,
 } from "./signature.js";
 import type { NormalizedWechatMessage, SafeLogger, WechatAdapterConfig } from "./types.js";
-import { parseWechatXml, WechatXmlError } from "./xml.js";
+import {
+  extractWechatEncryptedValue,
+  parseWechatXml,
+  WechatXmlError,
+} from "./xml.js";
 
 interface MessageDelivery {
   deliver(message: NormalizedWechatMessage): Promise<DeliveryOutcome>;
@@ -186,8 +190,10 @@ export function createWechatApp(
 
       let messageXml: string;
       if (encrypted) {
-        const outer = parseWechatXml(body);
-        const ciphertext = outer.Encrypt ?? "";
+        const ciphertext = extractWechatEncryptedValue(
+          body,
+          config.maxBodyBytes,
+        );
         verifyEncryptedSignature({
           encrypted: ciphertext,
           maxSkewSeconds: config.maxTimestampSkewSeconds,
@@ -197,6 +203,8 @@ export function createWechatApp(
           timestamp,
           token: config.callbackToken,
         });
+        const outer = parseWechatXml(body);
+        if (outer.Encrypt !== ciphertext) throw new WechatXmlError("invalid_xml");
         messageXml = decryptWechatMessage({
           appId: config.appId,
           ciphertext,

@@ -2,6 +2,16 @@ import "server-only";
 
 const headerNamePattern = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
 const sourcePattern = /^[\x20-\x7E]{1,255}$/u;
+const disallowedHeaderNames = new Set([
+  "authorization",
+  "cf-connecting-ip",
+  "cookie",
+  "fastly-client-ip",
+  "forwarded",
+  "true-client-ip",
+  "x-forwarded-for",
+  "x-real-ip",
+]);
 
 export class TrustedClientSourceError extends Error {
   constructor(message: string) {
@@ -13,7 +23,7 @@ export class TrustedClientSourceError extends Error {
 function configuredHeaderName(environment: NodeJS.ProcessEnv): string | null {
   const value = environment.ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER?.trim().toLowerCase();
   if (!value) return null;
-  if (!headerNamePattern.test(value) || value === "authorization" || value === "cookie") {
+  if (!headerNamePattern.test(value) || disallowedHeaderNames.has(value)) {
     throw new TrustedClientSourceError(
       "ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER must be a safe dedicated header name",
     );

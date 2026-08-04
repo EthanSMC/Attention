@@ -2087,6 +2087,168 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
   });
 
+  it("serializes the per-Filter case-opening limit without charging duplicates or open cases", async () => {
+    const filterCaseOpenLimit = 2;
+    const sourceFilter = await createRedeemedAccount("filter", "court-limit-source");
+    const reportingFilter = await createRedeemedAccount("filter", "court-limit-reporter");
+    const otherFilter = await createRedeemedAccount("filter", "court-limit-other");
+    const openedAt = new Date(Date.now() + 1_000);
+    const publicAt = new Date(openedAt.getTime() - 60 * 60 * 1_000);
+    const seedContent = await createPublicContent(
+      sourceFilter.redeemed.accountId,
+      "court-limit-seed",
+      publicAt,
+    );
+    const alreadyOpenContent = await createPublicContent(
+      sourceFilter.redeemed.accountId,
+      "court-limit-open",
+      new Date(publicAt.getTime() + 1),
+    );
+    const raceContents = await Promise.all([
+      createPublicContent(
+        sourceFilter.redeemed.accountId,
+        "court-limit-race-one",
+        new Date(publicAt.getTime() + 2),
+      ),
+      createPublicContent(
+        sourceFilter.redeemed.accountId,
+        "court-limit-race-two",
+        new Date(publicAt.getTime() + 3),
+      ),
+    ]);
+    const afterWindowContent = await createPublicContent(
+      sourceFilter.redeemed.accountId,
+      "court-limit-after-window",
+      new Date(publicAt.getTime() + 4),
+    );
+
+    const seedReport = await submitContentReport(handle.db, {
+      accountId: reportingFilter.redeemed.accountId,
+      filterCaseOpenLimit,
+      now: openedAt,
+      publicContentId: seedContent.content.content.publicId,
+      reasonCode: "unsafe",
+    });
+    expect(seedReport.caseOpened).toBe(true);
+
+    const alreadyOpenReport = await submitContentReport(handle.db, {
+      accountId: otherFilter.redeemed.accountId,
+      now: openedAt,
+      publicContentId: alreadyOpenContent.content.content.publicId,
+      reasonCode: "misleading",
+    });
+    expect(alreadyOpenReport.caseOpened).toBe(true);
+    await expect(
+      submitContentReport(handle.db, {
+        accountId: reportingFilter.redeemed.accountId,
+        filterCaseOpenLimit,
+        now: new Date(openedAt.getTime() + 500),
+        publicContentId: alreadyOpenContent.content.content.publicId,
+        reasonCode: "spam",
+      }),
+    ).resolves.toMatchObject({
+      caseId: alreadyOpenReport.caseId,
+      caseOpened: false,
+      duplicate: false,
+    });
+
+    const firstRuntime = createDatabase(databaseUrl!, { maxConnections: 1 });
+    const secondRuntime = createDatabase(databaseUrl!, { maxConnections: 1 });
+    try {
+      await Promise.all([
+        firstRuntime.sql.unsafe("SET ROLE attention_web_runtime"),
+        secondRuntime.sql.unsafe("SET ROLE attention_web_runtime"),
+      ]);
+      const raceAt = new Date(openedAt.getTime() + 1_000);
+      const results = await Promise.allSettled(
+        raceContents.map((item, index) =>
+          submitContentReport(index === 0 ? firstRuntime.db : secondRuntime.db, {
+            accountId: reportingFilter.redeemed.accountId,
+            filterCaseOpenLimit,
+            now: raceAt,
+            publicContentId: item.content.content.publicId,
+            reasonCode: index === 0 ? "rights" : "other",
+          }),
+        ),
+      );
+      expect(results.map((result) => result.status).sort()).toEqual([
+        "fulfilled",
+        "rejected",
+      ]);
+      const acceptedIndex = results.findIndex((result) => result.status === "fulfilled");
+      const rejectedIndex = results.findIndex((result) => result.status === "rejected");
+      const accepted = results[acceptedIndex];
+      const rejected = results[rejectedIndex];
+      if (!accepted || accepted.status !== "fulfilled") {
+        throw new Error("Expected one accepted Filter case opening");
+      }
+      if (!rejected || rejected.status !== "rejected") {
+        throw new Error("Expected one rate-limited Filter case opening");
+      }
+      expect(accepted.value).toMatchObject({ caseOpened: true, duplicate: false });
+      expect(rejected.reason).toMatchObject({
+        code: "report_rate_limited",
+        retryAfterSeconds: expect.any(Number),
+      });
+
+      const acceptedContent = raceContents[acceptedIndex]!;
+      const rejectedContent = raceContents[rejectedIndex]!;
+      const [acceptedRow] = await handle.db
+        .select({ communityStatus: contents.communityModerationStatus })
+        .from(contents)
+        .where(eq(contents.id, acceptedContent.content.content.id));
+      const [rejectedRow] = await handle.db
+        .select({ communityStatus: contents.communityModerationStatus })
+        .from(contents)
+        .where(eq(contents.id, rejectedContent.content.content.id));
+      expect(acceptedRow?.communityStatus).toBe("pending_review");
+      expect(rejectedRow?.communityStatus).toBe("clear");
+      await expect(
+        handle.db
+          .select()
+          .from(contentReports)
+          .where(eq(contentReports.contentId, rejectedContent.content.content.id)),
+      ).resolves.toHaveLength(0);
+      await expect(
+        handle.db
+          .select()
+          .from(moderationCases)
+          .where(eq(moderationCases.contentId, rejectedContent.content.content.id)),
+      ).resolves.toHaveLength(0);
+    } finally {
+      await Promise.all([
+        firstRuntime.sql.unsafe("RESET ROLE").catch(() => undefined),
+        secondRuntime.sql.unsafe("RESET ROLE").catch(() => undefined),
+      ]);
+      await Promise.all([firstRuntime.close(), secondRuntime.close()]);
+    }
+
+    await expect(
+      submitContentReport(handle.db, {
+        accountId: reportingFilter.redeemed.accountId,
+        filterCaseOpenLimit,
+        now: new Date(openedAt.getTime() + 2_000),
+        publicContentId: seedContent.content.content.publicId,
+        reasonCode: "other",
+      }),
+    ).resolves.toMatchObject({
+      caseId: seedReport.caseId,
+      caseOpened: false,
+      duplicate: true,
+      reportId: seedReport.reportId,
+    });
+
+    await expect(
+      submitContentReport(handle.db, {
+        accountId: reportingFilter.redeemed.accountId,
+        filterCaseOpenLimit,
+        now: new Date(openedAt.getTime() + 24 * 60 * 60 * 1_000 + 2_000),
+        publicContentId: afterWindowContent.content.content.publicId,
+        reasonCode: "unsafe",
+      }),
+    ).resolves.toMatchObject({ caseOpened: true, duplicate: false });
+  });
+
   it("opens one case under concurrent Consumer reports and hides every public surface until a public verdict", async () => {
     const sourceFilter = await createRedeemedAccount("filter", "court-source");
     const secondFilter = await createRedeemedAccount("filter", "court-second");

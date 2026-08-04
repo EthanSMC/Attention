@@ -85,6 +85,20 @@
       "when": 1785846449146,
       "tag": "0011_mushy_midnight",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785852000000,
+      "tag": "0012_rapid_moderation_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1785853245560,
+      "tag": "0013_rapid_moderation_join_guard",
+      "breakpoints": true
     }
   ]
 }

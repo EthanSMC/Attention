@@ -1,0 +1,1 @@
+CREATE INDEX "moderation_cases_opening_report_time_idx" ON "moderation_cases" USING btree ("opened_by_report_id","opened_at");

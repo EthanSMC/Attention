@@ -94,7 +94,7 @@ PostgreSQL 至少使用三种身份：
 | `ATTENTION_EMAIL_WEBHOOK_TOKEN` | 邮件服务 Bearer token。 |
 | `ATTENTION_MCP_PUBLIC_URL` | 对外 HTTPS MCP resource URL。 |
 | `ATTENTION_SYNC_PUBLIC_URL` | 对外 HTTPS Sync resource URL。 |
-| `ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER` | 入口代理拥有的客户端来源头名称；代理必须先丢弃同名入站头再按连接源覆盖。生产缺失时登录与动态注册会 fail closed。 |
+| `ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER` | 入口代理拥有的专用客户端来源头名称；代理必须先丢弃同名入站头再按连接源覆盖。生产缺失时登录与动态注册会 fail closed；应用拒绝 `Forwarded`、`X-Forwarded-For`、`X-Real-IP` 和 CDN 常规客户端地址头。 |
 
 `PUBLIC_FEED_PREVIEW_LIMIT`、价格展示、OAuth 动态注册全局/单来源频率等有安全默认值，但仍应在部署配置中显式审阅。生产不要设置 `ATTENTION_AUTH_EXPOSE_OTP=true`；即使误设，代码也不会在 production 展示验证码。
 
@@ -133,7 +133,7 @@ PostgreSQL 至少使用三种身份：
 - 只把 Web 路由到 `3000`，需要微信时只把配置的 callback path 路由到 `4200`；
 - 不对外发布 Fetcher、Worker、migration job 或 PostgreSQL。
 
-认证与 OAuth 动态注册的数据库限流只接受入口认证后的来源值，不读取客户端可伪造的 `X-Forwarded-For`。仓库提供 [`deploy/nginx/attention.conf.example`](../deploy/nginx/attention.conf.example) 作为最小 Nginx 参考：代理必须覆盖 `X-Attention-Client-Source`，并把同一名称配置到 `ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER`。若使用 Cloudflare、ALB、Kubernetes ingress 等其他边缘，必须实现同等的“清除入站同名头、按已验证连接元数据重新设置、限制 Web 仅能由该入口访问”语义；不要把普通转发头直接交给应用信任。
+认证与 OAuth 动态注册的数据库限流只接受入口认证后的来源值，不读取客户端可伪造的 `X-Forwarded-For`。仓库提供 [`deploy/nginx/attention.conf.example`](../deploy/nginx/attention.conf.example) 作为最小 Nginx 参考：代理必须覆盖 `X-Attention-Client-Source`，并把同一名称配置到 `ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER`。应用会拒绝 `Forwarded`、`X-Forwarded-For`、`X-Real-IP`、`CF-Connecting-IP`、`True-Client-IP` 和 `Fastly-Client-IP` 等常规转发/客户端地址头；若使用 Cloudflare、ALB、Kubernetes ingress 等其他边缘，必须另外创建专用头并实现同等的“清除入站同名头、按已验证连接元数据重新设置、限制 Web 仅能由该入口访问”语义。
 
 Web `GET /api/health`、Fetcher `GET /health` 和微信 `GET /healthz` 都只返回固定 `{ "status": "ok" }`，不查询数据库、不回显配置，也不证明外部供应商可用，适合作为 liveness。数据库、邮件、AI、微信等依赖应另做不含 secret 的平台级 readiness/合成监控。Worker 不是 HTTP 服务；以进程退出、任务延迟、失败码和队列积压监控，不要为了容器健康检查额外开放无认证端口。
 

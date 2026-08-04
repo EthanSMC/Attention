@@ -2,6 +2,7 @@ import type {
   ChannelGatewayReply,
   NormalizedWechatMessage,
 } from "./types.js";
+import { readJsonObjectResponse } from "./json-response.js";
 
 export class AttentionGatewayError extends Error {
   constructor(
@@ -91,20 +92,11 @@ function parseChannelResponse(statusCode: number, payload: ChannelPayload): Chan
 }
 
 async function readJsonResponse(response: Response): Promise<ChannelPayload> {
-  const raw = await response.text();
-  if (raw.length > 1_000_000) {
-    throw new AttentionGatewayError("gateway_invalid_response", true);
-  }
-  let payload: unknown;
   try {
-    payload = JSON.parse(raw);
+    return await readJsonObjectResponse(response) as ChannelPayload;
   } catch {
     throw new AttentionGatewayError("gateway_invalid_response", true);
   }
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    throw new AttentionGatewayError("gateway_invalid_response", true);
-  }
-  return payload as ChannelPayload;
 }
 
 export interface AttentionChannelGateway {

@@ -79,7 +79,7 @@ pnpm dev:wechat
 
 Member 与 Filter 可在 `/account/digests` 订阅 Domain 并设置 IANA 时区、发送开始时间和窗口长度。Worker 每天选择账号当地日期的前一日新增内容；无新增不发。真正调用邮件 adapter 前会重新检查当前 Member/Filter 权益、退订状态、Domain/Filter/Collection 公开资格、摘要隐藏状态和条目快照的 `visibility_version`。第一版只种子化 AI Domain，表结构支持后续增加独立 Domain。
 
-社区举报和 Filter 小法庭共用 `public_contents_current` 公开资格：`pending_review` 与 `hidden` 不会进入公开流、公共搜索、日报、Agent、MCP 或公开跳转。投票窗口至少 24 小时，至少 3 个有效 Filter 投票后按简单多数裁决；平票、票数不足或当前有效 Filter 少于 3 人时继续隐藏并转管理员。安全阻断、法律下架和 takedown 始终优先，社区票决不能恢复。公开裁决保留原 `first_public_at`，不会制造第二次日报。
+社区举报和 Filter 小法庭共用 `public_contents_current` 公开资格：`pending_review` 与 `hidden` 不会进入公开流、公共搜索、日报、Agent、MCP 或公开跳转。单个有效 Filter 的首次举报仍会立即隐藏对应内容；为避免单一账号批量压制公开流，每个 Filter 默认在滚动 24 小时内最多新开 10 个案件，可通过 `ATTENTION_FILTER_REPORT_CASE_LIMIT_24H` 在 1 至 100 之间调整。投票窗口至少 24 小时，至少 3 个有效 Filter 投票后按简单多数裁决；平票、票数不足或当前有效 Filter 少于 3 人时继续隐藏并转管理员。安全阻断、法律下架和 takedown 始终优先，社区票决不能恢复。公开裁决保留原 `first_public_at`，不会制造第二次日报。
 
 ## Agent、MCP 与同步
 
