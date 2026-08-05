@@ -46,7 +46,7 @@ export default async function RewardsPage() {
   return (
     <div className="page-shell page-shell--form">
       <PageIntro
-        description={<p>管理 Consumer 邀请、Filter 年卡和真实现金续费积分。</p>}
+        description={<p>管理新用户邀请、Filter 年卡和真实现金续费积分。</p>}
         eyebrow="我的 / 增长权益"
         title="邀请、年卡与积分"
       />

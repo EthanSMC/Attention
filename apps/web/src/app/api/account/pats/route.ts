@@ -22,9 +22,7 @@ const MAX_PAT_BODY_BYTES = 8_192;
 const bodySchema = z.object({
   expires_in_days: z.number().int().min(1).max(365).default(90),
   name: z.string().min(1).max(100),
-  scopes: z.array(z.string()).min(1).max(12),
 }).strict();
-const advancedScopes = new Set(["ai:search", "public:full", "subscription:read"]);
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const guardError = mutationRequestError(request);
@@ -39,14 +37,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const body = bodySchema.parse(
       await readJsonRequestWithinLimit(request, MAX_PAT_BODY_BYTES),
     );
-    if (!session.principal.isMember && body.scopes.some((scope) => advancedScopes.has(scope))) {
-      return noStoreJson({ error: { code: "membership_required" } }, { status: 403 });
-    }
     const credential = await createApiCredential(getWebDatabase(), {
       accountId: session.principal.accountId,
       expiresAt: new Date(Date.now() + body.expires_in_days * 24 * 60 * 60 * 1_000),
       name: body.name,
-      scopes: body.scopes,
     });
     return noStoreJson({
       credential_id: credential.credentialId,
@@ -54,7 +48,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       key: credential.key,
       key_prefix: credential.keyPrefix,
       name: credential.name,
-      scopes: credential.scopes,
       warning: "此密钥只显示一次，请立即保存。",
     }, { status: 201 });
   } catch (error) {

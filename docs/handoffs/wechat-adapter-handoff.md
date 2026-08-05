@@ -68,7 +68,7 @@ flowchart LR
 - 已实现统一邮箱注册/登录、opaque Browser Session、Free/Member 实时权益与明确的 Channel 绑定页面。
 - 已实现 `channel_identities`、加密 `channel_pending_requests` 和一次性 `bind_intents`；subject ID 只以 keyed HMAC 保存，pending 原消息和处理结果使用 AES-GCM 保存。
 - 已实现内部 Channel Adapter 合同 `POST /api/channels/messages`。它只接受内部 Bearer secret，支持 `wechat`、`wecom`、`douyin`、`xiaohongshu` 的统一身份、幂等、绑定与业务 continuation。
-- 已实现 `GET /channel/bind` 与 `POST /api/channels/bind`：用户通过统一登录后看到“绑定到 @handle”，Free 先升级 Member，确认后自动继续原收藏或 Agent 请求。
+- 已实现 `GET /channel/bind` 与 `POST /api/channels/bind`：用户通过统一登录后看到目标账号（已设置时包含 Attention ID），Free 先升级 Member，确认后自动继续原收藏或 Agent 请求。
 - 已实现 `GET /api/channels/pending/:id` 的可信 Adapter 轮询回执，以及 `/account/connections` 中的独立 Channel 解绑。
 - 已实现网页 Agent、Hosted MCP、收藏 Service、隔离 Fetcher、URL 安全策略和确定性去重。当前 Agent 检索是可演示的确定性检索，不伪装成尚未接入的模型服务。
 - 已实现微信官方服务器回调层的代码合同：官方签名/解密、安全 XML 映射、微信 access token 管理、被动回复和客服文字消息 provider。模板消息不在第一期范围内；真实平台验证仍需要认证公众号、官方凭据和实际接口权限。
@@ -89,7 +89,7 @@ flowchart LR
 | `packages/auth/src/sessions.ts` | 当前 Attention 账号 Principal 结构 |
 | `packages/auth/src/channels.ts` | Channel subject HMAC、pending 加密、一次性绑定、解绑与回执 |
 | `apps/web/src/app/api/channels/messages/route.ts` | 受内部 Bearer 保护的统一 Channel 入站合同 |
-| `apps/web/src/app/channel/bind/page.tsx` | 登录/升级后明确显示 @handle 的绑定确认体验 |
+| `apps/web/src/app/channel/bind/page.tsx` | 登录/升级后明确显示展示名与可选 Attention ID 的绑定确认体验 |
 | `apps/web/src/app/api/channels/bind/route.ts` | 单次确认并自动继续原请求 |
 | `apps/fetcher/src` | 外部 URL 的安全访问边界 |
 
@@ -186,10 +186,10 @@ wechat_app_id + openid -> attention_account_id
 - 一个公众号内以 `app_id + openid` 唯一定位微信身份。
 - 若官方条件允许，可保存 `unionid` 用于同主体产品间关联，但不能只依赖 `unionid`。
 - `openid` 是 Channel Identity，不是 Attention 网站登录凭据；普通注册不主动要求绑定微信。
-- Hosted Channel 是 Member 能力。Free 可使用 Web 收藏、云同步和基础 Hosted MCP，但不能通过微信 Adapter 执行收藏或读取私人数据。
+- Hosted Channel 是 Member 能力。Free 可使用 Web 收藏、云同步和账号允许的 Hosted MCP 个人收藏能力，但不能通过微信 Adapter 执行收藏或读取私人数据。
 - 未绑定用户不执行收藏、搜索或读取私人数据。Adapter 创建短期 pending request 与一次性 `BindIntent`，然后返回绑定链接。
 - `BindIntent` 创建时只绑定微信身份与 pending request，不能接受或预先写入目标 Attention 账号。
-- 用户打开链接后复用统一邮箱验证码/密码登录；Free 用户先进入公开会员展示与开通流程，再看到“将此微信绑定到 @handle”的明确确认页。
+- 用户打开链接后复用统一邮箱验证码/密码登录；Free 用户先进入公开会员展示与开通流程，再看到目标展示名与可选 Attention ID 的明确确认页。
 - 目标 `attention_account_id` 必须在确认时由当前已认证 Web Session 推导，不能来自 URL、微信载荷或客户端参数。
 - 绑定 token 必须随机、单次使用、短期有效并只保存哈希；建议 pending request 保留约 10 分钟，绑定成功后自动继续原消息，过期后提示重新发送。
 - 已绑定到其他账号时不得静默换绑；换绑必须走独立的解绑与重新确认流程。

@@ -71,6 +71,11 @@ import {
   updateDigestSettings,
 } from "../../apps/web/src/server/digest-settings";
 import type { DigestSettingsError } from "../../apps/web/src/server/digest-settings";
+import {
+  updateAccountProfile,
+  updateAttentionId,
+  type AttentionIdError,
+} from "../../apps/web/src/server/account";
 
 import {
   completeChannelPendingRequest,
@@ -88,11 +93,13 @@ import {
   issueFilterAnnualCode,
   loadGrowthDashboard,
   loginWithPassword,
+  oauthScopes,
   prepareConsumerReferralIntent,
   recordPaidSubscriptionBound,
   recordReferralRenewalReversal,
   recordSettledReferralRenewal,
   readChannelPendingResult,
+  redeemConsumerReferralRegistration,
   redeemFilterAnnualCode,
   redeemInvitation,
   registerPublicOAuthClient,
@@ -112,6 +119,7 @@ import {
 } from "@attention/auth";
 import {
   accounts,
+  apiCredentials,
   castModerationVote,
   collectionEvents,
   collections,
@@ -330,8 +338,14 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       email: "new.user@example.com",
       returnTo: "/collect",
     });
-    expect(verified.stableHandle).toMatch(/^user-\d{9}$/u);
+    expect(verified).not.toHaveProperty("stableHandle");
     expect(verified.displayName).toMatch(/^用户\d{9}$/u);
+
+    const [storedAccount] = await handle.db
+      .select({ stableHandle: accounts.stableHandle })
+      .from(accounts)
+      .where(eq(accounts.id, verified.accountId));
+    expect(storedAccount?.stableHandle).toMatch(/^user-\d{9}$/u);
 
     const principal = await resolveSession(handle.db, verified.session.token, { touch: false });
     expect(principal).toMatchObject({ isFilter: false, isMember: false });
@@ -358,6 +372,138 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       raw_input: "https://example.org/free-public",
       visibility: "public",
     })).rejects.toMatchObject<Partial<CollectionServiceError>>({ code: "filter_required", httpStatus: 403 });
+  });
+
+  it("keeps the generated handle internal and enforces Attention ID rules", async () => {
+    const firstSetAt = new Date("2026-08-05T03:00:00.000Z");
+    const first = await createEmailAccount("attention-id-one@example.com", firstSetAt);
+    const second = await createEmailAccount(
+      "attention-id-two@example.com",
+      new Date(firstSetAt.getTime() + 61_000),
+    );
+    const [before] = await handle.db
+      .select({
+        attentionId: accounts.attentionId,
+        stableHandle: accounts.stableHandle,
+      })
+      .from(accounts)
+      .where(eq(accounts.id, first.accountId));
+    expect(before?.attentionId).toBeNull();
+    expect(before?.stableHandle).toMatch(/^user-\d{9}$/u);
+
+    const configured = await updateAttentionId(
+      handle.db,
+      first.accountId,
+      "  Ethan_AI  ",
+      firstSetAt,
+    );
+    expect(configured).toMatchObject({ attentionId: "ethan_ai" });
+    expect(configured.nextChangeAt).toEqual(
+      new Date(firstSetAt.getTime() + 365 * 24 * 60 * 60 * 1_000),
+    );
+
+    const principal = await resolveSession(handle.db, first.session.token, {
+      touch: false,
+    });
+    expect(principal?.attentionId).toBe("ethan_ai");
+    expect(principal).not.toHaveProperty("stableHandle");
+
+    await expect(
+      updateAttentionId(
+        handle.db,
+        first.accountId,
+        "another-id",
+        new Date(firstSetAt.getTime() + 364 * 24 * 60 * 60 * 1_000),
+      ),
+    ).rejects.toMatchObject<Partial<AttentionIdError>>({
+      code: "attention_id_cooldown",
+      nextChangeAt: configured.nextChangeAt,
+    });
+    await expect(
+      updateAttentionId(handle.db, second.accountId, "ETHAN_AI", firstSetAt),
+    ).rejects.toMatchObject<Partial<AttentionIdError>>({
+      code: "attention_id_taken",
+    });
+    await expect(
+      updateAttentionId(handle.db, second.accountId, "1invalid", firstSetAt),
+    ).rejects.toMatchObject<Partial<AttentionIdError>>({
+      code: "invalid_attention_id",
+    });
+
+    const changed = await updateAttentionId(
+      handle.db,
+      first.accountId,
+      "ethan-next",
+      configured.nextChangeAt,
+    );
+    expect(changed.attentionId).toBe("ethan-next");
+    const [after] = await handle.db
+      .select({ stableHandle: accounts.stableHandle })
+      .from(accounts)
+      .where(eq(accounts.id, first.accountId));
+    expect(after?.stableHandle).toBe(before?.stableHandle);
+  });
+
+  it("validates avatars and keeps account and Filter profile identity in sync", async () => {
+    const account = await createEmailAccount(
+      "profile-avatar@example.com",
+      new Date("2026-08-05T04:00:00.000Z"),
+    );
+    await handle.db.insert(filterProfiles).values({
+      accountId: account.accountId,
+      active: true,
+      displayName: "Old name",
+      invitedAt: new Date("2026-08-05T04:01:00.000Z"),
+      updatedAt: new Date("2026-08-05T04:01:00.000Z"),
+    });
+    const webpBytes = Buffer.from([
+      0x52, 0x49, 0x46, 0x46, 0x04, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42,
+      0x50,
+    ]);
+    const avatarUrl = `data:image/webp;base64,${webpBytes.toString("base64")}`;
+
+    await expect(
+      updateAccountProfile(handle.db, account.accountId, {
+        avatarUrl,
+        displayName: "New name",
+      }),
+    ).resolves.toEqual({ avatarUrl, displayName: "New name" });
+    expect(
+      await handle.db
+        .select({
+          accountAvatarUrl: accounts.avatarUrl,
+          accountDisplayName: accounts.displayName,
+        })
+        .from(accounts)
+        .where(eq(accounts.id, account.accountId)),
+    ).toEqual([
+      { accountAvatarUrl: avatarUrl, accountDisplayName: "New name" },
+    ]);
+    expect(
+      await handle.db
+        .select({
+          avatarUrl: filterProfiles.avatarUrl,
+          displayName: filterProfiles.displayName,
+        })
+        .from(filterProfiles)
+        .where(eq(filterProfiles.accountId, account.accountId)),
+    ).toEqual([{ avatarUrl, displayName: "New name" }]);
+
+    await expect(
+      updateAccountProfile(handle.db, account.accountId, { avatarUrl: null }),
+    ).resolves.toMatchObject({ avatarUrl: null });
+    await expect(
+      updateAccountProfile(handle.db, account.accountId, {
+        avatarUrl: "data:image/jpeg;base64,ZmFrZS1qcGVn",
+      }),
+    ).rejects.toThrow("invalid_avatar_url");
+    const oversized = Buffer.alloc(256 * 1024 + 1);
+    oversized.set(webpBytes);
+    await expect(
+      updateAccountProfile(handle.db, account.accountId, {
+        avatarUrl: `data:image/webp;base64,${oversized.toString("base64")}`,
+      }),
+    ).rejects.toThrow("invalid_avatar_url");
   });
 
   it("serializes concurrent email challenge starts before count-to-insert", async () => {
@@ -807,12 +953,23 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     const credential = await createApiCredential(handle.db, {
       accountId: redeemed.accountId,
       name: "automation",
-      scopes: ["collection:read", "collection:write"],
     });
     expect(credential.key).toMatch(/^att_pat_/u);
     expect(await resolveApiCredential(handle.db, credential.key)).toMatchObject({
       accountId: redeemed.accountId,
       isMember: true,
+      scopes: oauthScopes,
+    });
+    // Simulate a Key created by the former basic/advanced model. Stored
+    // scopes remain a security ceiling until the user rotates it.
+    await handle.db
+      .update(apiCredentials)
+      .set({ scopes: ["collection:read"] })
+      .where(eq(apiCredentials.id, credential.credentialId));
+    expect(await resolveApiCredential(handle.db, credential.key)).toMatchObject({
+      accountId: redeemed.accountId,
+      isMember: true,
+      scopes: ["collection:read"],
     });
     expect(await revokeApiCredential(handle.db, redeemed.accountId, credential.credentialId)).toBe(true);
     expect(await resolveApiCredential(handle.db, credential.key)).toBeNull();
@@ -880,7 +1037,14 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       { id: first.collection_id, visibility: "public" }
     ]);
     expect(await loadPublicContents(handle.db)).toMatchObject([
-      { filters: [{ handle: "person-web-direct" }] }
+      {
+        filters: [
+          {
+            attentionId: null,
+            displayName: "Filter web-direct",
+          },
+        ],
+      }
     ]);
 
     await expect(
@@ -2079,9 +2243,9 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     const preview = await inspectInvitation(handle.db, created.token);
     expect(preview).toMatchObject({
       accountId: created.accountId,
-      kind: "member",
-      stableHandle: "preview-member"
+      kind: "member"
     });
+    expect(preview).not.toHaveProperty("stableHandle");
 
     const [stored] = await handle.db
       .select({ consumedAt: invitations.consumedAt })
@@ -3464,10 +3628,27 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
           now,
           requesterFingerprint: "9".repeat(64),
         }),
-      ).rejects.toMatchObject({ code: "referral_registration_unavailable" });
+      ).resolves.toMatchObject({ email: "growth-downstream-invitee@example.com" });
+      const filterInvitation = await createConsumerInvite(firstRuntime.db, {
+        accountId: invitee.accountId,
+        now,
+        replaceActive: true,
+      });
+      const filterDashboard = await loadGrowthDashboard(firstRuntime.db, invitee.accountId, now);
+      expect(filterDashboard.consumerInvite).toMatchObject({
+        canCreate: true,
+        status: "active",
+      });
+      expect(filterDashboard.isFilter).toBe(true);
+      expect(filterInvitation.token).toHaveLength(43);
       await expect(
-        createConsumerInvite(firstRuntime.db, { accountId: invitee.accountId, now }),
-      ).rejects.toMatchObject({ code: "consumer_invite_ineligible" });
+        createLoginChallenge(firstRuntime.db, {
+          consumerInviteToken: filterInvitation.token,
+          email: "growth-filter-invitee@example.com",
+          now,
+          requesterFingerprint: "a".repeat(64),
+        }),
+      ).resolves.toMatchObject({ email: "growth-filter-invitee@example.com" });
       const dashboard = await loadGrowthDashboard(firstRuntime.db, inviter.accountId, now);
       expect(dashboard.consumerInvite).toMatchObject({
         canCreate: false,
@@ -3508,6 +3689,73 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
         secondRuntime.close(),
         workerRuntime.close(),
       ]);
+    }
+  });
+
+  it("holds the inviter quota lock while redeeming a Consumer referral", async () => {
+    const now = new Date("2026-08-04T08:30:00.000Z");
+    const inviter = await createEmailAccount(
+      "growth-lock-inviter@example.com",
+      now,
+    );
+    const invitee = await createEmailAccount(
+      "growth-lock-invitee@example.com",
+      new Date(now.getTime() + 61_000),
+    );
+    const invitation = await createConsumerInvite(handle.db, {
+      accountId: inviter.accountId,
+      now,
+    });
+    const blocker = createDatabase(databaseUrl!, { maxConnections: 1 });
+    const redeemer = createDatabase(databaseUrl!, { maxConnections: 1 });
+    let markLockReady: (() => void) | undefined;
+    let releaseLock: (() => void) | undefined;
+    const lockReady = new Promise<void>((resolve) => {
+      markLockReady = resolve;
+    });
+    const holdLock = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const namespace = `consumer-invite:${inviter.accountId}`;
+
+    try {
+      const blockerTask = blocker.db.transaction(async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtextextended(${namespace}::text, 0))`,
+        );
+        markLockReady?.();
+        await holdLock;
+      });
+      await lockReady;
+
+      const redemption = redeemer.db.transaction((tx) =>
+        redeemConsumerReferralRegistration(tx, {
+          inviteeAccountId: invitee.accountId,
+          now,
+          referralId: invitation.invitationId,
+        }),
+      );
+      const stateBeforeRelease = await Promise.race([
+        redemption.then(() => "completed" as const),
+        new Promise<"blocked">((resolve) => {
+          setTimeout(() => resolve("blocked"), 150);
+        }),
+      ]);
+      expect(stateBeforeRelease).toBe("blocked");
+
+      releaseLock?.();
+      await Promise.all([blockerTask, redemption]);
+      const [stored] = await handle.db
+        .select({ status: consumerReferrals.status })
+        .from(consumerReferrals)
+        .where(eq(consumerReferrals.id, invitation.invitationId));
+      expect(stored?.status).toBe("redeemed");
+      await expect(
+        createConsumerInvite(handle.db, { accountId: inviter.accountId, now }),
+      ).rejects.toMatchObject({ code: "consumer_invite_used" });
+    } finally {
+      releaseLock?.();
+      await Promise.all([blocker.close(), redeemer.close()]);
     }
   });
 

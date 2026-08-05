@@ -8,8 +8,8 @@ import { getPagePrincipal } from "../../../server/session";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
-  description: "使用 Consumer 邀请为新邮箱注册 Attention。",
-  title: "Consumer 邀请",
+  description: "使用新用户邀请为新邮箱注册 Attention。",
+  title: "新用户邀请",
 };
 
 const tokenSchema = z.string().regex(/^[A-Za-z0-9_-]{32,256}$/u);
@@ -32,7 +32,7 @@ export default async function ConsumerJoinPage({
             双方的三个月 Member 奖励会在同一事务中发放。
           </p>
         }
-        eyebrow="Consumer 邀请"
+        eyebrow="新用户邀请"
         title="创建你的 Attention 账号"
       />
       <section className="login-panel">

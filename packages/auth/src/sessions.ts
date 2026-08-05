@@ -22,7 +22,7 @@ export const defaultSessionTtlSeconds = 30 * 24 * 60 * 60;
 export interface SessionPrincipal {
   sessionId: string;
   accountId: string;
-  stableHandle: string;
+  attentionId: string | null;
   displayName: string;
   primaryEmail: string | null;
   signupSource: "direct" | "consumer_referral";
@@ -162,7 +162,7 @@ export async function resolveSession(
     .select({
       sessionId: sessions.id,
       accountId: accounts.id,
-      stableHandle: accounts.stableHandle,
+      attentionId: accounts.attentionId,
       displayName: accounts.displayName,
       primaryEmail: accounts.primaryEmail,
       signupSource: accounts.signupSource,

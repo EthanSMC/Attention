@@ -42,4 +42,4 @@ For every tool call, include `client_context` with `skill_id: "attention"`, `ski
 - Do not submit copied page text, extracted full content, cookies, authorization headers, or browser state as collection evidence. Third-party extraction is not trusted Attention acquisition evidence.
 - Treat private collection results as private. Do not mix them into public answers or share them with another account.
 - If a tool returns `insufficient_scope`, `membership_required`, or `filter_required`, explain the required permission or entitlement. Do not retry through a public or anonymous endpoint to bypass it.
-- Never place an OAuth token or PAT in tool input, citations, logs, or this skill. Attention stores collected URLs and necessary metadata, not a third-party original merely because its link was collected.
+- Never place an OAuth token or API Key in tool input, citations, logs, or this skill. Attention stores collected URLs and necessary metadata, not a third-party original merely because its link was collected.

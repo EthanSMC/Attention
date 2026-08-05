@@ -8,6 +8,7 @@ import {
 } from "@attention/auth";
 
 import { PageIntro } from "../../../components/page-intro";
+import { accountIdentityLabel } from "../../../lib/attention";
 import { getWebDatabase } from "../../../server/db";
 import { oauthResourceMapFromOrigin } from "../../../server/oauth-resources";
 import { getPagePrincipal } from "../../../server/session";
@@ -54,7 +55,7 @@ const scopeLabels: Record<string, string> = {
   "ai:search": "使用托管 AI 检索（需要实时 Member 权益）",
   "collection:read": "读取你的个人收藏",
   "collection:write": "替你新增私人收藏",
-  "profile:read": "读取 @handle 和会员状态",
+  "profile:read": "读取你的公开资料和会员状态",
   "public:full": "读取完整公开流（需要实时 Member 权益）",
   "public:read": "读取当前可见的公开内容",
   "subscription:read": "读取订阅状态",
@@ -90,10 +91,11 @@ export default async function OAuthAuthorizePage({
   if (!principal) {
     redirect(`/auth?return_to=${encodeURIComponent(`/oauth/authorize?${queryString(params)}`)}`);
   }
+  const accountLabel = accountIdentityLabel(principal);
   return (
     <div className="page-shell page-shell--form">
       <PageIntro
-        description={<p>你正在以 @{principal.stableHandle} 授权；网站 Session 不会交给客户端。</p>}
+        description={<p>你正在以 {accountLabel} 授权；网站 Session 不会交给客户端。</p>}
         eyebrow="OAuth + PKCE"
         title={`连接 ${authorization.clientName}`}
       />

@@ -14,8 +14,16 @@ import {
 import { oauthScopes, type OAuthScope } from "./oauth";
 import { resolveAccountCapabilities } from "./sessions";
 
-const allowedScopes = new Set<string>(oauthScopes);
 const patPattern = /^att_pat_([A-Za-z0-9_-]{32,256})$/u;
+
+/**
+ * API Keys authenticate an Attention account; they are not a second
+ * authorization system. Every active key receives the same protocol-level
+ * scopes, while the account's live Free/Member/Filter capabilities decide
+ * which operations are actually available on every request.
+ */
+export const apiKeyScopes: readonly OAuthScope[] = oauthScopes;
+const apiKeyScopeSet = new Set<string>(apiKeyScopes);
 
 function hashPat(value: string): string {
   return createHash("sha256").update("attention:pat:v1\0").update(value).digest("hex");
@@ -27,7 +35,6 @@ export interface CreatedApiCredential {
   key: string;
   keyPrefix: string;
   name: string;
-  scopes: OAuthScope[];
 }
 
 export async function createApiCredential(
@@ -36,14 +43,11 @@ export async function createApiCredential(
     accountId: string;
     expiresAt?: Date | null;
     name: string;
-    scopes: string[];
   },
 ): Promise<CreatedApiCredential> {
   const name = input.name.normalize("NFKC").trim();
-  const scopes = [...new Set(input.scopes)].sort();
   if (
     name.length < 1 || name.length > 100 ||
-    scopes.length === 0 || scopes.some((scope) => !allowedScopes.has(scope)) ||
     (input.expiresAt && input.expiresAt <= new Date())
   ) throw new RangeError("invalid_api_credential");
   const key = `att_pat_${randomBytes(32).toString("base64url")}`;
@@ -56,7 +60,7 @@ export async function createApiCredential(
       keyHash: hashPat(key),
       keyPrefix,
       name,
-      scopes,
+      scopes: [...apiKeyScopes],
     })
     .returning({ id: apiCredentials.id });
   if (!created) throw new Error("api_credential_creation_failed");
@@ -66,7 +70,6 @@ export async function createApiCredential(
     key,
     keyPrefix,
     name,
-    scopes: scopes as OAuthScope[],
   };
 }
 
@@ -108,7 +111,11 @@ export async function resolveApiCredential(
   return {
     accountId: credential.accountId,
     credentialId: credential.id,
-    scopes: credential.scopes,
+    // New keys store the full protocol scope set. Keys created by the former
+    // client-selected model retain their narrower stored scope as a security
+    // ceiling until the user rotates them. Live account capabilities are still
+    // evaluated on every request.
+    scopes: credential.scopes.filter((scope) => apiKeyScopeSet.has(scope)),
     ...capabilities,
   };
 }

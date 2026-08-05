@@ -135,6 +135,20 @@ export function SearchIcon(props: IconProps) {
   );
 }
 
+export function SettingsIcon(props: IconProps) {
+  return (
+    <svg {...defaults} {...props}>
+      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.7" />
+      <path
+        d="M19.1 13.2c.1-.4.1-.8.1-1.2s0-.8-.1-1.2l2-1.5-2-3.4-2.4 1a8.3 8.3 0 0 0-2-1.2L14.4 3h-4.1L10 5.7a8.3 8.3 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.5c-.1.4-.1.8-.1 1.2s0 .8.1 1.2l-2 1.5 2 3.4 2.4-1a8.3 8.3 0 0 0 2 1.2l.3 2.7h4.1l.3-2.7a8.3 8.3 0 0 0 2-1.2l2.4 1 2-3.4-2-1.5Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
 export function UserIcon(props: IconProps) {
   return (
     <svg {...defaults} {...props}>

@@ -11,7 +11,7 @@ export const metadata: Metadata = { title: "Agent" };
 export default async function AgentPage() {
   const principal = await getPagePrincipal();
   return (
-    <div className="page-shell page-shell--form">
+    <div className="page-shell page-shell--form page-shell--primary">
       <PageIntro
         description={<p>用自然语言找回自己的收藏，并从引用直接回到原文。</p>}
         eyebrow="Attention Agent"

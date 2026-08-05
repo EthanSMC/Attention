@@ -39,7 +39,7 @@ export default async function LoginPage({
       <section className="login-panel">
         <p className="login-panel__step">邮箱验证码</p>
         <h2>继续你的收藏和发现</h2>
-        <p>无需先设置密码、网名或绑定微信。</p>
+        <p>无需先设置密码、展示名或绑定微信。</p>
         <EmailLoginForm returnTo={returnTo} />
         <p className="login-panel__note">
           游客不会创建匿名账号，也不会在服务端暂存收藏链接。

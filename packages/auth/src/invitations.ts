@@ -54,7 +54,6 @@ export interface CreatedInvitation {
 export interface RedeemedInvitation {
   invitationId: string;
   accountId: string;
-  stableHandle: string;
   kind: "member" | "filter";
   session: IssuedSession;
 }
@@ -62,7 +61,6 @@ export interface RedeemedInvitation {
 export interface InvitationPreview {
   invitationId: string;
   accountId: string;
-  stableHandle: string;
   kind: "member" | "filter";
   expiresAt: Date;
 }
@@ -177,7 +175,6 @@ export async function inspectInvitation(
   const [account] = await db
     .select({
       id: accounts.id,
-      stableHandle: accounts.stableHandle,
       status: accounts.status
     })
     .from(accounts)
@@ -191,7 +188,6 @@ export async function inspectInvitation(
   return {
     invitationId: invitation.id,
     accountId: account.id,
-    stableHandle: account.stableHandle,
     kind: invitation.kind,
     expiresAt: invitation.expiresAt
   };
@@ -255,7 +251,7 @@ export async function redeemInvitation(
         .insert(filterProfiles)
         .values({
           accountId: account.id,
-          displayName: invitation.filterDisplayName ?? account.stableHandle,
+          displayName: invitation.filterDisplayName ?? account.displayName,
           active: true,
           invitedAt: now,
           revokedAt: null,
@@ -264,7 +260,7 @@ export async function redeemInvitation(
         .onConflictDoUpdate({
           target: filterProfiles.accountId,
           set: {
-            displayName: invitation.filterDisplayName ?? account.stableHandle,
+            displayName: invitation.filterDisplayName ?? account.displayName,
             active: true,
             invitedAt: now,
             revokedAt: null,
@@ -318,7 +314,6 @@ export async function redeemInvitation(
     return {
       invitationId: invitation.id,
       accountId: account.id,
-      stableHandle: account.stableHandle,
       kind: invitation.kind,
       session: {
         token: sessionToken,

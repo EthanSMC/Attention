@@ -2,19 +2,37 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useCallback, useState } from "react";
 
-import { BotIcon, CompassIcon, LibraryIcon, PlusIcon, UserIcon } from "./icons";
+import {
+  BotIcon,
+  CompassIcon,
+  PlusIcon,
+  SettingsIcon,
+  UserIcon,
+} from "./icons";
+import { CollectModal } from "./collect-modal";
 
 const navigationItems = [
   { href: "/ai", label: "发现", icon: CompassIcon },
-  { href: "/mine", label: "收藏", icon: LibraryIcon },
   { href: "/agent", label: "Agent", icon: BotIcon },
   { href: "/account", label: "我的", icon: UserIcon },
 ] as const;
 
+function isSettingsPath(pathname: string): boolean {
+  return (
+    pathname.startsWith("/account/settings") ||
+    pathname.startsWith("/account/security") ||
+    pathname.startsWith("/account/digests") ||
+    pathname.startsWith("/account/connections") ||
+    pathname.startsWith("/account/court") ||
+    pathname.startsWith("/membership")
+  );
+}
+
 export interface NavigationIdentity {
+  isFilter: boolean;
   isMember: boolean;
-  stableHandle: string;
 }
 
 function SignalLogo() {
@@ -34,7 +52,11 @@ function NavigationLinks({
   const pathname = usePathname();
 
   return navigationItems.map((item) => {
-    const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+    const active =
+      pathname === item.href ||
+      (item.href === "/account"
+        ? pathname.startsWith("/account/") && (mobile || !isSettingsPath(pathname))
+        : pathname.startsWith(`${item.href}/`));
     const Icon = item.icon;
 
     return (
@@ -53,8 +75,15 @@ function NavigationLinks({
 }
 
 export function SiteHeader({ identity }: { identity: NavigationIdentity | null }) {
+  const pathname = usePathname();
+  const [collectOpen, setCollectOpen] = useState(false);
+  const settingsActive = isSettingsPath(pathname);
+  const closeCollect = useCallback(() => setCollectOpen(false), []);
+
   return (
-    <header className="site-header">
+    <header
+      className={`site-header${identity ? " site-header--authenticated" : ""}`}
+    >
       <div className="site-header__inner">
         <Link className="brand" href="/ai" aria-label="Attention 首页">
           <SignalLogo />
@@ -64,27 +93,41 @@ export function SiteHeader({ identity }: { identity: NavigationIdentity | null }
           <NavigationLinks />
         </nav>
         <div className="account-nav">
-          <Link className="account-nav__collect" href="/collect">
+          <button
+            aria-expanded={collectOpen}
+            aria-haspopup="dialog"
+            className="account-nav__collect"
+            onClick={() => setCollectOpen(true)}
+            type="button"
+          >
             <PlusIcon />
             <span>收藏链接</span>
-          </Link>
+          </button>
           {identity ? (
-            <>
-              <span className="account-nav__identity" title={`当前登录为 @${identity.stableHandle}`}>
-                <UserIcon />
-                <span className="account-nav__handle">@{identity.stableHandle}</span>
-              </span>
-              <form action="/api/auth/logout" method="post">
-                <button className="account-nav__logout" type="submit">退出</button>
-              </form>
-            </>
-          ) : (
+            <Link
+              aria-current={settingsActive ? "page" : undefined}
+              className="site-nav__link site-nav__settings"
+              href="/account/settings"
+              title="设置"
+            >
+              <SettingsIcon />
+              <span>设置</span>
+            </Link>
+          ) : null}
+          {!identity ? (
             <Link className="account-nav__login" href="/login">
               登录
             </Link>
-          )}
+          ) : null}
         </div>
       </div>
+      {collectOpen ? (
+        <CollectModal
+          allowPublic={identity?.isFilter ?? false}
+          authenticated={identity !== null}
+          onClose={closeCollect}
+        />
+      ) : null}
     </header>
   );
 }

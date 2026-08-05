@@ -2,6 +2,11 @@
 
 这份文档描述仓库当前提供的可移植部署基线，不代表 Attention 已经上线，也不代表邮件、支付、AI 或微信公众号资质已经完成生产联调。部署者仍需选择可信的托管平台、密钥管理、数据库备份、监控和外部供应商。
 
+Novelty Studio ECS 上的隔离 staging 部署使用专用的
+[`deploy/staging/RUNBOOK.md`](../deploy/staging/RUNBOOK.md)。它包含安全组硬门禁、
+固定目录与端口、备份恢复演练、Nginx/TLS、验收和应用回滚步骤；不得用本页的
+通用 Compose 示例替代该 runbook。
+
 ## 构建产物
 
 根目录 `Dockerfile` 使用固定的 Node.js 24.11.1 与 pnpm 11.9.0，通过 lockfile 冻结安装，并提供以下 multi-stage target：
@@ -60,6 +65,8 @@ docker compose --env-file .env.compose.local --profile wechat up -d wechat-adapt
 
 升级时先备份数据库，以新镜像单独运行 `migrate`，成功后再滚动替换 Web/Worker。不要在每个应用副本启动时并发执行迁移，也不要让应用进程拿到 migration owner DSN。当前迁移只前进；回滚数据库必须使用经过演练的备份恢复或专门的兼容迁移，不能用 `down`/清库代替。
 
+生产与 staging 的 migrate target 必须显式获得 `MIGRATION_DATABASE_URL`，不会回退到常驻应用的 `DATABASE_URL`。启动时先校验 PostgreSQL URL 中的 role/host/database，再从服务器读取 `current_user`、`current_database()` 和 `server_version_num`；只有预期身份、预期数据库和 PostgreSQL 17 才会继续。迁移使用固定 PostgreSQL advisory lock 串行化，拿不到锁会立即退出，并在成功或失败后释放锁。错误信息不会打印 DSN 或密码。
+
 ## 数据库 owner、RLS 与网络
 
 PostgreSQL 至少使用三种身份：
@@ -76,6 +83,15 @@ PostgreSQL 至少使用三种身份：
 
 所有 secret 都应来自部署平台 secret store 或只读文件注入，不能写入镜像、Compose 文件、CI 日志或 Git。长度要求以代码校验为准，以下 HMAC/Auth/Channel/Adapter/Fetcher secret 至少使用独立的 32 字节随机值，不能复用。
 
+### Migrate
+
+| 变量 | 生产要求 |
+|---|---|
+| `MIGRATION_DATABASE_URL` | 显式的 PostgreSQL 17 owner DSN；生产/staging 必填，不能使用 runtime role。 |
+| `ATTENTION_MIGRATION_DATABASE_ROLE` | 预期 owner role，默认 `attention_migration_owner`。URL 与实际 `current_user` 都必须匹配。 |
+| `ATTENTION_MIGRATION_DATABASE_HOST` | 可选的预期 DSN host；Compose 固定为 `postgres`。 |
+| `ATTENTION_MIGRATION_DATABASE_NAME` | 可选的预期数据库名；Compose 从 `POSTGRES_DB` 注入，staging 为 `attention_staging`。URL 与实际 `current_database()` 都必须匹配。 |
+
 ### Web
 
 | 变量 | 生产要求 |
@@ -89,12 +105,20 @@ PostgreSQL 至少使用三种身份：
 | `ATTENTION_CHANNEL_ADAPTER_SECRET` | Web 与 Adapter 间 Bearer secret；两端必须一致。 |
 | `FETCHER_BASE_URL` | 内网 Fetcher 地址；Compose 为 `http://fetcher:4100`。 |
 | `FETCHER_SHARED_SECRET` | Web/Worker/Fetcher 三端一致的独立 Bearer secret。 |
-| `ATTENTION_EMAIL_PROVIDER` | 生产必须使用 `webhook`，不能使用 `console`。 |
-| `ATTENTION_EMAIL_WEBHOOK_URL` | 无 credentials/query/fragment 的可信 HTTPS 邮件入口。 |
-| `ATTENTION_EMAIL_WEBHOOK_TOKEN` | 邮件服务 Bearer token。 |
+| `ATTENTION_EMAIL_PROVIDER` | Web 生产使用 `resend` 或 `webhook`，不能使用 `console`。原生 Resend 仅发送统一身份验证码。 |
+| `RESEND_API_KEY` | `resend` provider 的专用 Key，只放 secret store；泄露后必须轮换。 |
+| `ATTENTION_RESEND_FROM` | 已在 Resend 验证的发件人，例如 `Attention <no_reply@service.noveltystudio.cn>`。 |
+| `ATTENTION_RESEND_TEMPLATE_ID` | 中性统一验证码模板 ID/alias，建议 `login-code-attention`。 |
+| `ATTENTION_EMAIL_WEBHOOK_URL` | `webhook` provider 的无 credentials/query/fragment 可信 HTTPS 邮件入口。 |
+| `ATTENTION_EMAIL_WEBHOOK_TOKEN` | `webhook` provider 的邮件服务 Bearer token。 |
 | `ATTENTION_MCP_PUBLIC_URL` | 对外 HTTPS MCP resource URL。 |
 | `ATTENTION_SYNC_PUBLIC_URL` | 对外 HTTPS Sync resource URL。 |
 | `ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER` | 入口代理拥有的专用客户端来源头名称；代理必须先丢弃同名入站头再按连接源覆盖。生产缺失时登录与动态注册会 fail closed；应用拒绝 `Forwarded`、`X-Forwarded-For`、`X-Real-IP` 和 CDN 常规客户端地址头。 |
+| `ATTENTION_CONSUMER_INVITE_QUOTA` | 每个 active 注册账号（包括 Filter）可成功邀请的人数；账号页显示已使用 / 总名额，必须是 1–100 的整数。 |
+
+Resend 模板源文件见 [`email-login-code-template.html`](email-login-code-template.html)。注册、登录、重新验证和密码重设验证必须复用这一个中性模板，只传 `verification_code` 与 `valid_minutes`；当前 challenge TTL 为 10 分钟。服务端不得查询账号状态后选择 `welcome-email-attention` 或 `password-reset-attention`，否则会形成账号枚举侧信道。原生 provider 直接调用 `https://api.resend.com/emails`，以 login challenge ID 派生 `Idempotency-Key`；成功日志只保留脱敏邮箱与 provider message ID。
+
+仓库的 `.env.compose.example` 默认是 Resend-only staging：Web 使用原生 Resend，`ATTENTION_DIGEST_WORKER_ENABLED=false`，日报 webhook URL/token 留空。若要启用日报，必须同时设置 `ATTENTION_DIGEST_WORKER_ENABLED=true`、`ATTENTION_EMAIL_WEBHOOK_URL` 与 `ATTENTION_EMAIL_WEBHOOK_TOKEN`。Compose 允许日报关闭时传入空 webhook 值；一旦日报开启，Worker 会构造 webhook provider，并在任一凭据缺失时 fail closed。
 
 `PUBLIC_FEED_PREVIEW_LIMIT`、价格展示、OAuth 动态注册全局/单来源频率等有安全默认值，但仍应在部署配置中显式审阅。生产不要设置 `ATTENTION_AUTH_EXPOSE_OTP=true`；即使误设，代码也不会在 production 展示验证码。
 
@@ -108,8 +132,8 @@ PostgreSQL 至少使用三种身份：
 | `ATTENTION_WORKER_DATABASE_ROLE` | 默认并建议保持 `attention_worker_runtime`。 |
 | `FETCHER_BASE_URL` / `FETCHER_SHARED_SECRET` | 与隔离 Fetcher 一致。 |
 | `NEXT_PUBLIC_APP_URL` | 开启日报时生成公开链接所需的 HTTPS origin。 |
-| `ATTENTION_DIGEST_WORKER_ENABLED` | 是否运行日报循环；默认 `true`。 |
-| 邮件 webhook 三变量 | 开启日报时与 Web 相同；生产 console provider 会拒绝启动。 |
+| `ATTENTION_DIGEST_WORKER_ENABLED` | 是否运行日报循环；代码默认 `true`，但 Resend-only staging 示例必须显式设为 `false`。 |
+| 邮件 webhook 三变量 | 开启日报时必须配置；Worker 日报仍使用 `webhook`，不使用 Web 的 Resend 登录验证码模板。生产 console provider 会拒绝启动。 |
 
 `ATTENTION_AI_MODEL` 为空时仍可运行确定性元数据流程，但不会伪造 AI 摘要。要启用托管 AI，设置模型名、可信 OpenAI-compatible `ATTENTION_AI_BASE_URL`、`ATTENTION_AI_API_KEY` 和合理超时。模型供应商会接收为生成摘要所需的临时页面文本；部署者必须完成隐私、数据驻留、保留策略和供应商合同审查。
 

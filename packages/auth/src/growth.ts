@@ -29,6 +29,8 @@ import { createOpaqueToken, hashOpaqueToken } from "./tokens";
 const CONSUMER_INVITE_DEFAULT_TTL_DAYS = 30;
 const FILTER_CODE_DEFAULT_TTL_DAYS = 30;
 const CONSUMER_INVITE_MAX_TTL_DAYS = 365;
+const CONSUMER_INVITE_DEFAULT_QUOTA = 1;
+const CONSUMER_INVITE_MAX_QUOTA = 100;
 const FILTER_CODE_MAX_TTL_DAYS = 90;
 const TOKEN_ATTEMPT_LIMIT_PER_HOUR = 20;
 const FILTER_CODES_PER_UTC_YEAR = 5;
@@ -39,7 +41,6 @@ export type GrowthErrorCode =
   | "account_not_active"
   | "active_consumer_invite_exists"
   | "billing_event_conflict"
-  | "consumer_invite_ineligible"
   | "consumer_invite_used"
   | "filter_code_annual_limit"
   | "filter_code_invalid"
@@ -74,6 +75,8 @@ export interface GrowthDashboard {
     canCreate: boolean;
     expiresAt: Date | null;
     registeredAt: Date | null;
+    quota: number;
+    successfulCount: number;
     status: "active" | "expired" | "invalidated" | "redeemed" | "unavailable";
   };
   filterCodes: Array<{
@@ -126,6 +129,17 @@ function requestedTtlDays(
   if (value === undefined) return envTtlDays(envName, fallback, maximum);
   if (!Number.isInteger(value) || value < 1 || value > maximum) {
     throw new RangeError(`ttlDays must be between 1 and ${maximum}`);
+  }
+  return value;
+}
+
+function consumerInviteQuota(): number {
+  const raw = process.env.ATTENTION_CONSUMER_INVITE_QUOTA?.trim();
+  const value = raw ? Number(raw) : CONSUMER_INVITE_DEFAULT_QUOTA;
+  if (!Number.isInteger(value) || value < 1 || value > CONSUMER_INVITE_MAX_QUOTA) {
+    throw new Error(
+      `ATTENTION_CONSUMER_INVITE_QUOTA must be an integer between 1 and ${CONSUMER_INVITE_MAX_QUOTA}`,
+    );
   }
   return value;
 }
@@ -296,20 +310,18 @@ export async function createConsumerInvite(
     await setAccountContext(tx, input.accountId);
     await lockNamespace(tx, `consumer-invite:${input.accountId}`);
     await requireActiveAccount(tx, input.accountId);
-    if (await activeFilter(tx, input.accountId)) {
-      throw new GrowthError("consumer_invite_ineligible");
-    }
     const [successful] = await tx
-      .select({ id: consumerReferrals.id })
+      .select({ value: count() })
       .from(consumerReferrals)
       .where(
         and(
           eq(consumerReferrals.inviterAccountId, input.accountId),
           eq(consumerReferrals.status, "redeemed"),
         ),
-      )
-      .limit(1);
-    if (successful) throw new GrowthError("consumer_invite_used");
+      );
+    if ((successful?.value ?? 0) >= consumerInviteQuota()) {
+      throw new GrowthError("consumer_invite_used");
+    }
 
     const [active] = await tx
       .select({ expiresAt: consumerReferrals.expiresAt, id: consumerReferrals.id })
@@ -407,15 +419,11 @@ export async function prepareConsumerReferralIntent(
       .from(accounts)
       .where(eq(accounts.primaryEmail, input.email))
       .limit(1);
-    const inviterIsFilter = referral
-      ? await activeFilter(tx, referral.inviterAccountId)
-      : false;
     const success = Boolean(
       referral &&
         referral.status === "active" &&
         referral.expiresAt > input.now &&
         referral.inviterStatus === "active" &&
-        !inviterIsFilter &&
         !existingAccount,
     );
     await tx.insert(growthTokenAttempts).values({
@@ -441,6 +449,18 @@ export async function redeemConsumerReferralRegistration(
   await tx.execute(
     sql`select set_config('app.consumer_referral_id', ${input.referralId}, true)`,
   );
+  const [referralIdentity] = await tx
+    .select({ inviterAccountId: consumerReferrals.inviterAccountId })
+    .from(consumerReferrals)
+    .where(eq(consumerReferrals.id, input.referralId))
+    .limit(1);
+  if (!referralIdentity) {
+    throw new GrowthError("referral_registration_unavailable");
+  }
+  await lockNamespace(
+    tx,
+    `consumer-invite:${referralIdentity.inviterAccountId}`,
+  );
   const [referral] = await tx
     .select({
       expiresAt: consumerReferrals.expiresAt,
@@ -453,6 +473,7 @@ export async function redeemConsumerReferralRegistration(
     .limit(1);
   if (
     !referral ||
+    referral.inviterAccountId !== referralIdentity.inviterAccountId ||
     referral.status !== "active" ||
     referral.expiresAt <= input.now ||
     referral.inviterAccountId === input.inviteeAccountId
@@ -464,7 +485,22 @@ export async function redeemConsumerReferralRegistration(
     .from(accounts)
     .where(eq(accounts.id, referral.inviterAccountId))
     .limit(1);
-  if (!inviter || inviter.status !== "active" || (await activeFilter(tx, referral.inviterAccountId))) {
+  if (!inviter || inviter.status !== "active") {
+    throw new GrowthError("referral_registration_unavailable");
+  }
+  const [successful] = await tx
+    .select({ value: count() })
+    .from(consumerReferrals)
+    .where(
+      and(
+        eq(
+          consumerReferrals.inviterAccountId,
+          referral.inviterAccountId,
+        ),
+        eq(consumerReferrals.status, "redeemed"),
+      ),
+    );
+  if ((successful?.value ?? 0) >= consumerInviteQuota()) {
     throw new GrowthError("referral_registration_unavailable");
   }
   await tx
@@ -653,6 +689,7 @@ export async function loadGrowthDashboard(
     await setAccountContext(tx, accountId);
     await requireActiveAccount(tx, accountId);
     const isFilter = await activeFilter(tx, accountId);
+    const quota = consumerInviteQuota();
     const [referrals, codes, balances, entries] = await Promise.all([
       tx
         .select({
@@ -702,7 +739,7 @@ export async function loadGrowthDashboard(
         .limit(50),
     ]);
     const latest = referrals[0];
-    const successful = referrals.some((item) => item.status === "redeemed");
+    const successfulCount = referrals.filter((item) => item.status === "redeemed").length;
     const latestStatus = latest
       ? latest.status === "active" && latest.expiresAt <= now
         ? "expired"
@@ -710,10 +747,12 @@ export async function loadGrowthDashboard(
       : "unavailable";
     return {
       consumerInvite: {
-        canCreate: !isFilter && !successful,
+        canCreate: successfulCount < quota,
         expiresAt: latest?.expiresAt ?? null,
+        quota,
         registeredAt: latest?.registeredAt ?? null,
-        status: isFilter && latestStatus === "active" ? "invalidated" : latestStatus,
+        successfulCount,
+        status: latestStatus,
       },
       filterCodes: codes.map((code) => ({
         ...code,

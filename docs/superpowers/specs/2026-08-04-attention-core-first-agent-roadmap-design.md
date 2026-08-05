@@ -12,7 +12,7 @@ Attention 第一阶段先向 Filter 和项目方自己的 AI 开放可用、稳�
 
 ## 2. 已确认决策
 
-1. 第一阶段主线是 Attention Core、Hosted MCP、OAuth/PAT 和公开 Attention Skill。
+1. 第一阶段主线是 Attention Core、Hosted MCP、OAuth/API Key 和公开 Attention Skill。
 2. 第一批使用者是受邀 Filter 和项目方自己的 AI。
 3. 第三方 Agent 通常使用自身已有的 Browser、Computer Use、Web Search 或内容理解能力；Attention 第一阶段不向第三方 Agent 提供通用云端 Fetcher/Browser。
 4. 第三方 Agent 与未来官方 Agent 最终都通过同一套 Attention Core 完成收藏、去重、权限、公开规则、检索和事件记录。
@@ -59,7 +59,7 @@ Core 是唯一业务实现，负责：
 
 ### 3.2 Hosted MCP
 
-Hosted MCP 将 Core Tool Contract 投影成 MCP 工具。它负责协议传输、OAuth/PAT Principal 解析和 MCP 结果编码，不复制业务逻辑。
+Hosted MCP 将 Core Tool Contract 投影成 MCP 工具。它负责协议传输、OAuth/API Key Principal 解析和 MCP 结果编码，不复制业务逻辑。
 
 同一 scope 下，不同 Agent 客户端必须获得相同领域语义。客户端差异不能改变去重、可见性、Filter 权限或贡献规则。
 
@@ -119,7 +119,7 @@ Tool Context 至少包含：
 ### 4.3 账号接入
 
 - 支持浏览器 OAuth 的 Agent 优先使用 Authorization Code + PKCE。
-- PAT/API Key 作为高级备用方式。
+- API Key 作为不支持浏览器 OAuth 时的备用方式。Key 只有一种，不携带产品等级；有效能力在每次调用时按账号实时权益计算。
 - 网站 Cookie 不能冒充 Agent Credential。
 - 每次工具调用重新检查当前权益；授权不冻结会员或 Filter 状态。
 - 第一批 Filter 使用受邀账号连接 Hosted MCP。
@@ -229,6 +229,6 @@ Hosted Agent 上线门槛是：在相同 Core、相同链接样本和相同任�
 
 ## 9. 与其他文档的关系
 
-- 账号、会员、OAuth、PAT、Channel Identity 和增长权益继续以 `2026-08-04-attention-identity-membership-growth-design.md` 为准。
+- 账号、会员、OAuth、API Key、Channel Identity 和增长权益继续以 `2026-08-04-attention-identity-membership-growth-design.md` 为准。
 - 内容采集充分性、Fetcher、Browser 和 AI Content Processor 的详细设计继续由 `docs/content-acquisition-open-questions.md` 跟踪。
 - `docs/architecture.md` 描述长期目标架构；本设计规定当前交付顺序，若二者在阶段范围上产生歧义，以本设计为准。

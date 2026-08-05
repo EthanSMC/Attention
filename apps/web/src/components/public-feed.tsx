@@ -2,10 +2,11 @@ import Link from "next/link";
 
 import type { PublicContent } from "../lib/attention";
 import { PublicContentCard } from "./content-card";
-import { GridIcon, ListIcon, LockIcon } from "./icons";
+import { LockIcon } from "./icons";
 import { MasonryFeed } from "./masonry-feed";
+import { ViewSwitcher, type ViewMode } from "./view-switcher";
 
-export type FeedView = "cards" | "list";
+export type FeedView = ViewMode;
 
 export function PublicFeed({
   contents,
@@ -29,22 +30,11 @@ export function PublicFeed({
             {isLimited ? `预览前 ${previewLimit} 条` : `${contents.length} 条`} · 按首次公开时间
           </span>
         </div>
-        <nav aria-label="内容显示方式" className="view-switcher">
-          <Link
-            aria-current={view === "cards" ? "true" : undefined}
-            href="/ai?view=cards"
-          >
-            <GridIcon />
-            <span>卡片</span>
-          </Link>
-          <Link
-            aria-current={view === "list" ? "true" : undefined}
-            href="/ai?view=list"
-          >
-            <ListIcon />
-            <span>列表</span>
-          </Link>
-        </nav>
+        <ViewSwitcher
+          ariaLabel="内容显示方式"
+          hrefs={{ cards: "/ai?view=cards", list: "/ai?view=list" }}
+          value={view}
+        />
       </div>
 
       {contents.length > 0 ? (

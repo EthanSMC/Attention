@@ -8,7 +8,7 @@ import { getPagePrincipal } from "../../server/session";
 import { safeReturnTo } from "@attention/auth";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "会员" };
+export const metadata: Metadata = { title: "Pay Attention!" };
 
 export default async function MembershipPage({
   searchParams,
@@ -24,7 +24,7 @@ export default async function MembershipPage({
       <PageIntro
         description={<p>Free 建立自己的收藏库；Member 解锁完整的高质量内容网络与托管能力。</p>}
         eyebrow="Attention 会员"
-        title="把注意力留给值得看的内容"
+        title={<>Pay Attention <span className="membership-page__title-mark">!</span></>}
       />
       <div className="plan-grid">
         <section className="plan-card">

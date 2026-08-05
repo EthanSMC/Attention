@@ -18,8 +18,7 @@ export default async function InterceptedLoginPage({
   return (
     <AuthModal>
       <p className="login-panel__step">Attention 账号</p>
-      <h2>登录后继续</h2>
-      <p>新邮箱自动创建 Free；验证码通过前不会接收收藏链接。</p>
+      <h2>登录</h2>
       <EmailLoginForm presentation="modal" returnTo={returnTo} />
     </AuthModal>
   );

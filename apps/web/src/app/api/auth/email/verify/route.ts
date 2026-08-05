@@ -43,7 +43,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       account: {
         created: verified.accountCreated,
         display_name: verified.displayName,
-        stable_handle: verified.stableHandle,
       },
       redirect_to: verified.returnTo,
     });

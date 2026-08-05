@@ -130,7 +130,6 @@ export async function loginWithPassword(
   displayName: string;
   returnTo: string;
   session: IssuedSession;
-  stableHandle: string;
 }> {
   const now = input.now ?? new Date();
   const email = normalizeEmail(input.email);
@@ -190,7 +189,6 @@ export async function loginWithPassword(
       displayName: accounts.displayName,
       id: accounts.id,
       passwordHash: accounts.passwordHash,
-      stableHandle: accounts.stableHandle,
       status: accounts.status,
     })
     .from(accounts)
@@ -233,7 +231,6 @@ export async function loginWithPassword(
     displayName: account.displayName,
     returnTo: safeReturnTo(input.returnTo),
     session: { accountId: account.id, expiresAt, sessionId: session.id, token },
-    stableHandle: account.stableHandle,
   };
 }
 

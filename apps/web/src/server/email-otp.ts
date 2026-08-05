@@ -3,6 +3,7 @@ import "server-only";
 import { normalizeCredentialEndpoint } from "@attention/contracts";
 
 export interface EmailOtpMessage {
+  challengeId: string;
   code: string;
   email: string;
   expiresAt: Date;
@@ -12,6 +13,12 @@ export interface EmailOtpSender {
   send(message: EmailOtpMessage): Promise<void>;
 }
 
+function maskEmail(email: string): string {
+  const separator = email.lastIndexOf("@");
+  if (separator <= 0) return "***";
+  return `${email.slice(0, Math.min(2, separator))}***${email.slice(separator)}`;
+}
+
 class ConsoleEmailOtpSender implements EmailOtpSender {
   async send(message: EmailOtpMessage): Promise<void> {
     if (process.env.NODE_ENV === "production") {
@@ -19,7 +26,7 @@ class ConsoleEmailOtpSender implements EmailOtpSender {
     }
     console.info("attention_email_otp", {
       code: message.code,
-      email: message.email.replace(/^(.{2}).+(@.+)$/u, "$1***$2"),
+      email: maskEmail(message.email),
       expiresAt: message.expiresAt.toISOString(),
     });
   }
@@ -53,6 +60,60 @@ class WebhookEmailOtpSender implements EmailOtpSender {
   }
 }
 
+class ResendEmailOtpSender implements EmailOtpSender {
+  constructor(
+    private readonly apiKey: string,
+    private readonly from: string,
+    private readonly templateId: string,
+  ) {}
+
+  async send(message: EmailOtpMessage): Promise<void> {
+    const validMinutes = Math.max(
+      1,
+      Math.ceil((message.expiresAt.getTime() - Date.now()) / 60_000),
+    );
+    const response = await fetch("https://api.resend.com/emails", {
+      body: JSON.stringify({
+        from: this.from,
+        subject: "Attention 登录验证码",
+        template: {
+          id: this.templateId,
+          variables: {
+            valid_minutes: validMinutes,
+            verification_code: message.code,
+          },
+        },
+        to: [message.email],
+      }),
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": `attention-login-otp:${message.challengeId}`,
+      },
+      method: "POST",
+      redirect: "error",
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok) {
+      throw new Error(`OTP email provider returned ${response.status}`);
+    }
+    const result: unknown = await response.json();
+    if (
+      typeof result !== "object" ||
+      result === null ||
+      !("id" in result) ||
+      typeof result.id !== "string" ||
+      !result.id.trim()
+    ) {
+      throw new Error("OTP email provider returned an invalid response");
+    }
+    console.info("attention_email_otp_sent", {
+      email: maskEmail(message.email),
+      providerMessageId: result.id,
+    });
+  }
+}
+
 export function getEmailOtpSender(
   env: NodeJS.ProcessEnv = process.env,
 ): EmailOtpSender {
@@ -70,6 +131,17 @@ export function getEmailOtpSender(
       normalizeCredentialEndpoint(endpoint, "ATTENTION_EMAIL_WEBHOOK_URL"),
       bearerToken,
     );
+  }
+  if (provider === "resend") {
+    const apiKey = env.RESEND_API_KEY?.trim();
+    const from = env.ATTENTION_RESEND_FROM?.trim();
+    const templateId = env.ATTENTION_RESEND_TEMPLATE_ID?.trim();
+    if (!apiKey || !from || !templateId) {
+      throw new Error(
+        "RESEND_API_KEY, ATTENTION_RESEND_FROM, and ATTENTION_RESEND_TEMPLATE_ID are required",
+      );
+    }
+    return new ResendEmailOtpSender(apiKey, from, templateId);
   }
   throw new Error(`Unsupported ATTENTION_EMAIL_PROVIDER: ${provider}`);
 }

@@ -35,7 +35,7 @@ export default async function AiPage({
   const isLimited = !completeAccess && allPublicContents.length > previewLimit;
 
   return (
-    <div className="page-shell page-shell--stream">
+    <div className="page-shell page-shell--stream page-shell--primary">
       <PageIntro
         description={<p>由人收藏，AI 整理。阅读始终回到原作者。</p>}
         eyebrow="发现"

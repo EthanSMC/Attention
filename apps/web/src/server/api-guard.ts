@@ -2,9 +2,25 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 
-export function mutationRequestError(request: Request): string | null {
+const DEFAULT_MAX_CONTENT_LENGTH_BYTES = 40_960;
+
+export function mutationRequestError(
+  request: Request,
+  options: { maxContentLengthBytes?: number } = {},
+): string | null {
+  const maxContentLengthBytes =
+    options.maxContentLengthBytes ?? DEFAULT_MAX_CONTENT_LENGTH_BYTES;
+  if (
+    !Number.isSafeInteger(maxContentLengthBytes) ||
+    maxContentLengthBytes < 0
+  ) {
+    throw new RangeError("invalid_max_content_length");
+  }
   const contentLength = Number(request.headers.get("content-length") ?? "0");
-  if (Number.isFinite(contentLength) && contentLength > 40_960) {
+  if (
+    Number.isFinite(contentLength) &&
+    contentLength > maxContentLengthBytes
+  ) {
     return "request_too_large";
   }
 

@@ -107,7 +107,7 @@ export async function loadMyCollections(
           publishedAt: contents.publishedAt,
           publicContentId: publicContentsCurrent.id,
           source: contents.source,
-          stableHandle: accounts.stableHandle,
+          attentionId: accounts.attentionId,
           summaryStatus: contents.summaryStatus,
           takedownStatus: contents.takedownStatus,
           title: contents.title,
@@ -147,8 +147,8 @@ export async function loadMyCollections(
       filters: row.filterDisplayName
         ? [
             {
+              attentionId: row.attentionId,
               displayName: row.filterDisplayName,
-              handle: row.stableHandle,
               initials: filterInitials(row.filterDisplayName),
             },
           ]
@@ -177,6 +177,7 @@ export async function loadPublicContents(
       aiSummary: publicContentsCurrent.aiSummary,
       aiTags: publicContentsCurrent.aiTags,
       author: publicContentsCurrent.author,
+      attentionId: publicContentAttributionsCurrent.attentionId,
       displayName: publicContentAttributionsCurrent.displayName,
       firstPublicAt: publicContentsCurrent.firstPublicAt,
       outboundUrl: publicContentsCurrent.outboundUrl,
@@ -197,40 +198,47 @@ export async function loadPublicContents(
       desc(publicContentsCurrent.publicId),
     );
 
-  const byContent = new Map<string, PublicContent>();
+  const byContent = new Map<
+    string,
+    { content: PublicContent; stableHandles: Set<string> }
+  >();
   for (const row of rows) {
     const key = row.publicId;
     const existing = byContent.get(key);
     const filter = {
+      attentionId: row.attentionId,
       displayName: row.displayName,
-      handle: row.stableHandle,
       initials: filterInitials(row.displayName),
     };
     if (existing) {
-      if (!existing.filters.some((item) => item.handle === filter.handle)) {
-        existing.filters.push(filter);
+      if (!existing.stableHandles.has(row.stableHandle)) {
+        existing.content.filters.push(filter);
+        existing.stableHandles.add(row.stableHandle);
       }
       continue;
     }
 
     const source = sourcePresentation(row.source, row.outboundUrl);
     byContent.set(key, {
-      author: row.author,
-      filters: [filter],
-      firstPublicAt: row.firstPublicAt.toISOString(),
-      id: row.publicId,
-      outboundHref: `/out/public/${row.publicId}`,
-      publishedAt: row.publishedAt?.toISOString().slice(0, 10) ?? null,
-      source: source.name,
-      sourceInitial: source.initial,
-      sourceTone: source.tone,
-      summary: row.aiSummary,
-      summaryStatus: uiSummaryStatus(row.summaryStatus),
-      tags: row.aiTags,
-      title: row.title ?? fallbackTitle(row.outboundUrl, source.name),
+      content: {
+        author: row.author,
+        filters: [filter],
+        firstPublicAt: row.firstPublicAt.toISOString(),
+        id: row.publicId,
+        outboundHref: `/out/public/${row.publicId}`,
+        publishedAt: row.publishedAt?.toISOString().slice(0, 10) ?? null,
+        source: source.name,
+        sourceInitial: source.initial,
+        sourceTone: source.tone,
+        summary: row.aiSummary,
+        summaryStatus: uiSummaryStatus(row.summaryStatus),
+        tags: row.aiTags,
+        title: row.title ?? fallbackTitle(row.outboundUrl, source.name),
+      },
+      stableHandles: new Set([row.stableHandle]),
     });
   }
-  return [...byContent.values()];
+  return [...byContent.values()].map(({ content }) => content);
 }
 
 /**

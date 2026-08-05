@@ -2,7 +2,7 @@ import type { NextRequest, NextResponse } from "next/server";
 import { z, ZodError } from "zod";
 
 import { mutationRequestError, noStoreJson } from "../../../../server/api-guard";
-import { updateDisplayName } from "../../../../server/account";
+import { updateAccountProfile } from "../../../../server/account";
 import { getWebDatabase } from "../../../../server/db";
 import {
   InvalidRequestBodyError,
@@ -17,12 +17,24 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_PROFILE_BODY_BYTES = 8_192;
+const MAX_PROFILE_BODY_BYTES = 512 * 1024;
+const MAX_AVATAR_DATA_URL_CHARACTERS = 384 * 1024;
 
-const bodySchema = z.object({ display_name: z.string().max(100) }).strict();
+const bodySchema = z
+  .object({
+    avatar_url: z.string().max(MAX_AVATAR_DATA_URL_CHARACTERS).nullable().optional(),
+    display_name: z.string().max(100).optional(),
+  })
+  .strict()
+  .refine(
+    (body) => body.display_name !== undefined || body.avatar_url !== undefined,
+    { message: "empty_profile_update" },
+  );
 
 export async function PATCH(request: NextRequest): Promise<NextResponse> {
-  const requestError = mutationRequestError(request);
+  const requestError = mutationRequestError(request, {
+    maxContentLengthBytes: MAX_PROFILE_BODY_BYTES,
+  });
   if (requestError) return noStoreJson({ error: { code: requestError } }, { status: 400 });
   const requestSession = await getRequestSession(request);
   if (!requestSession.principal) {
@@ -37,12 +49,20 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
     const body = bodySchema.parse(
       await readJsonRequestWithinLimit(request, MAX_PROFILE_BODY_BYTES),
     );
-    const displayName = await updateDisplayName(
+    const profile = await updateAccountProfile(
       getWebDatabase(),
       requestSession.principal.accountId,
-      body.display_name,
+      {
+        ...(body.display_name === undefined
+          ? {}
+          : { displayName: body.display_name }),
+        ...(body.avatar_url === undefined ? {} : { avatarUrl: body.avatar_url }),
+      },
     );
-    return noStoreJson({ display_name: displayName });
+    return noStoreJson({
+      avatar_url: profile.avatarUrl,
+      display_name: profile.displayName,
+    });
   } catch (error) {
     if (error instanceof RequestBodyTooLargeError) {
       return noStoreJson({ error: { code: "request_too_large" } }, { status: 413 });
@@ -52,7 +72,7 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
       error instanceof ZodError ||
       error instanceof RangeError
     ) {
-      return noStoreJson({ error: { code: "invalid_display_name" } }, { status: 400 });
+      return noStoreJson({ error: { code: "invalid_profile" } }, { status: 400 });
     }
     console.error("profile_update_failed", {
       name: error instanceof Error ? error.name : "UnknownError",

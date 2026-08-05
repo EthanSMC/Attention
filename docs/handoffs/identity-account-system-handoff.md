@@ -14,7 +14,7 @@
 - Free 私人收藏；Filter 公开收藏；Guest 登录前不接收 URL。
 - 首订三个月体验的预览、明确扣费确认和 billing adapter。
 - OAuth Authorization Code + PKCE、refresh rotation、RFC 8707 resource audience 与动态 public client 注册。
-- 命名 PAT/API Key，一次显示明文、独立撤销。
+- 单一类型的命名 API Key，一次显示明文、独立撤销；Key 不分级，实际能力随账号实时权益变化。
 - SDK 实现的 Streamable HTTP Hosted MCP、公开 Skill 和 Free/Member 动态工具集。
 - 云同步 Pull cursor 与 Push mutation；历史首次导入强制私密。
 - Hosted Channel pending request、一次性明确绑定、原请求 continuation、结果轮询和独立解绑。
@@ -35,9 +35,9 @@
 | 收藏 | `/collect` | Guest 只看到登录门；验证前 DOM 中没有 URL 输入框 |
 | 我的账号 | `/account` | 显示 handle、Free/Member 状态和设置入口 |
 | 安全设置 | `/account/settings` | 修改显示名、设置密码、继续保留验证码登录 |
-| 连接管理 | `/account/connections` | OAuth、PAT、MCP/Skill 安装信息与 Channel 解绑 |
+| 连接管理 | `/account/connections` | OAuth、API Key、MCP/Skill 安装信息与 Channel 解绑 |
 | 会员 | `/membership`、`/membership/checkout` | 展示 Free/Member 价值并在创建订阅前明确确认扣费信息 |
-| 增长权益 | `/account/rewards`、`/join/:token` | 创建 Consumer 邀请、签发/兑换 Filter 年卡、查看积分；邀请注册页不泄露 inviter |
+| 增长权益 | `/account/rewards`、`/join/:token` | 创建新用户邀请、签发/兑换 Filter 年卡、查看积分；邀请注册页不泄露 inviter |
 | Agent | `/agent` | Member 才能执行检索；Free 看到升级说明 |
 
 ## 3. 凭据边界
@@ -46,10 +46,10 @@
 
 1. Browser Session 只用于网站；Cookie 不携带会员权益，权益在每次请求实时解析。
 2. OAuth token 用于第三方客户端、Hosted MCP 与 Sync API；access/refresh 可按 client 吊销。
-3. PAT 是 OAuth 不可用时的备用；只保存哈希和前缀，可逐个吊销。
+3. API Key 是 OAuth 不可用时的备用；所有 Key 类型相同，只保存哈希和前缀，可逐个吊销。Key 不选择产品权限，服务端每次调用按账号当前 Free/Member/Filter 权益决定能力。
 4. Channel Identity 是 `provider + app_id + subject HMAC` 到账号的绑定，不是登录凭据，可单独解绑。
 
-吊销其中一种不会退出其他 Browser Session、撤销其他 PAT/OAuth client 或解除其他 Channel。
+吊销其中一种不会退出其他 Browser Session、撤销其他 API Key/OAuth client 或解除其他 Channel。
 
 ## 4. API 与发现文档
 
@@ -79,8 +79,8 @@
 
 ### Cloud 与 Channel
 
-- `POST /mcp`：OAuth/PAT Bearer；Streamable HTTP JSON response。
-- `GET|POST /api/sync`：OAuth/PAT Bearer，audience 为 `attention-sync`。
+- `POST /mcp`：OAuth/API Key Bearer；Streamable HTTP JSON response。
+- `GET|POST /api/sync`：OAuth/API Key Bearer，audience 为 `attention-sync`。
 - `POST /api/channels/messages`：仅可信 Adapter 的内部 Bearer。
 - `POST /api/channels/bind`：Browser Session 明确确认。
 - `GET /api/channels/pending/:id`：可信 Adapter 轮询 continuation 结果。
@@ -88,7 +88,7 @@
 ### 增长权益
 
 - `GET /api/account/growth`：仅返回当前账号可见的邀请、年卡与积分摘要，不返回 token/hash。
-- `POST /api/account/growth/invitations`：eligible Consumer 创建或替换邀请链接。
+- `POST /api/account/growth/invitations`：active 注册账号（包括 Filter）创建或替换新用户邀请链接。
 - `POST /api/account/growth/filter-codes`：当前有效 Filter 签发年卡原文。
 - `POST /api/account/growth/filter-codes/redeem`：登录账号兑换单次年卡。
 - `POST /api/auth/email/start` 可携带 `consumer_invite_token`，但只允许尚未存在的新邮箱把 referral intent 带入 OTP 注册事务。
@@ -101,8 +101,8 @@
 | 打开当前可见原文 | 是 | 是 | 是 | 是 |
 | 私人云收藏/同步 | 否 | 是 | 是 | 是 |
 | 公开收藏 | 否 | 否 | 否 | 是 |
-| 基础个人 MCP | 否 | 是 | 是 | 是 |
-| Agent / 高级 MCP | 否 | 否 | 是 | 是 |
+| 个人收藏 MCP | 否 | 是 | 是 | 是 |
+| Agent / Member 专属 MCP 能力 | 否 | 否 | 是 | 是 |
 | Hosted Channel | 否 | 否 | 是 | 是 |
 
 `PUBLIC_FEED_PREVIEW_LIMIT` 默认 20，所有网页、原文跳转和 MCP 公共读取都由服务端执行边界。未来新增标签、搜索或 Filter 主页时必须复用同一权限服务，不能只做前端遮罩。
@@ -120,7 +120,8 @@
 
 本地可演示 adapter 不等于生产供应商已经接入：
 
-- 邮件：`ATTENTION_EMAIL_PROVIDER=webhook` 与 `ATTENTION_EMAIL_WEBHOOK_URL/TOKEN`。登录验证码与日报复用 adapter；日报使用 `attention-daily-digest-v1` 模板和 delivery UUID 幂等键，供应商需返回可选的 `message_id` 并保证重复请求不重复投递。
+- 邮件登录：Web 可配置 `ATTENTION_EMAIL_PROVIDER=resend`，并从 secret store 注入 `RESEND_API_KEY`、`ATTENTION_RESEND_FROM`、`ATTENTION_RESEND_TEMPLATE_ID`。建议模板 alias 为 `login-code-attention`，注册、登录、重新验证和密码重设验证共用同一中性文案，只包含 `verification_code` 与 `valid_minutes`；当前 TTL 为 10 分钟。现有 `welcome-email-attention` 与 `password-reset-attention` 不得按账号是否存在分别发送，以免形成账号枚举侧信道。模板源文件见 [`../email-login-code-template.html`](../email-login-code-template.html)。
+- 邮件兼容与日报：登录 OTP 仍保留 `console`（仅开发）和 `webhook` provider。Resend-only staging 必须设置 `ATTENTION_DIGEST_WORKER_ENABLED=false`，webhook URL/token 可以留空；启用日报时必须补齐两项 webhook 凭据，否则 Worker 启动时 fail closed。Worker 日报继续使用 webhook adapter、`attention-daily-digest-v1` 模板和 delivery UUID 幂等键，供应商需返回可选的 `message_id` 并保证重复请求不重复投递。
 - 支付：`ATTENTION_BILLING_PROVIDER=webhook` 与 checkout webhook；生产禁用 demo provider。首订、已结算续费、退款和拒付账本已有 provider-neutral 服务合同，但仍需真实支付商的验签 webhook 和对账层调用，仓库没有假装某一支付商已联调。
 - 微信：需要官方账号资质、签名/消息加密、回调和回复 Adapter；内部 Channel 合同与账号绑定已经可用。
 - Secrets：HMAC、Auth、Channel 和 Adapter secret 必须分别配置，不能硬编码或复用短密钥。
@@ -151,4 +152,4 @@ TEST_DATABASE_URL=postgresql:///attention_test pnpm test
 pnpm --filter @attention/web build
 ```
 
-数据库测试会迁移并清空 `TEST_DATABASE_URL`，不得指向开发或生产数据库。当前端到端演示已验证：Guest 收藏门、邮箱验证码自动创建 Free、return intent、随机 handle、Free Agent 升级门、PAT 创建/撤销，以及撤销后 Hosted MCP 返回 401。
+数据库测试会迁移并清空 `TEST_DATABASE_URL`，不得指向开发或生产数据库。当前端到端演示已验证：Guest 收藏门、邮箱验证码自动创建 Free、return intent、随机 handle、Free Agent 升级门、API Key 创建/撤销，以及撤销后 Hosted MCP 返回 401。

@@ -55,7 +55,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const response = noStoreJson({
       account: {
         display_name: result.displayName,
-        stable_handle: result.stableHandle,
       },
       redirect_to: result.returnTo,
     });

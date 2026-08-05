@@ -27,6 +27,19 @@ export interface StartedCheckout {
   redirectTo: string;
 }
 
+export type CurrentSubscriptionStatus =
+  | "trialing"
+  | "active"
+  | "past_due"
+  | "cancelled"
+  | "expired";
+
+export interface CurrentSubscription {
+  cancelAtPeriodEnd: boolean;
+  currentPeriodEnd: Date;
+  status: CurrentSubscriptionStatus;
+}
+
 export interface BillingProvider {
   startSubscription(input: {
     accountId: string;
@@ -44,6 +57,36 @@ export function addCalendarMonths(value: Date, months: number): Date {
   ).getUTCDate();
   result.setUTCDate(Math.min(originalDay, lastDay));
   return result;
+}
+
+export async function loadCurrentSubscription(
+  db: AttentionDatabase,
+  accountId: string,
+  now = new Date(),
+): Promise<CurrentSubscription | null> {
+  const [subscription] = await db
+    .select({
+      cancelAtPeriodEnd: subscriptions.cancelAtPeriodEnd,
+      currentPeriodEnd: subscriptions.currentPeriodEnd,
+      status: subscriptions.status,
+    })
+    .from(subscriptions)
+    .where(
+      and(
+        eq(subscriptions.accountId, accountId),
+        gt(subscriptions.currentPeriodEnd, now),
+        inArray(subscriptions.status, [
+          "trialing",
+          "active",
+          "past_due",
+          "cancelled",
+        ]),
+      ),
+    )
+    .orderBy(desc(subscriptions.currentPeriodEnd))
+    .limit(1);
+
+  return subscription ?? null;
 }
 
 export async function subscriptionPreview(

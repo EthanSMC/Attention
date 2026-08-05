@@ -170,7 +170,7 @@ export function EmailLoginForm({
         />
         {error ? <p aria-live="polite" className="field-error">{error}</p> : null}
         <button className="button button--primary" disabled={busy} type="submit">
-          {busy ? "正在登录…" : "使用密码登录"}
+          {busy ? "正在登录…" : "登录"}
         </button>
         <button
           className="text-button auth-form__secondary"
@@ -183,7 +183,7 @@ export function EmailLoginForm({
           使用邮箱验证码
         </button>
         <a className="auth-form__secondary" href="/login?return_to=%2Faccount%2Fsettings">
-          忘记密码？验证邮箱后重设
+          忘记密码？
         </a>
       </form>
     );

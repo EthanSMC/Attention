@@ -204,7 +204,10 @@ export const accounts = pgTable(
     emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
     passwordHash: text("password_hash"),
     stableHandle: varchar("stable_handle", { length: 64 }).notNull(),
+    attentionId: varchar("attention_id", { length: 20 }),
+    attentionIdChangedAt: timestamp("attention_id_changed_at", { withTimezone: true }),
     displayName: varchar("display_name", { length: 100 }).default("用户").notNull(),
+    avatarUrl: text("avatar_url"),
     signupSource: signupSourceEnum("signup_source").default("direct").notNull(),
     directTrialConsumedAt: timestamp("direct_trial_consumed_at", { withTimezone: true }),
     directTrialSourceEventKey: varchar("direct_trial_source_event_key", { length: 320 }),
@@ -217,6 +220,9 @@ export const accounts = pgTable(
   (table) => [
     uniqueIndex("accounts_primary_email_unique").on(table.primaryEmail),
     uniqueIndex("accounts_stable_handle_unique").on(table.stableHandle),
+    uniqueIndex("accounts_attention_id_unique")
+      .on(table.attentionId)
+      .where(sql`${table.attentionId} IS NOT NULL`),
     uniqueIndex("accounts_direct_trial_source_event_unique").on(
       table.directTrialSourceEventKey
     ),
@@ -225,6 +231,14 @@ export const accounts = pgTable(
       sql`${table.primaryEmail} IS NULL OR ${table.emailVerifiedAt} IS NOT NULL`
     ),
     check("accounts_stable_handle_not_blank", sql`btrim(${table.stableHandle}) <> ''`),
+    check(
+      "accounts_attention_id_format",
+      sql`${table.attentionId} IS NULL OR ${table.attentionId} ~ '^[a-z][a-z0-9_-]{5,19}$'`,
+    ),
+    check(
+      "accounts_attention_id_change_shape",
+      sql`(${table.attentionId} IS NULL AND ${table.attentionIdChangedAt} IS NULL) OR (${table.attentionId} IS NOT NULL AND ${table.attentionIdChangedAt} IS NOT NULL)`,
+    ),
     check(
       "accounts_direct_trial_consumption_shape",
       sql`(${table.directTrialConsumedAt} IS NULL AND ${table.directTrialSourceEventKey} IS NULL) OR (${table.directTrialConsumedAt} IS NOT NULL AND ${table.directTrialSourceEventKey} IS NOT NULL)`
@@ -303,7 +317,7 @@ export const consumerReferrals = pgTable(
       uniqueIndex("consumer_referrals_active_inviter_unique")
         .on(table.inviterAccountId)
         .where(sql`${table.status} = 'active'`),
-      uniqueIndex("consumer_referrals_successful_inviter_unique")
+      index("consumer_referrals_successful_inviter_idx")
         .on(table.inviterAccountId)
         .where(sql`${table.status} = 'redeemed'`),
       uniqueIndex("consumer_referrals_successful_invitee_unique")
@@ -1879,7 +1893,8 @@ export const publicContentAttributionsCurrent = pgView(
     avatarUrl: text("avatar_url"),
     contentId: uuid("content_id").notNull(),
     displayName: varchar("display_name", { length: 100 }).notNull(),
-    stableHandle: varchar("stable_handle", { length: 64 }).notNull()
+    stableHandle: varchar("stable_handle", { length: 64 }).notNull(),
+    attentionId: varchar("attention_id", { length: 20 })
   }
 )
   .with({ securityBarrier: true })
@@ -1888,7 +1903,8 @@ export const publicContentAttributionsCurrent = pgView(
       col.content_id,
       a.stable_handle,
       fp.display_name,
-      fp.avatar_url
+      fp.avatar_url,
+      a.attention_id
     FROM collections col
     JOIN public_contents_current pc ON pc.id = col.content_id
     JOIN filter_profiles fp ON fp.account_id = col.account_id

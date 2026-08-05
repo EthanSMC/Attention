@@ -1,6 +1,7 @@
 node_modules/
 .next/
 .playwright-cli/
+**/.impeccable/
 dist/
 coverage/
 playwright-report/
@@ -14,4 +15,7 @@ deliverables/
 !.env.example
 *.log
 *.tsbuildinfo
+__pycache__/
+*.py[cod]
+compose.env
 .DS_Store

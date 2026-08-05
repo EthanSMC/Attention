@@ -19,9 +19,25 @@ export interface ContentPreview {
 }
 
 export interface PublicFilter {
-  handle: string;
+  attentionId: string | null;
   displayName: string;
   initials: string;
+}
+
+export function accountIdentityLabel(input: {
+  attentionId: string | null;
+  displayName: string;
+  primaryEmail: string | null;
+}): string {
+  const fallback =
+    input.displayName.trim() || input.primaryEmail?.trim() || "当前账号";
+  return input.attentionId ? `${fallback} (@${input.attentionId})` : fallback;
+}
+
+export function publicCollectorLabel(
+  filter: Pick<PublicFilter, "attentionId" | "displayName">,
+): string {
+  return filter.attentionId ? `@${filter.attentionId}` : filter.displayName;
 }
 
 export interface PublicContent {

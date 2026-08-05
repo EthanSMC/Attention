@@ -69,7 +69,6 @@ export interface VerifiedEmailLogin {
   email: string;
   returnTo: string;
   session: IssuedSession;
-  stableHandle: string;
 }
 
 function authSecret(): string {
@@ -140,7 +139,7 @@ async function createAccount(
   email: string,
   now: Date,
   signupSource: "consumer_referral" | "direct",
-): Promise<{ id: string; displayName: string; stableHandle: string }> {
+): Promise<{ id: string; displayName: string }> {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const identity = randomHandle();
     const [account] = await db
@@ -162,7 +161,6 @@ async function createAccount(
       .returning({
         displayName: accounts.displayName,
         id: accounts.id,
-        stableHandle: accounts.stableHandle,
       });
     if (account) return account;
   }
@@ -330,7 +328,6 @@ export async function verifyLoginChallenge(
       .select({
         displayName: accounts.displayName,
         id: accounts.id,
-        stableHandle: accounts.stableHandle,
         status: accounts.status,
       })
       .from(accounts)
@@ -396,7 +393,6 @@ export async function verifyLoginChallenge(
         sessionId: session.id,
         token: sessionToken,
       },
-      stableHandle: account.stableHandle,
     };
     }).catch((error: unknown) => {
     if (

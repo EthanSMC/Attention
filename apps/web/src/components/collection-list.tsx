@@ -8,20 +8,19 @@ import type {
   Visibility,
 } from "../lib/attention";
 import { httpCollectAdapter } from "../lib/http-attention";
-import { ArrowUpRightIcon } from "./icons";
-import {
-  EnrichmentBadge,
-  SourceSignal,
-  VisibilityBadge,
-} from "./signal-elements";
+import { ContentCardBody, ContentTagStrip } from "./content-card";
+import { GlobeIcon, LockIcon, WarningIcon } from "./icons";
+import { MasonryGrid } from "./masonry-grid";
+import { VisibilityBadge } from "./signal-elements";
+import { ViewSwitcher, type ViewMode } from "./view-switcher";
 
-type CollectionFilter = "all" | "public" | "private" | "processing";
+type CollectionFilter = "all" | "public" | "private";
+type CollectionView = ViewMode;
 
 const filterLabels: Record<CollectionFilter, string> = {
   all: "全部",
   public: "公开",
   private: "私密",
-  processing: "摘要待处理",
 };
 
 const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
@@ -33,39 +32,72 @@ const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
   timeZone: "Asia/Shanghai",
 });
 
-function effectiveVisibilityAfterChange(visibility: Visibility): EffectiveVisibility {
+function effectiveVisibilityAfterChange(
+  visibility: Visibility,
+): EffectiveVisibility {
   return visibility;
 }
 
-function visibilityHelp(item: CollectionItem, allowPublic: boolean) {
-  if (item.effectiveVisibility === "paused") {
-    return allowPublic
-      ? "这条收藏仍保持暂停；重新公开后才会回到公共入口，也可以直接改为私密。"
-      : "Filter 权限已暂停。这条收藏不会出现在公共入口；现在可以改为私密，恢复权限后仍需本人重新公开。";
+function visibilityAction(item: CollectionItem, allowPublic: boolean) {
+  if (allowPublic) {
+    if (item.effectiveVisibility === "public") {
+      return {
+        ariaLabel: "当前公开，点击改为私密",
+        visibility: "private" as const,
+      };
+    }
+
+    if (item.effectiveVisibility === "private") {
+      return {
+        ariaLabel: "当前私密，点击公开收藏",
+        visibility: "public" as const,
+      };
+    }
+
+    if (item.effectiveVisibility === "paused") {
+      return {
+        ariaLabel: "公开已暂停，点击重新公开",
+        visibility: "public" as const,
+      };
+    }
   }
 
-  if (item.effectiveVisibility === "blocked") {
-    return "该收藏已被管理员阻断，不会出现在公共入口，也不能通过重发或切换绕过。";
+  if (!allowPublic && item.effectiveVisibility === "paused") {
+    return {
+      ariaLabel: "公开已暂停，点击改为私密",
+      visibility: "private" as const,
+    };
   }
 
-  return item.visibility === "public"
-    ? "会出现在 AI 公开流；改为私密后停止未来公开曝光。"
-    : "只在你的收藏中出现，不进入公共标签或 MCP 计数。";
+  return null;
+}
+
+function visibilityControl(item: CollectionItem) {
+  const config = {
+    blocked: { icon: WarningIcon, label: "已阻断" },
+    paused: { icon: WarningIcon, label: "已暂停" },
+    private: { icon: LockIcon, label: "私密" },
+    public: { icon: GlobeIcon, label: "公开" },
+  } as const;
+  return config[item.effectiveVisibility];
 }
 
 function CollectionCard({
   allowPublic,
+  display,
   item,
   onVisibilityChange,
 }: {
   allowPublic: boolean;
+  display: CollectionView;
   item: CollectionItem;
   onVisibilityChange: (id: string, visibility: Visibility) => Promise<void>;
 }) {
   const [saving, setSaving] = useState(false);
   const immutable = item.effectiveVisibility === "blocked";
-  const canRestorePublication =
-    allowPublic && item.effectiveVisibility === "paused";
+  const action = visibilityAction(item, allowPublic);
+  const control = visibilityControl(item);
+  const VisibilityIcon = control.icon;
 
   async function changeVisibility(visibility: Visibility) {
     const restoringPublication =
@@ -86,109 +118,52 @@ function CollectionCard({
   }
 
   return (
-    <article className="collection-card">
-      <SourceSignal
-        initial={item.sourceInitial}
-        source={item.source}
-        tone={item.sourceTone}
-      />
-      <div className="collection-card__body">
-        <div className="collection-card__statuses">
-          <VisibilityBadge effectiveVisibility={item.effectiveVisibility} />
-          <EnrichmentBadge status={item.summaryStatus} />
-        </div>
+    <article
+      className={`content-card content-card--${display === "cards" ? "card" : "list"} collection-card`}
+    >
+      <ContentCardBody collectedAt={item.collectedAt} content={item} />
+      <footer className="content-card__footer collection-card__footer">
+        <ContentTagStrip
+          showCapability={false}
+          tags={item.tags}
+          title={item.title}
+        />
 
-        <p className="collection-card__source">
-          {item.source}
-          {item.author ? <span> · {item.author}</span> : null}
-        </p>
-        <h2>
-          {item.outboundHref ? (
-            <a href={item.outboundHref} rel="noopener noreferrer" target="_blank">
-              {item.title}
-            </a>
+        <div className="collection-card__owner-meta">
+          {action ? (
+            <button
+              aria-busy={saving}
+              aria-label={
+                saving ? `${action.ariaLabel}，正在保存` : action.ariaLabel
+              }
+              aria-pressed={
+                item.effectiveVisibility === "public"
+                  ? true
+                  : item.effectiveVisibility === "private"
+                    ? false
+                    : undefined
+              }
+              className={`visibility-toggle visibility-toggle--${item.effectiveVisibility}`}
+              disabled={saving}
+              onClick={() => void changeVisibility(action.visibility)}
+              type="button"
+            >
+              <span aria-hidden="true" className="visibility-toggle__track">
+                <span className="visibility-toggle__thumb" />
+              </span>
+              <span className="visibility-toggle__label">
+                <VisibilityIcon />
+                {saving ? "保存中" : control.label}
+              </span>
+            </button>
           ) : (
-            item.title
+            <VisibilityBadge effectiveVisibility={item.effectiveVisibility} />
           )}
-        </h2>
-
-        <section aria-label="AI 生成摘要" className="ai-summary ai-summary--compact">
-          <span className="ai-summary__compact-label">AI 摘要</span>
-          {item.summaryStatus === "ready" && item.summary ? <p>{item.summary}</p> : null}
-          {item.summaryStatus === "processing" ? (
-            <p className="summary-placeholder">AI 摘要尚未就绪，链接已经保存。</p>
-          ) : null}
-          {item.summaryStatus === "unavailable" ? (
-            <p className="summary-placeholder">
-              {item.outboundHref
-                ? "当前没有可用的 AI 摘要，仍可查看原文。"
-                : "当前没有可用的 AI 摘要。"}
-            </p>
-          ) : null}
-        </section>
-
-        <div className="collection-card__meta">
           <time dateTime={item.collectedAt}>
             收藏于 {dateTimeFormatter.format(new Date(item.collectedAt))}
           </time>
-          {item.outboundHref ? (
-            <a
-              className="text-link"
-              href={item.outboundHref}
-              rel="noopener noreferrer"
-              target="_blank"
-            >
-              查看原文
-              <ArrowUpRightIcon />
-            </a>
-          ) : (
-            <span className="outbound-unavailable">原文当前不可访问</span>
-          )}
         </div>
-
-        <details className="visibility-details">
-          <summary>公开设置</summary>
-          <fieldset aria-describedby={`visibility-help-${item.id}`} disabled={saving || immutable}>
-            <legend className="sr-only">更改“{item.title}”的公开状态</legend>
-            {allowPublic ? (
-              <label>
-                <input
-                  checked={item.visibility === "public"}
-                  name={`visibility-${item.id}`}
-                  onChange={() => void changeVisibility("public")}
-                  type="radio"
-                  value="public"
-                />
-                <span>公开</span>
-              </label>
-            ) : null}
-            <label>
-              <input
-                checked={item.visibility === "private"}
-                name={`visibility-${item.id}`}
-                onChange={() => void changeVisibility("private")}
-                type="radio"
-                value="private"
-              />
-              <span>私密</span>
-            </label>
-          </fieldset>
-          {canRestorePublication ? (
-            <button
-              className="button button--secondary button--compact visibility-restore"
-              disabled={saving}
-              onClick={() => void changeVisibility("public")}
-              type="button"
-            >
-              {saving ? "正在重新公开…" : "重新公开"}
-            </button>
-          ) : null}
-          <p className="visibility-details__help" id={`visibility-help-${item.id}`}>
-            {visibilityHelp(item, allowPublic)}
-          </p>
-          {saving ? <p aria-live="polite" className="saving-note">正在保存公开设置…</p> : null}
-        </details>
-      </div>
+      </footer>
     </article>
   );
 }
@@ -202,13 +177,11 @@ export function CollectionList({
 }) {
   const [items, setItems] = useState(initialItems);
   const [filter, setFilter] = useState<CollectionFilter>("all");
+  const [view, setView] = useState<CollectionView>("cards");
   const [announcement, setAnnouncement] = useState("");
 
   const filteredItems = useMemo(() => {
     if (filter === "all") return items;
-    if (filter === "processing") {
-      return items.filter((item) => item.summaryStatus === "processing");
-    }
     return items.filter((item) => item.effectiveVisibility === filter);
   }, [filter, items]);
 
@@ -235,21 +208,30 @@ export function CollectionList({
   return (
     <section aria-labelledby="collection-list-title" className="collection-list">
       <div className="collection-toolbar">
-        <div>
-          <h2 id="collection-list-title">收藏列表</h2>
-          <p>{items.length} 条有效收藏</p>
+        <div className="collection-toolbar__copy">
+          <h2 id="collection-list-title">收藏</h2>
+          <p>
+            {filteredItems.length} / {items.length} 条
+          </p>
         </div>
-        <div aria-label="筛选收藏" className="filter-tabs" role="group">
-          {(Object.keys(filterLabels) as CollectionFilter[]).map((value) => (
-            <button
-              aria-pressed={filter === value}
-              key={value}
-              onClick={() => setFilter(value)}
-              type="button"
-            >
-              {filterLabels[value]}
-            </button>
-          ))}
+        <div className="collection-toolbar__controls">
+          <div aria-label="筛选收藏" className="filter-tabs" role="group">
+            {(Object.keys(filterLabels) as CollectionFilter[]).map((value) => (
+              <button
+                aria-pressed={filter === value}
+                key={value}
+                onClick={() => setFilter(value)}
+                type="button"
+              >
+                {filterLabels[value]}
+              </button>
+            ))}
+          </div>
+          <ViewSwitcher
+            ariaLabel="收藏显示方式"
+            onChange={setView}
+            value={view}
+          />
         </div>
       </div>
 
@@ -258,16 +240,33 @@ export function CollectionList({
       </p>
 
       {filteredItems.length > 0 ? (
-        <div className="collection-list__items">
-          {filteredItems.map((item) => (
-            <CollectionCard
-              allowPublic={allowPublic}
-              item={item}
-              key={item.id}
-              onVisibilityChange={updateVisibility}
-            />
-          ))}
-        </div>
+        view === "cards" ? (
+          <MasonryGrid>
+            {filteredItems.map((item) => (
+              <div className="masonry-feed__item" key={item.id} role="listitem">
+                <CollectionCard
+                  allowPublic={allowPublic}
+                  display={view}
+                  item={item}
+                  onVisibilityChange={updateVisibility}
+                />
+              </div>
+            ))}
+          </MasonryGrid>
+        ) : (
+          <div className="content-list collection-content-list" role="list">
+            {filteredItems.map((item) => (
+              <div className="content-list__item" key={item.id} role="listitem">
+                <CollectionCard
+                  allowPublic={allowPublic}
+                  display={view}
+                  item={item}
+                  onVisibilityChange={updateVisibility}
+                />
+              </div>
+            ))}
+          </div>
+        )
       ) : (
         <div className="empty-state">
           <span aria-hidden="true" className="empty-state__signal" />

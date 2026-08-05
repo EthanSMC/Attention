@@ -190,7 +190,7 @@ function CollectReceipt({
               {busy ? "正在保存…" : isPublic ? "改为私密" : "重新公开"}
             </button>
           ) : null}
-          <Link className="text-link" href="/mine">
+          <Link className="text-link" href="/account#collections">
             查看我的收藏
             <ArrowUpRightIcon />
           </Link>
@@ -226,7 +226,7 @@ function CollectReceipt({
               {busy ? "正在保存…" : isPublic ? "改为私密" : "重新公开"}
             </button>
           ) : null}
-          <Link className="text-link" href="/mine">
+          <Link className="text-link" href="/account#collections">
             查看我的收藏
             <ArrowUpRightIcon />
           </Link>

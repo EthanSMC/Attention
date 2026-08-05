@@ -1,8 +1,8 @@
 # Attention
 
-Attention 是一个“人筛选，AI 整理”的收藏与公开信息层。当前仓库已经形成账号体系首版：Guest 公开预览、邮箱验证码注册/登录、Free 私人收藏、Member 权益门、网页 Agent、OAuth + PKCE、PAT、Hosted MCP、云同步、Hosted Channel 绑定、Consumer 裂变、Filter 年卡兑换和续费积分账本都执行真实的服务端身份与权限判断。生产支付与微信供应商仍未联调，仓库中的 provider-neutral 合同和本地 adapter 不能被当成已经上线的供应商能力。
+Attention 是一个“人筛选，AI 整理”的收藏与公开信息层。当前仓库已经形成账号体系首版：Guest 公开预览、邮箱验证码注册/登录、Free 私人收藏、Member 权益门、网页 Agent、OAuth + PKCE、API Key、Hosted MCP、云同步、Hosted Channel 绑定、Consumer 裂变、Filter 年卡兑换和续费积分账本都执行真实的服务端身份与权限判断。生产支付与微信供应商仍未联调，仓库中的 provider-neutral 合同和本地 adapter 不能被当成已经上线的供应商能力。
 
-系统架构、微信统一 Agent 数据流与 Attention MCP 见 [`docs/architecture.md`](docs/architecture.md)。当前账号、Free/Member、OAuth、云同步、Channel 和增长机制的产品决策见 [`docs/superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md`](docs/superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md)。
+系统架构、微信统一 Agent 数据流与 Attention MCP 见 [`docs/architecture.md`](docs/architecture.md)。当前账号、Free/Member、OAuth、云同步、Channel 和增长机制的产品决策见 [`docs/superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md`](docs/superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md)。Web 视觉 token、组件和交互规则见 [`docs/design-system.md`](docs/design-system.md)；机器可读设计基线见 [`DESIGN.md`](DESIGN.md)，产品上下文见 [`PRODUCT.md`](PRODUCT.md)，设置页审查见 [`docs/settings-design-audit.md`](docs/settings-design-audit.md)。
 
 通用容器、Compose、数据库角色、HTTPS 反代、环境变量和 CI 基线见 [`docs/deployment.md`](docs/deployment.md)。这些文件是可移植部署起点，不表示仓库或外部供应商已经上线。
 
@@ -17,25 +17,26 @@ Attention 是一个“人筛选，AI 整理”的收藏与公开信息层。当�
 - Free 可不限量私密收藏和云同步；Filter 默认公开收藏。公开可见性仍只能由 Filter 产生。
 - 同一用户重复收藏不会制造重复记录，也不会偷偷改变原可见性。
 - 收藏后立即可在“我的收藏”查看；公开内容按首次公开时间出现在 AI 公开流。
-- Member 解锁完整公开流、网页 Agent、托管 AI 检索、高级 MCP 和 Hosted Channel；所有公共表面都使用相同服务端权益边界。
-- OAuth Authorization Code + PKCE 是 CLI、第三方 Agent、Sync API 与 Hosted MCP 的推荐连接方式；PAT 仅作为不支持浏览器 OAuth 的备用。
-- 微信等 Hosted Channel 使用一次性绑定链接，明确显示目标 `@handle`；Channel、OAuth、PAT 与网站 Session 可分别吊销。
+- Member 解锁完整公开流、网页 Agent、托管 AI 检索、Member 专属 MCP 能力和 Hosted Channel；所有公共表面都使用相同服务端权益边界。
+- OAuth Authorization Code + PKCE 是 CLI、第三方 Agent、Sync API 与 Hosted MCP 的推荐连接方式；API Key 仅作为不支持浏览器 OAuth 的备用。API Key 只有一种，实际能力始终跟随账号当前权益。
+- 微信等 Hosted Channel 使用一次性绑定链接，明确显示目标账号及已设置的 Attention ID；Channel、OAuth、API Key 与网站 Session 可分别吊销。
 - “查看原文”统一经过受控跳转，并在跳转时重新检查 owner、公开资格、风控与下架状态。
 - 登录用户可以举报公开内容；两个不同 Consumer 或一个当前有效 Filter 会立即触发复核并从所有公共出口隐藏。有效 Filter 在 `/account/court` 一人一票，票一经投出不可更改。
-- `/account/rewards` 提供 Consumer 邀请、Filter 年卡签发/兑换和按币种积分账本；邀请与兑换原文只展示一次，数据库只存哈希，grant 会在既有权益后按日历月顺延。
+- `/account/rewards` 提供新用户邀请（内部 Consumer referral）、Filter 年卡签发/兑换和按币种积分账本；邀请与兑换原文只展示一次，数据库只存哈希，grant 会在既有权益后按日历月顺延。
 - 原始分享文案不落库，只保留 HMAC、被选中的安全 URL 和必要审计信息。
 
 微信入口的内部 Channel 合同、账号绑定与 pending continuation 已实现；独立 Adapter 已覆盖服务器验证、明文/安全模式回调、消息 AES、被动回复、客服消息 provider 和 access token 缓存。代码尚未在持有相应资质的真实公众号后台完成联调，生产前置条件见下方说明和 [`docs/handoffs/wechat-adapter-handoff.md`](docs/handoffs/wechat-adapter-handoff.md)。
 
 ## 本地运行
 
-需要 Node.js 24、pnpm 11 和 PostgreSQL 16。
+需要 Node.js 24、pnpm 11 和 PostgreSQL 17。
 
 ```bash
 cp .env.example .env.local
-createdb attention_dev
+createuser attention_migration_owner
+createdb --owner=attention_migration_owner attention_dev
 pnpm install
-MIGRATION_DATABASE_URL=postgresql:///attention_dev pnpm db:migrate
+MIGRATION_DATABASE_URL=postgresql://attention_migration_owner@localhost/attention_dev pnpm db:migrate
 ```
 
 至少设置以下值（开发密钥也必须达到 32 个字符）：
@@ -75,7 +76,7 @@ pnpm dev:wechat
 
 当前 Worker 默认完成确定性元数据整理；未设置 `ATTENTION_AI_MODEL` 时，摘要会进入明确的 unavailable 状态，网页 Agent 使用关键词检索降级。配置 `ATTENTION_AI_MODEL`、可选的 `ATTENTION_AI_BASE_URL` 和 `ATTENTION_AI_API_KEY` 后，Worker 会通过隔离 Fetcher 临时读取受限页面内容并生成摘要/标签，网页 Agent 会基于当前账号可访问的引用生成回答。原文正文不会写入数据库，供应商失败也不会伪装成生成成功。
 
-本地验证码与 Domain 日报可使用 `ATTENTION_EMAIL_PROVIDER=console`；只有非生产环境设置 `ATTENTION_AUTH_EXPOSE_OTP=true` 时，页面才会显示开发验证码。生产邮件通过同一个 webhook adapter 接入：日报请求使用 `template=attention-daily-digest-v1`，并以 delivery UUID 同时填充 `message_id` 与 `Idempotency-Key`。供应商必须按该键去重重试；仓库不包含供应商密钥。
+本地验证码与 Domain 日报可使用 `ATTENTION_EMAIL_PROVIDER=console`；只有非生产环境设置 `ATTENTION_AUTH_EXPOSE_OTP=true` 时，页面才会显示开发验证码。生产 Web 登录验证码可使用原生 Resend 或 webhook provider；Worker 日报目前仍只使用 webhook adapter。日报请求使用 `template=attention-daily-digest-v1`，并以 delivery UUID 同时填充 `message_id` 与 `Idempotency-Key`。供应商必须按该键去重重试；仓库不包含供应商密钥。
 
 Member 与 Filter 可在 `/account/digests` 订阅 Domain 并设置 IANA 时区、发送开始时间和窗口长度。Worker 每天选择账号当地日期的前一日新增内容；无新增不发。真正调用邮件 adapter 前会重新检查当前 Member/Filter 权益、退订状态、Domain/Filter/Collection 公开资格、摘要隐藏状态和条目快照的 `visibility_version`。第一版只种子化 AI Domain，表结构支持后续增加独立 Domain。
 
@@ -90,7 +91,7 @@ codex mcp add attention --url http://127.0.0.1:3000/mcp
 claude mcp add --transport http --scope user attention http://127.0.0.1:3000/mcp
 ```
 
-公开 Skill 位于 `/skills/attention/SKILL.md`，不会嵌入 token。`/mcp` 与 `/api/sync` 只接受 OAuth/PAT Bearer credential；网站 Cookie 不能冒充 Agent credential。OAuth 客户端必须按 RFC 8707 在授权请求和 token 请求（包括刷新）中发送同一个 `resource`：MCP 使用 `ATTENTION_MCP_PUBLIC_URL`（默认 `${NEXT_PUBLIC_APP_URL}/mcp`），同步使用 `ATTENTION_SYNC_PUBLIC_URL`（默认 `${NEXT_PUBLIC_APP_URL}/api/sync`）。两个 resource 的 token 不能交叉使用。首次本地历史同步必须标记 `historical=true`，服务端会强制作为私密收藏导入。
+公开 Skill 位于 `/skills/attention/SKILL.md`，不会嵌入 token。`/mcp` 与 `/api/sync` 只接受 OAuth/API Key Bearer credential；网站 Cookie 不能冒充 Agent credential。OAuth 客户端必须按 RFC 8707 在授权请求和 token 请求（包括刷新）中发送同一个 `resource`：MCP 使用 `ATTENTION_MCP_PUBLIC_URL`（默认 `${NEXT_PUBLIC_APP_URL}/mcp`），同步使用 `ATTENTION_SYNC_PUBLIC_URL`（默认 `${NEXT_PUBLIC_APP_URL}/api/sync`）。两个 resource 的 token 不能交叉使用。首次本地历史同步必须标记 `historical=true`，服务端会强制作为私密收藏导入。
 
 公开 Tool Contract 当前为 `1.0.0`：包含收藏、候选选择、处理状态、个人列表、可见性修改、公开流和 Member 搜索 7 个工具。收藏调用必须提供由客户端生成并在重试间复用的 `idempotency_key`；一次性候选选择明确标记为非幂等。工具调用审计只记录受限的版本、耗时、稳定状态和 HMAC 工作流指纹，不记录 URL、query、分享文本、正文、token 或一次性凭证。
 
@@ -103,7 +104,7 @@ pnpm --filter @attention/worker start
 
 ## 创建邀请
 
-> 以下命令只描述 legacy Filter/admin invitation。正式 Consumer 邀请、Filter 年卡兑换和日常登录已经使用相互独立的凭据与账本，不能复用这里的 invitation。
+> 以下命令只描述 legacy Filter/admin invitation。正式新用户邀请（内部 Consumer referral）、Filter 年卡兑换和日常登录已经使用相互独立的凭据与账本，不能复用这里的 invitation。
 
 Filter 邀请：
 
@@ -125,13 +126,16 @@ Legacy member invitation 把 `--kind filter` 改成 `--kind member`，并移除 
 
 ```dotenv
 MIGRATION_DATABASE_URL=postgresql://attention_migration_owner:...@db/attention
+ATTENTION_MIGRATION_DATABASE_ROLE=attention_migration_owner
+ATTENTION_MIGRATION_DATABASE_HOST=db
+ATTENTION_MIGRATION_DATABASE_NAME=attention
 DATABASE_URL=postgresql://attention_web_runtime:...@db/attention
 WORKER_DATABASE_URL=postgresql://attention_worker_runtime:...@db/attention
 ATTENTION_WEB_DATABASE_ROLE=attention_web_runtime
 ATTENTION_WORKER_DATABASE_ROLE=attention_worker_runtime
 ```
 
-Web 和 Worker 在生产模式会拒绝使用角色名不匹配的 DSN。不要把 migration owner 的连接串交给应用进程；owner 会绕过 PostgreSQL RLS。
+生产和 staging 迁移必须显式设置 `MIGRATION_DATABASE_URL`，不会回退到 runtime `DATABASE_URL`。迁移在执行前同时核对 URL 与实际连接的角色、数据库和 PostgreSQL 17，并持有进程级 advisory lock；已有迁移运行时会立即失败。Web 和 Worker 在生产模式会拒绝使用角色名不匹配的 DSN。不要把 migration owner 的连接串交给应用进程；owner 会绕过 PostgreSQL RLS。
 
 ## 验证
 

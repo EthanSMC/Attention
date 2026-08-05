@@ -15,7 +15,6 @@ interface PatConnection {
   id: string;
   keyPrefix: string;
   name: string;
-  scopes: string[];
   status: "active" | "revoked";
 }
 
@@ -61,16 +60,14 @@ export function ConnectionManager({
     setMessage("已复制。");
   }
 
-  async function createPat(mode: "basic" | "advanced") {
+  async function createApiKey() {
     setBusy(true);
     setCreatedKey(null);
     setMessage(null);
-    const basic = ["profile:read", "collection:read", "collection:write", "public:read", "sync:read", "sync:write"];
     const response = await fetch("/api/account/pats", {
       body: JSON.stringify({
         expires_in_days: 90,
-        name: mode === "advanced" ? "Agent 高级备用密钥" : "个人收藏备用密钥",
-        scopes: mode === "advanced" ? [...basic, "public:full", "ai:search"] : basic,
+        name: "Attention API Key",
       }),
       headers: { "Content-Type": "application/json" },
       method: "POST",
@@ -78,7 +75,7 @@ export function ConnectionManager({
     const result = (await response.json().catch(() => ({}))) as { key?: string };
     setBusy(false);
     if (response.ok && result.key) setCreatedKey(result.key);
-    else setMessage("密钥没有创建；高级 scope 需要 Member 权益。");
+    else setMessage("API Key 没有创建，请重试。");
   }
 
   async function revokePat(id: string) {
@@ -106,11 +103,11 @@ export function ConnectionManager({
       <section className="connection-card connection-card--hero">
         <p className="settings-card__eyebrow">推荐：OAuth + PKCE</p>
         <h2>把 Attention 加到你的 Agent</h2>
-        <p>添加远程 MCP 后，在客户端触发登录。浏览器会显示 scope 和当前 @handle，允许后自动返回客户端。</p>
+        <p>添加远程 MCP 后，在客户端触发登录。浏览器会显示 scope 和当前账号，允许后自动返回客户端。</p>
         <div className="install-command"><div><strong>Codex</strong><code>{codexCommand}</code></div><button onClick={() => copy(codexCommand)} type="button">复制</button></div>
         <div className="install-command"><div><strong>Claude Code</strong><code>{claudeCommand}</code></div><button onClick={() => copy(claudeCommand)} type="button">复制</button></div>
         <div className="install-command"><div><strong>公开 Skill</strong><code>{skillUrl}</code></div><button onClick={() => copy(skillUrl)} type="button">复制</button></div>
-        <p className="connection-note">Free 连接后获得自己的收藏工具；升级 Member 后同一连接自动获得高级工具，无需重新生成 token。</p>
+        <p className="connection-note">连接能力始终跟随当前账号；升级或降级后，同一连接会立即获得对应能力，无需重新授权。</p>
       </section>
 
       <section className="connection-card">
@@ -120,10 +117,10 @@ export function ConnectionManager({
       </section>
 
       <section className="connection-card">
-        <p className="settings-card__eyebrow">高级备用</p>
-        <h2>PAT / API Key</h2>
-        <p>仅在客户端不支持浏览器 OAuth 时使用。原文只显示一次，网站只保存哈希与前缀。</p>
-        <div className="button-row"><button className="button button--secondary" disabled={busy} onClick={() => createPat("basic")} type="button">创建基础密钥</button><button className="button button--secondary" disabled={busy || !isMember} onClick={() => createPat("advanced")} type="button">创建高级密钥</button></div>
+        <p className="settings-card__eyebrow">API Key</p>
+        <h2>密钥连接</h2>
+        <p>客户端不支持浏览器 OAuth 时使用。所有 Key 类型相同，实际能力跟随账号实时变化；原文只显示一次，网站只保存哈希与前缀。</p>
+        <div className="button-row"><button className="button button--secondary" disabled={busy} onClick={createApiKey} type="button">创建 API Key</button></div>
         {createdKey ? <div className="one-time-secret"><strong>只显示一次</strong><code>{createdKey}</code><button onClick={() => copy(createdKey)} type="button">复制密钥</button></div> : null}
         {pats.some((item) => item.status === "active") ? <ul className="credential-list">{pats.filter((item) => item.status === "active").map((item) => <li key={item.id}><div><strong>{item.name}</strong><span>{item.keyPrefix}… · {item.expiresAt ? `到期 ${new Date(item.expiresAt).toLocaleDateString("zh-CN")}` : "不过期"}</span></div><button onClick={() => revokePat(item.id)} type="button">撤销</button></li>)}</ul> : null}
       </section>

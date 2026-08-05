@@ -15,7 +15,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:17.6-bookworm
@@ -40,6 +40,9 @@ jobs:
       ATTENTION_EMAIL_WEBHOOK_URL: https://mailer.example.test/send
       ATTENTION_HMAC_SECRET: attention-ci-hmac-secret-at-least-32-characters
       ATTENTION_MCP_PUBLIC_URL: https://attention.example.test/mcp
+      ATTENTION_MIGRATION_DATABASE_HOST: 127.0.0.1
+      ATTENTION_MIGRATION_DATABASE_NAME: attention_test
+      ATTENTION_MIGRATION_DATABASE_ROLE: postgres
       ATTENTION_SYNC_PUBLIC_URL: https://attention.example.test/api/sync
       ATTENTION_WEB_DATABASE_ROLE: attention_web_runtime
       ATTENTION_WORKER_DATABASE_ROLE: attention_worker_runtime
@@ -50,6 +53,7 @@ jobs:
       NEXT_PUBLIC_APP_URL: https://attention.example.test
       PUBLIC_FEED_PREVIEW_LIMIT: "20"
       TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/attention_test
+      TEST_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/attention_test
       WORKER_DATABASE_URL: postgresql://attention_worker_runtime:attention_ci_worker_password@127.0.0.1:5432/attention_test
     steps:
       - name: Check out repository
@@ -69,6 +73,16 @@ jobs:
 
       - name: Install dependencies from lockfile
         run: pnpm install --frozen-lockfile
+
+      - name: Validate staging deployment script syntax
+        run: |
+          bash -n deploy/staging/*.sh
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("deploy/staging/validate-compose-config.py")
+          compile(path.read_text(encoding="utf-8"), str(path), "exec")
+          PY
 
       - name: Migrate pristine database from 0000 to latest
         run: pnpm db:migrate
@@ -94,15 +108,55 @@ jobs:
       - name: Build all production artifacts
         run: pnpm build
 
-      - name: Validate reverse-proxy reference configuration
-        run: >-
-          docker run --rm
-          --volume "$PWD/deploy/nginx/attention.conf.example:/etc/nginx/conf.d/default.conf:ro"
-          nginx:1.29.1-alpine nginx -t
-
-      - name: Build and start Fetcher container
+      - name: Render the isolated staging Compose model
         run: |
-          docker build --target fetcher --tag attention-fetcher:ci .
+          install -d -m 0700 /tmp/attention-staging-ci
+          deploy/staging/generate-env.sh /tmp/attention-staging-ci/compose.env
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("/tmp/attention-staging-ci/compose.env")
+          source = path.read_text(encoding="utf-8")
+          source = source.replace(
+              "RESEND_API_KEY=replace-me-with-a-new-rotated-resend-key",
+              "RESEND_API_KEY=re_ci_only_not_a_real_resend_key_1234567890",
+          )
+          path.write_text(source, encoding="utf-8")
+          path.chmod(0o600)
+          PY
+          deploy/staging/validate-env.sh /tmp/attention-staging-ci/compose.env
+          ATTENTION_RELEASE_ID=ci0000000000 docker compose \
+            --project-name attention-staging \
+            --file compose.yaml \
+            --file deploy/staging/compose.staging.yaml \
+            --env-file /tmp/attention-staging-ci/compose.env \
+            config --quiet
+          ATTENTION_RELEASE_ID=ci0000000000 docker compose \
+            --project-name attention-staging \
+            --file compose.yaml \
+            --file deploy/staging/compose.staging.yaml \
+            --env-file /tmp/attention-staging-ci/compose.env \
+            config --format json \
+            | python3 deploy/staging/validate-compose-config.py \
+                /data/attention-staging/postgres
+
+      - name: Validate reverse-proxy reference configuration
+        run: |
+          docker run --rm \
+            --volume "$PWD/deploy/nginx/attention.conf.example:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:1.29.1-alpine nginx -t
+          docker run --rm \
+            --volume "$PWD/deploy/staging/nginx/attention-staging.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:1.29.1-alpine nginx -t
+
+      - name: Build all production container targets
+        run: |
+          for target in web worker fetcher wechat-adapter migrate; do
+            docker build --target "$target" --tag "attention-$target:ci" .
+          done
+
+      - name: Start Fetcher container and wait for health
+        run: |
           docker run --detach --name attention-fetcher-ci \
             --read-only --tmpfs /tmp \
             --env FETCHER_SHARED_SECRET="$FETCHER_SHARED_SECRET" \
@@ -121,3 +175,16 @@ jobs:
           done
           docker logs attention-fetcher-ci
           exit 1
+
+      - name: Prove a PostgreSQL backup restores in isolation
+        run: |
+          docker run --rm --network host \
+            --env PGPASSWORD=postgres \
+            postgres:17.6-bookworm \
+            pg_dump \
+              --host 127.0.0.1 \
+              --username postgres \
+              --dbname attention_test \
+              --format custom \
+            >/tmp/attention-ci-restore.dump
+          deploy/staging/restore-drill.sh /tmp/attention-ci-restore.dump

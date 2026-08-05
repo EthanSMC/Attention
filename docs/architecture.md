@@ -14,8 +14,8 @@
 2. 独立的 Attention AI Agent 统一负责对话、意图判断、任务规划和链接解析。已经通过渠道身份与权益前置检查的请求，应在网页和微信中得到一致的 Agent/MCP 业务结果。
 3. 链接解析是 Agent 的能力。Agent 可调用受控的 Web/Browser MCP 访问公开网页、还原跳转并提取元数据。
 4. Attention MCP 是 Agent 业务能力的统一入口；离线增量同步使用独立 Sync API，不把数据复制协议永久绑定在 MCP 上。
-5. Codex、Claude Code 等外部 Agent 优先通过 OAuth Authorization Code + PKCE 连接 Hosted MCP；PAT/API Key 只作为高级备用方案。所有调用都映射回账号，并受 Scope、实时权益、限流和审计约束。
-6. 开源 Local Core、CLI、Local MCP 与 Skill 无需账号即可运行；Free 可连接云同步和基础 Hosted MCP，Member 获得托管 AI、完整公开流、高级 MCP 与 Hosted Channel。
+5. Codex、Claude Code 等外部 Agent 优先通过 OAuth Authorization Code + PKCE 连接 Hosted MCP；API Key 只作为不支持浏览器 OAuth 时的备用。所有 Key 类型相同，实际能力按账号实时权益计算；OAuth 仍受用户授权 Scope 约束。
+6. 开源 Local Core、CLI、Local MCP 与 Skill 无需账号即可运行；Free 可连接云同步和 Hosted MCP 个人收藏能力，Member 获得托管 AI、完整公开流、Member 专属 MCP 能力与 Hosted Channel。
 7. Attention 不保存原文，只保存链接、必要元数据、AI 派生信息、收藏关系和使用事件；阅读始终回到原作者和原平台。
 
 > 内容采集链路仍有一组未封口问题：当前静态 Fetcher、规则解析、未来 Browser Worker 与 AI Content Processor 如何判断“信息足够”，以及 Runtime 网页工具如何承载 Agent 的自主控制循环，尚未形成最终设计。长期方向已确认由 Hosted Agent 作为逻辑规划者，但当前 Fetcher HTTP 合同不得直接视为 Agent Tool Contract。详见 [`内容采集与 AI 预处理：待设计议题`](./content-acquisition-open-questions.md)。
@@ -66,7 +66,7 @@ flowchart LR
 
     subgraph AuthLayer["MCP 鉴权层"]
         AccountSettings["账号登录与授权"]
-        KeyService["OAuth / PAT<br/>签发 / 轮换 / 吊销"]
+        KeyService["OAuth / API Key<br/>签发 / 轮换 / 吊销"]
         AuthGateway["MCP Auth Gateway"]
         ScopeCheck["账号映射 / Scope / 限流"]
         Audit["调用审计"]
@@ -98,7 +98,7 @@ flowchart LR
 
     subgraph Storage["数据层"]
         UserDB[("账号与渠道身份")]
-        KeyDB[("OAuth / PAT 元数据与权限")]
+        KeyDB[("OAuth / API Key 元数据")]
         ContentDB[("链接与元数据")]
         CollectionDB[("收藏关系")]
         EnrichmentDB[("摘要 / 标签 / Domain")]
@@ -130,15 +130,15 @@ flowchart LR
     User --> AccountSettings
     AccountSettings --> KeyService
     KeyService --> KeyDB
-    KeyService -->|"浏览器授权或原始 PAT 只展示一次"| User
-    User -->|"完成 OAuth 或配置 PAT"| Codex
-    User -->|"完成 OAuth 或配置 PAT"| ClaudeCode
-    User -->|"完成 OAuth 或配置 PAT"| OtherClient
+    KeyService -->|"浏览器授权或原始 API Key 只展示一次"| User
+    User -->|"完成 OAuth 或配置 API Key"| Codex
+    User -->|"完成 OAuth 或配置 API Key"| ClaudeCode
+    User -->|"完成 OAuth 或配置 API Key"| OtherClient
 
     AttentionAgent -->|"内部身份 + acting account"| AuthGateway
-    Codex -->|"MCP + OAuth Token / PAT"| AuthGateway
-    ClaudeCode -->|"MCP + OAuth Token / PAT"| AuthGateway
-    OtherClient -->|"MCP + OAuth Token / PAT"| AuthGateway
+    Codex -->|"MCP + OAuth Token / API Key"| AuthGateway
+    ClaudeCode -->|"MCP + OAuth Token / API Key"| AuthGateway
+    OtherClient -->|"MCP + OAuth Token / API Key"| AuthGateway
     AuthGateway --> ScopeCheck
     ScopeCheck --> UserDB
     ScopeCheck --> KeyDB
@@ -191,7 +191,7 @@ flowchart LR
     LocalCore -->|"OAuth + Sync Protocol"| SyncAPI["Attention Sync API"]
     SyncAPI --> CloudCollection[("个人云端收藏")]
 
-    RemoteAgent["第三方 / 远程 Agent"] -->|"OAuth 优先，PAT 备用"| HostedMCP["Hosted MCP"]
+    RemoteAgent["第三方 / 远程 Agent"] -->|"OAuth 优先，API Key 备用"| HostedMCP["Hosted MCP"]
     HostedMCP --> Entitlement["Scope + 实时权益检查"]
     Entitlement --> CloudCollection
     Entitlement --> PublicGraph[("公开内容图谱")]
@@ -199,8 +199,8 @@ flowchart LR
 ```
 
 - Local only 无需账号或 token，数据可以只保存在本地。
-- Free 通过 OAuth 连接 Sync API 与基础 Hosted MCP，可同步和读写自己的收藏。
-- Member 在相同连接上获得托管 AI、完整公开流、筛选订阅和高级 MCP 工具。
+- Free 通过 OAuth 或 API Key 连接云端，可同步和读写自己的收藏。
+- Member 在相同连接上获得托管 AI、完整公开流、筛选订阅和 Member 专属 MCP 能力。
 - Sync API 负责 mutation log、cursor、批量传输、幂等与冲突处理；Hosted MCP 负责 Agent 工具调用。
 - Hosted MCP 对外公开并不表示匿名访问。Guest 不能连接，Free/Member 能力由服务端实时判断。
 - Guest、Free 或其他没有完整公开流权益的账号受服务端 `public_feed_preview_limit` 限制，MCP 不能绕过网页的内容边界。
@@ -213,12 +213,12 @@ flowchart LR
 | --- | --- | --- |
 | Browser Session | Attention 网页登录 | 随机 opaque token；数据库只存哈希；`HttpOnly`、`SameSite=Lax` Cookie；权益每次从服务端实时解析 |
 | OAuth access/refresh token | CLI、Sync API、Hosted MCP | Authorization Code + PKCE S256；一次性 code；refresh rotation；精确 redirect URI 和 audience |
-| PAT/API Key | 不支持浏览器 OAuth 的高级备用 | 原文只显示一次；数据库保存哈希、前缀、名称、Scope、到期时间和状态 |
+| API Key | 不支持浏览器 OAuth 的备用 | 单一类型；原文只显示一次；数据库保存哈希、前缀、名称、到期时间和状态；能力随账号实时变化 |
 | Channel Identity | 微信、企业微信等 Hosted Channel | `provider + app_id + subject HMAC -> account_id`；明确确认绑定；可单独解绑 |
 
 统一邮箱入口位于 `/login` 和站外 continuation 使用的 `/auth`。新邮箱在验证码验证成功后创建 Free 账号；验证码成功前不创建账号、不接收收藏 URL。站内导航使用 intercepted modal 保留原页面，OAuth、CLI 和 Channel 绑定使用完整 `/auth` 页面。
 
-连接入口位于 `/account/connections`：公开 Skill 不携带 token；OAuth 为默认路径，PAT 是备用。Hosted MCP 暴露在 `/mcp`，Sync API 暴露在 `/api/sync`，两者都只接受 OAuth/PAT Bearer credential，不接受 Browser Session 代替。
+连接入口位于 `/account/connections`：公开 Skill 不携带 token；OAuth 为默认路径，API Key 是备用。Hosted MCP 暴露在 `/mcp`，Sync API 暴露在 `/api/sync`，两者都只接受 OAuth/API Key Bearer credential，不接受 Browser Session 代替。
 
 ### 2.3 Sync v1 合并规则
 
@@ -330,7 +330,7 @@ sequenceDiagram
     Client-->>User: 返回结果及原文链接
 ```
 
-外部客户端不能提交或覆盖 `user_id`。MCP 鉴权层必须从 OAuth token 或 PAT 推导账号，并将认证后的账号上下文传给业务服务。对于不支持浏览器 OAuth 的客户端，用户可以在高级设置中创建命名 PAT/API Key；这条备用路径仍执行相同的 Scope、权益、限流和审计规则。
+外部客户端不能提交或覆盖 `user_id`。MCP 鉴权层必须从 OAuth token 或 API Key 推导账号，并将认证后的账号上下文传给业务服务。对于不支持浏览器 OAuth 的客户端，用户可以创建命名 API Key；Key 不选择权限，备用路径仍执行相同的实时账号权益、限流和审计规则。
 
 ## 5. MCP 能力边界
 
@@ -350,18 +350,19 @@ Free 不能通过 MCP 触发新私人内容的托管 AI，也不能读取网页�
 
 AI 检索计数不是允许客户端主动上报的 MCP 工具。MCP Server 在内容实际进入有效检索结果时内部产生 `mcp_retrieval` 事件，避免客户端伪造贡献数字。
 
-## 6. OAuth 与 PAT/API Key 安全规则
+## 6. OAuth 与 API Key 安全规则
 
 - Hosted MCP 与 Sync API 优先使用 OAuth Authorization Code + PKCE；HTTP MCP token 必须绑定明确的 resource/audience。
 - 授权页展示客户端、请求 Scope 和将要访问的账号；Skill 本身不携带 token。
 - Access token 与 refresh token 可独立撤销，服务端每次调用仍检查实时 Free/Member/Filter 权益。
-- 一个账号可以创建多个命名 PAT/API Key，例如 `Codex-Mac` 或 `CI-Import`，只用于不支持 OAuth 的高级场景。
-- 原始 PAT 仅在创建时展示一次；服务端只保存带版本的密码学哈希、前缀、名称和必要元数据。
-- PAT 可以单独吊销和轮换，不影响网站 Session、微信绑定、OAuth grant 或其他 PAT。
-- OAuth grant 与 PAT 均使用最小 Scope；写入能力与只读能力分开授权。
+- 一个账号可以创建多个同类型的命名 API Key，例如 `Codex-Mac` 或 `CI-Import`，只用于不支持 OAuth 的客户端。
+- 原始 API Key 仅在创建时展示一次；服务端只保存带版本的密码学哈希、前缀、名称和必要元数据。
+- API Key 可以单独吊销和轮换，不影响网站 Session、微信绑定、OAuth grant 或其他 Key。
+- OAuth grant 使用最小 Scope；API Key 不提供逐 Key Scope 选择，实际能力由账号当前权益决定。
+- 当前版本新建的 API Key 写入完整协议 Scope，并在每次请求时继续受账号实时权益约束；旧版曾由用户选择 Scope 的 Key 会保留其已存储的更窄上限，直到用户主动轮换，避免升级后静默扩大权限。
 - 所有操作都由服务端将凭据映射到账号，客户端不能指定任意账号身份。
 - MCP 按账号和客户端限流，并记录 credential ID、客户端 ID、工具、时间、结果状态和请求 ID。
-- 默认不长期保存原始对话或搜索 query；日志和错误追踪不得记录完整 token 或 PAT。
+- 默认不长期保存原始对话或搜索 query；日志和错误追踪不得记录完整 token 或 API Key。
 - 私人收藏的查询、缓存和索引继续按账号隔离。
 - 客户端重试使用请求 ID 做幂等，不能因重试重复收藏或重复增加 AI 检索计数。
 
@@ -374,11 +375,11 @@ Attention 长期保存：
 - AI 摘要、标签、Domain 和处理状态。
 - 账号、渠道绑定、收藏关系和可见性。
 - 必要的人类跳转、AI 检索、MCP 审计和安全事件。
-- OAuth grant/token 元数据与 PAT 的哈希和权限，不保存可恢复的原始 PAT。
+- OAuth grant/token 元数据与 API Key 的哈希和生命周期元数据，不保存可恢复的原始 API Key。
 
 Attention 不长期保存：
 
 - 原文正文、原站图片或视频副本。
 - 微信或网页中的完整原始对话。
 - 外部 Agent 的完整上下文和默认搜索 query。
-- 明文 PAT/API Key、访问令牌或原始分享文案。
+- 明文 API Key、访问令牌或原始分享文案。

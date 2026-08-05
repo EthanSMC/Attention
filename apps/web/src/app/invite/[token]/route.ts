@@ -143,8 +143,8 @@ export async function GET(
     const response = invitePage(
       "首次登录 Attention",
       invitation.kind === "filter"
-        ? `你的稳定网名是 @${invitation.stableHandle}。确认后将以 Filter 身份登录，这台设备会保持登录 30 天。`
-        : `你的稳定网名是 @${invitation.stableHandle}。确认后将登录 Attention，这台设备会保持登录 30 天。`,
+        ? "确认后将以 Filter 身份登录，这台设备会保持登录 30 天。"
+        : "确认后将登录 Attention，这台设备会保持登录 30 天。",
       { confirmationToken },
     );
     setConfirmationCookie(response, confirmationToken);

@@ -21,8 +21,8 @@ export default async function RootLayout({
   const principal = await getPagePrincipal();
   const identity = principal
     ? {
+        isFilter: principal.isFilter,
         isMember: principal.isMember,
-        stableHandle: principal.stableHandle,
       }
     : null;
 

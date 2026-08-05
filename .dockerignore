@@ -6,10 +6,12 @@
 !.env.example
 !.env.compose.example
 **/.next
+**/.impeccable
 **/coverage
 **/dist
 **/node_modules
 **/*.log
+**/*.tsbuildinfo
 *.local
 .media
 deliverables

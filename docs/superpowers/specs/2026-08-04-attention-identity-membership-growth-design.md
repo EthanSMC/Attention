@@ -45,8 +45,8 @@
 | --- | --- | --- | --- |
 | Local only（使用模式） | 可选 | 仅本地 | 开源 Core、CLI、Local MCP、Skill、本地处理与检索 |
 | Guest | 否 | 无私人云端数据 | 浏览公开流前 `N` 张、打开可见卡片原文 |
-| Free | 是 | 本地与个人云端收藏 | 不限量收藏、云端同步、基础 Hosted MCP |
-| Member | 是 | 本地 + Attention Cloud | 完整公开流、托管 AI、筛选订阅、高级 MCP、Channel |
+| Free | 是 | 本地与个人云端收藏 | 不限量收藏、云端同步、Hosted MCP 个人收藏能力 |
+| Member | 是 | 本地 + Attention Cloud | 完整公开流、托管 AI、筛选订阅、Member 专属 MCP 能力、Channel |
 
 Local only 不是与 Guest/Free/Member 互斥的套餐，而是一种运行模式：未注册者可以只在本地使用，Free 或 Member 也可以继续运行本地工具。一个没有连接云端的本地实例从平台视角没有可识别账号，也不受平台账号生命周期约束。
 
@@ -54,8 +54,9 @@ Local only 不是与 Guest/Free/Member 互斥的套餐，而是一种运行模�
 
 - Filter 是受邀的公开供给资格，不是会员套餐。Filter 的新收藏默认公开，历史收藏的隐私选择不因身份变化而改变。
 - 有效 Filter 自动获得完整 Member 能力，来源记录为独立 `filter_grant`；移除 Filter 只撤销该来源，不影响购买、兑换或其他 grant。
-- Consumer 在增长机制中指注册的非 Filter 用户，可处于 Free 或 Member。
+- Consumer 在增长机制中是内部 referral 术语；新用户邀请面向所有 active 注册账号，包括 Free、Member 和 Filter。
 - Filter 年卡额度与 Consumer 邀请额度是不同机制，不能复用同一种 invitation。
+- Consumer 邀请额度由服务端配置；账号页显示已成功邀请数与总名额，文案不写死具体人数。
 
 ### 3.3 能力矩阵
 
@@ -70,8 +71,8 @@ Local only 不是与 Guest/Free/Member 互斥的套餐，而是一种运行模�
 | 复用已经存在的公开 AI 摘要 | 仅可见卡片 | 是 | 是 | 是 |
 | 为新私人链接触发托管 AI | 否 | 否 | 是 | 是 |
 | 托管/云端搜索、筛选与订阅 | 否 | 否 | 是 | 是 |
-| Hosted MCP 基础个人收藏工具 | 否 | 是 | 是 | 是 |
-| Hosted MCP 高级 AI/公共网络工具 | 否 | 否 | 是 | 是 |
+| Hosted MCP 个人收藏工具 | 否 | 是 | 是 | 是 |
+| Hosted MCP 托管 AI/完整公共网络能力 | 否 | 否 | 是 | 是 |
 | 企业微信、公众号等 Hosted Channel | 否 | 否 | 是 | 是 |
 | 向公共瀑布流供给 | 否 | 否 | 否 | 是 |
 
@@ -92,8 +93,8 @@ Free 新收藏默认私密，也不会因为本地同步而批量公开。Filter
 ```
 
 - 新账号验证成功后立即成为 Free。
-- 创建账号时不要求设置密码、填写网名、选择兴趣或绑定微信。
-- 系统生成不可预测且唯一的公开 handle，例如 `user-482731`，默认展示名可对应显示为 `用户482731`；用户可在“我的”中修改可见网名。
+- 创建账号时不要求设置密码、填写展示名、选择兴趣或绑定微信。
+- 系统生成不可预测且唯一的内部 handle，例如 `user-482731`，默认展示名可对应显示为 `用户482731`；内部 handle 不对用户展示，用户可在“我的”中修改展示名并按需设置 Attention ID。
 - 内部不可变 `account_id` 是身份主键，handle 和展示名都不是登录凭据。handle 修改、旧地址跳转和保留期在账号技术规格中定义。
 - 用户可在账号安全设置中添加密码，登录页提供较弱的“使用密码登录”切换入口。
 - 首次创建账号时明确展示用户协议和隐私政策。
@@ -145,7 +146,7 @@ Free 新收藏默认私密，也不会因为本地同步而批量公开。Filter
 Hosted MCP 是公开可发现、可配置的远程 MCP 服务，但必须认证：
 
 - Free 可连接并操作自己的基础收藏，例如 `content.collect`、`collection.list` 和个人范围的 `content.get`。
-- Member 在此基础上获得托管 AI、语义检索、完整公开流、筛选和订阅等高级工具。
+- Member 在此基础上获得托管 AI、语义检索、完整公开流、筛选和订阅等账号专属能力。
 - Guest 不能连接 Hosted MCP。
 - MCP 返回公共流时必须执行与网页相同的 `N` 张限制，不能成为绕过公开流付费墙的接口。
 - Free 的 `content.get` 只能读取自己的 Collection，或当前 Domain 预览窗口内本来可见的公共 Content。Free 主动收藏一个已存在的 canonical Content 后，它成为该账号自己的 Collection，可以复用已有公开摘要；客户端不能通过枚举 Content ID 或 URL 批量读取预览窗口之外的公共内容。
@@ -158,17 +159,18 @@ Hosted MCP 是公开可发现、可配置的远程 MCP 服务，但必须认证�
 | 网站 | Session Cookie | 浏览器登录态 |
 | CLI 云同步 | OAuth Authorization Code + PKCE | Free/Member 同步自己的收藏 |
 | Hosted MCP | OAuth Authorization Code + PKCE | Agent 代表账号调用 MCP |
-| 自动化脚本 | 命名 PAT/API Key | 不支持浏览器 OAuth 时的高级备用方案 |
+| 自动化脚本 | 命名 API Key | 不支持浏览器 OAuth 时的备用方案 |
 | 微信 | `wechat_app_id + openid` 绑定 | 将渠道消息映射到 Attention 账号 |
 | Local only | 无 | 本地使用，不连接平台 |
 
 授权规则：
 
-- OAuth 优先，PAT/API Key 只作为高级备用入口。
+- OAuth 优先，API Key 只作为不支持浏览器 OAuth 时的备用入口。
 - Skill 不包含 token。
 - Access token 必须绑定 audience/resource 与 scopes；客户端不能提交任意 `account_id`。
 - Token 只证明身份和授权范围，服务端每次调用仍检查实时 Free/Member/Filter 权益。
-- PAT/API Key 可命名、限 scope、设置有效期、独立吊销和轮换；原文只展示一次，服务端只保存安全哈希和前缀。
+- API Key 只有一种，可命名、设置有效期、独立吊销和轮换；客户端不能为 Key 选择产品权限。原文只展示一次，服务端只保存安全哈希、前缀和生命周期元数据。
+- API Key 只证明账号身份；服务端每次调用都按账号当前 Free/Member/Filter 权益计算有效能力。账号升级、降级或 Filter 资格变化后，无需更换 Key。
 - API Key、网站 Session、微信绑定和 OAuth grant 相互独立，吊销一种凭据不能隐式改变其他凭据。
 - Sync API 与 Hosted MCP 是不同 resource server；具体 scope、token audience、refresh token 和多 resource 授权交互由后续 OAuth 技术规格固化。
 
@@ -189,14 +191,14 @@ Hosted MCP 是公开可发现、可配置的远程 MCP 服务，但必须认证�
 -> 执行连通性测试
 ```
 
-- Free 完成后获得基础 Hosted MCP 与云同步。
-- Member 同一连接自动暴露高级工具，不需要重新生成 token。
+- Free 完成后获得账号允许的 Hosted MCP 个人收藏能力与云同步。
+- Member 同一连接自动获得账号新增能力，不需要重新生成 token 或 API Key。
 - 完成页分别显示“Skill 已安装”“Hosted MCP 已连接”“同步正常”。
-- 不支持 OAuth 的客户端可以由用户主动展开“高级设置”并创建 PAT/API Key。
+- 不支持 OAuth 的客户端可以在连接设置中创建同一种 API Key。
 
 ## 8. Channel 与微信绑定
 
-Hosted Channel 是 Member 能力。Free 可以注册、收藏、同步和连接基础 Hosted MCP，但平台不为 Free 托管企业微信、公众号等消息入口。
+Hosted Channel 是 Member 能力。Free 可以注册、收藏、同步和使用账号允许的 Hosted MCP 个人收藏能力，但平台不为 Free 托管企业微信、公众号等消息入口。
 
 微信首次发送消息时：
 
@@ -206,7 +208,7 @@ Hosted Channel 是 Member 能力。Free 可以注册、收藏、同步和连接�
 -> 返回绑定链接
 -> 用户完成统一登录
 -> Free 用户先查看并开通 Member
--> 展示“将此微信绑定到 @handle”
+-> 展示目标展示名与 Attention ID（如已设置）
 -> 用户明确确认
 -> 建立 ChannelIdentity
 -> 自动继续处理原消息
@@ -247,17 +249,18 @@ Filter 年卡是注册后可兑换的独立 grant，不改变 `signup_source`，
 - 自主注册用户即使曾兑换 Filter 年卡，仍保留首次订阅的 3 个月体验资格；体验期顺延到既有 grant 之后，不能与既有会员月份重叠浪费。
 - 资格是账号级 exactly-once：只有第一次绑定真实付费订阅的可信 provider 事件可以触发；Webhook 重试、重新订阅或更换支付方式不能再次生成体验。
 
-### 9.3 Consumer 邀请季卡
+### 9.3 新用户邀请（Consumer referral）
 
-- eligible Consumer 指当前 `active` 且当前不是 Filter 的注册账号；每位账号终身只有一个成功邀请名额。
+- 新用户邀请的创建者必须是当前 `active` 的注册账号，包括 Free、Member 和 Filter；每个账号的成功邀请次数受服务端配置的名额限制。
 - 邀请使用唯一链接；只有新用户通过该链接完成注册才生效。
+- 每次成功注册消耗一个邀请名额；过期、失效或被替换的链接不消耗成功名额。
 - 注册成功后，被邀请者获得 3 个月 Member，邀请者获得 3 个月 Member 延期。
 - 已有账号打开链接不能补绑邀请关系。
 - 一个邀请链接成功注册一次后即失效，邀请关系不可改绑。
 - 邀请奖励不要求被邀请者先绑定支付方式。
 - 被邀请者后续发生真实现金续费时，直接邀请者获得实付价值 15% 的续费积分。
 - 返积分只存在一层，不向邀请链上游继续分配。
-- 邀请者在链接兑换前成为 Filter 时，全部未使用 Consumer 链接立即失效；已经完成的 referral 与双方 grant 不回滚。
+- 邀请者成为或保持 Filter 不影响未使用 Consumer 链接；Filter 年卡签发是独立能力，不改变新用户邀请资格。
 - Consumer 链接默认 30 天到期，可由服务端环境变量在 1 至 365 天内配置。
 
 Consumer 季卡按注册即时生效。若邀请者当前是 Free，则立即进入 3 个月 Member；若已有 Member，则在当前有效期后顺延 3 个月。
@@ -303,7 +306,9 @@ Consumer 季卡按注册即时生效。若邀请者当前是 Free，则立即进
 - `primary_email`
 - `email_verified_at`
 - `password_hash`：可空
-- `stable_handle`
+- `stable_handle`：系统生成、不可变、仅内部使用，不进入公开 DTO 或页面
+- `attention_id`：可空的公开账号标识；6–20 位、字母开头，仅小写字母、数字、`_`、`-`
+- `attention_id_changed_at`：首次设置后每 365 天最多修改一次；既有账号不从 `stable_handle` 回填
 - `display_name`
 - `signup_source`：`direct | consumer_referral`
 - `status`
@@ -352,7 +357,7 @@ Consumer 季卡按注册即时生效。若邀请者当前是 Free，则立即进
 - `expires_at`
 - `registered_at`
 
-成功状态下必须保证 `inviter_account_id` 唯一、`invitee_account_id` 全局唯一，且两者不能相同。一个账号可以先作为 invitee 注册，之后再用自己的唯一名额作为 inviter，不受上述约束误伤。
+成功状态下必须保证 `invitee_account_id` 全局唯一，且邀请人与被邀请人不能相同；同一 `inviter_account_id` 可以在配置额度内拥有多条成功 referral。一个账号可以先作为 invitee 注册，之后再作为 inviter，不受上述约束误伤。
 
 ### 10.5 FilterRedemptionCode
 
@@ -380,10 +385,10 @@ Consumer 季卡按注册即时生效。若邀请者当前是 Free，则立即进
 - `ChannelIdentity`：`provider + app_id + subject_id(openid) -> account_id`。
 - `BindIntent`：渠道身份、pending request、token hash、状态、过期时间和确认时间；创建时不包含由用户输入的目标账号。
 
-### 10.8 OAuth 与 PAT
+### 10.8 OAuth 与 API Key
 
 - OAuth client、authorization grant、access/refresh token 元数据和撤销状态独立保存。
-- PAT/API Key 使用独立 `ApiCredential`，不能与 OAuth token 或 Browser Session 共表复用。
+- API Key 使用独立 `ApiCredential`，不能与 OAuth token 或 Browser Session 共表复用。所有 Key 类型相同，产品能力不固化在 Key 上。
 
 ## 11. 安全与滥用边界
 
@@ -400,28 +405,28 @@ Consumer 季卡按注册即时生效。若邀请者当前是 Free，则立即进
 ### 12.1 身份与公开流
 
 - Guest 和 Free 请求当前 Domain 排名第 `N + 1` 张及之后的公开内容时，响应中不存在真实锁定内容字段。
-- 新邮箱通过验证码后创建 Free 账号和随机网名，不要求设置密码。
+- 新邮箱通过验证码后创建 Free 账号和随机展示名，不要求设置密码。
 - 已有邮箱走相同入口并创建新 Session，不修改权益。
 - 登录、付费或 OAuth 完成后能安全恢复原 intent。
 
 ### 12.2 同步与 MCP
 
 - Local only 在无网络、无账号时可以收藏、查询和导出。
-- Free 通过 OAuth 连接同步和基础 Hosted MCP。
+- Free 通过 OAuth 或 API Key 使用账号允许的同步与 Hosted MCP 能力。
 - Free 不能通过 MCP 读取第 `N` 张之后的公共流，也不能触发 Member AI 工具。
-- 账号升级后原 OAuth 连接自动获得服务端允许的高级能力；降级后实时失去高级能力。
-- PAT 吊销不影响网站 Session、微信绑定或其他 OAuth 客户端。
+- 账号升级后原 OAuth 连接和 API Key 自动获得服务端允许的新能力；降级后实时失去对应能力。
+- API Key 吊销不影响网站 Session、微信绑定或其他 OAuth 客户端。
 
 ### 12.3 Channel
 
 - 未绑定微信消息只创建 pending request，不执行私人收藏。
 - 登录与开通 Member 后，用户明确确认绑定并自动继续原消息。
 - 绑定 intent 过期、重复消费或账号冲突时不能静默换绑。
-- Free 账号不能使用 Hosted Channel，但不影响其 Web 收藏、同步和基础 MCP。
+- Free 账号不能使用 Hosted Channel，但不影响其 Web 收藏、同步和账号允许的 MCP 能力。
 
 ### 12.4 增长机制
 
-- Consumer 链接只对第一个通过它注册的新账号生效，双方各获得一个季度且不重叠浪费。
+- 每个 Consumer 链接只对一个通过它注册的新账号生效；成功注册消耗邀请人的一个名额，双方各获得一个季度且不重叠浪费。
 - Consumer 邀请注册账号不会获得 direct 三个月订阅体验。
 - direct 账号兑换 Filter 年卡后仍保留首次订阅体验，并在年卡后顺延。
 - Filter 每个 UTC 自然年累计最多签发 5 个兑换码，过期或撤销不补额度；单个码不能重复使用或由签发者自兑。
