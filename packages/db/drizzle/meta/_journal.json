@@ -1,0 +1,139 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1785485447587,
+      "tag": "0000_attention_web_core",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785487566791,
+      "tag": "0001_public_content_attributions",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785488605570,
+      "tag": "0002_runtime_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785825401214,
+      "tag": "0003_identity_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785826854699,
+      "tag": "0004_tense_tony_stark",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785828528168,
+      "tag": "0005_wet_orphan",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785833981072,
+      "tag": "0006_steady_silver_surfer",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1785834829556,
+      "tag": "0007_violet_virginia_dare",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785836422971,
+      "tag": "0008_odd_naoko",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785839361773,
+      "tag": "0009_magenta_justin_hammer",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785845975154,
+      "tag": "0010_tiny_human_fly",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785846449146,
+      "tag": "0011_mushy_midnight",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785852000000,
+      "tag": "0012_rapid_moderation_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1785853245560,
+      "tag": "0013_rapid_moderation_join_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1785858842677,
+      "tag": "0014_agent_tool_audit_grant",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1785900000000,
+      "tag": "0015_account_avatar",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1785930000000,
+      "tag": "0016_attention_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1785933600000,
+      "tag": "0017_consumer_invite_quota",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785937200000,
+      "tag": "0018_schema_checkpoint",
+      "breakpoints": true
+    }
+  ]
+}

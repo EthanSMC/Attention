@@ -1,0 +1,31 @@
+{
+  "name": "@attention/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@attention/ai": "workspace:*",
+    "@attention/auth": "workspace:*",
+    "@attention/collector": "workspace:*",
+    "@attention/contracts": "workspace:*",
+    "@attention/db": "workspace:*",
+    "@attention/domain": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "server-only": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "typescript": "^6.0.3"
+  }
+}

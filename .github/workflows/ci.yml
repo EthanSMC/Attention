@@ -1,0 +1,190 @@
+name: CI
+
+"on":
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17.6-bookworm
+        env:
+          POSTGRES_DB: attention_test
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d attention_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      ATTENTION_AUTH_SECRET: attention-ci-auth-secret-at-least-32-characters
+      ATTENTION_CHANNEL_ADAPTER_SECRET: attention-ci-adapter-secret-at-least-32-chars
+      ATTENTION_CHANNEL_SECRET: attention-ci-channel-secret-at-least-32-characters
+      ATTENTION_DIGEST_WORKER_ENABLED: "false"
+      ATTENTION_EMAIL_PROVIDER: webhook
+      ATTENTION_EMAIL_WEBHOOK_TOKEN: attention-ci-mailer-token
+      ATTENTION_EMAIL_WEBHOOK_URL: https://mailer.example.test/send
+      ATTENTION_HMAC_SECRET: attention-ci-hmac-secret-at-least-32-characters
+      ATTENTION_MCP_PUBLIC_URL: https://attention.example.test/mcp
+      ATTENTION_MIGRATION_DATABASE_HOST: 127.0.0.1
+      ATTENTION_MIGRATION_DATABASE_NAME: attention_test
+      ATTENTION_MIGRATION_DATABASE_ROLE: postgres
+      ATTENTION_SYNC_PUBLIC_URL: https://attention.example.test/api/sync
+      ATTENTION_WEB_DATABASE_ROLE: attention_web_runtime
+      ATTENTION_WORKER_DATABASE_ROLE: attention_worker_runtime
+      DATABASE_URL: postgresql://attention_web_runtime:attention_ci_web_password@127.0.0.1:5432/attention_test
+      FETCHER_BASE_URL: http://127.0.0.1:4100
+      FETCHER_SHARED_SECRET: attention-ci-fetcher-secret-at-least-32-characters
+      MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/attention_test
+      NEXT_PUBLIC_APP_URL: https://attention.example.test
+      PUBLIC_FEED_PREVIEW_LIMIT: "20"
+      TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/attention_test
+      TEST_MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/attention_test
+      WORKER_DATABASE_URL: postgresql://attention_worker_runtime:attention_ci_worker_password@127.0.0.1:5432/attention_test
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.9.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.11.1
+          cache: pnpm
+
+      - name: Install dependencies from lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate staging deployment script syntax
+        run: |
+          bash -n deploy/staging/*.sh
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("deploy/staging/validate-compose-config.py")
+          compile(path.read_text(encoding="utf-8"), str(path), "exec")
+          PY
+
+      - name: Migrate pristine database from 0000 to latest
+        run: pnpm db:migrate
+
+      - name: Configure non-owner runtime roles for CI
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql --host 127.0.0.1 --username postgres --dbname attention_test \
+            --set ON_ERROR_STOP=1 \
+            --command "ALTER ROLE attention_web_runtime PASSWORD 'attention_ci_web_password'" \
+            --command "ALTER ROLE attention_worker_runtime PASSWORD 'attention_ci_worker_password'"
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build all production artifacts
+        run: pnpm build
+
+      - name: Render the isolated staging Compose model
+        run: |
+          install -d -m 0700 /tmp/attention-staging-ci
+          deploy/staging/generate-env.sh /tmp/attention-staging-ci/compose.env
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("/tmp/attention-staging-ci/compose.env")
+          source = path.read_text(encoding="utf-8")
+          source = source.replace(
+              "RESEND_API_KEY=replace-me-with-a-new-rotated-resend-key",
+              "RESEND_API_KEY=re_ci_only_not_a_real_resend_key_1234567890",
+          )
+          path.write_text(source, encoding="utf-8")
+          path.chmod(0o600)
+          PY
+          deploy/staging/validate-env.sh /tmp/attention-staging-ci/compose.env
+          ATTENTION_RELEASE_ID=ci0000000000 docker compose \
+            --project-name attention-staging \
+            --file compose.yaml \
+            --file deploy/staging/compose.staging.yaml \
+            --env-file /tmp/attention-staging-ci/compose.env \
+            config --quiet
+          ATTENTION_RELEASE_ID=ci0000000000 docker compose \
+            --project-name attention-staging \
+            --file compose.yaml \
+            --file deploy/staging/compose.staging.yaml \
+            --env-file /tmp/attention-staging-ci/compose.env \
+            config --format json \
+            | python3 deploy/staging/validate-compose-config.py \
+                /data/attention-staging/postgres
+
+      - name: Validate reverse-proxy reference configuration
+        run: |
+          docker run --rm \
+            --volume "$PWD/deploy/nginx/attention.conf.example:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:1.29.1-alpine nginx -t
+          docker run --rm \
+            --volume "$PWD/deploy/staging/nginx/attention-staging.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:1.29.1-alpine nginx -t
+
+      - name: Build all production container targets
+        run: |
+          for target in web worker fetcher wechat-adapter migrate; do
+            docker build --target "$target" --tag "attention-$target:ci" .
+          done
+
+      - name: Start Fetcher container and wait for health
+        run: |
+          docker run --detach --name attention-fetcher-ci \
+            --read-only --tmpfs /tmp \
+            --env FETCHER_SHARED_SECRET="$FETCHER_SHARED_SECRET" \
+            attention-fetcher:ci
+          trap 'docker rm --force attention-fetcher-ci >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' attention-fetcher-ci)
+            if [ "$status" = healthy ]; then
+              exit 0
+            fi
+            if [ "$status" = unhealthy ]; then
+              docker logs attention-fetcher-ci
+              exit 1
+            fi
+            sleep 1
+          done
+          docker logs attention-fetcher-ci
+          exit 1
+
+      - name: Prove a PostgreSQL backup restores in isolation
+        run: |
+          docker run --rm --network host \
+            --env PGPASSWORD=postgres \
+            postgres:17.6-bookworm \
+            pg_dump \
+              --host 127.0.0.1 \
+              --username postgres \
+              --dbname attention_test \
+              --format custom \
+            >/tmp/attention-ci-restore.dump
+          deploy/staging/restore-drill.sh /tmp/attention-ci-restore.dump

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Attention 登录验证码</title>
+  </head>
+  <body style="margin: 0; background: #f5f5f3; color: #202124; font-family: Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;">
+    <div style="display: none; max-height: 0; overflow: hidden; opacity: 0;">
+      使用此验证码继续完成 Attention 身份验证。
+    </div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background: #f5f5f3;">
+      <tr>
+        <td align="center" style="padding: 32px 16px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width: 560px; background: #ffffff; border: 1px solid #e3e3df; border-radius: 16px;">
+            <tr>
+              <td style="padding: 28px 32px 20px; border-bottom: 1px solid #ecece8; font-size: 20px; font-weight: 700;">
+                Attention
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 28px 32px 32px;">
+                <h1 style="margin: 0 0 14px; font-size: 20px; line-height: 1.45;">身份验证码</h1>
+                <p style="margin: 0 0 24px; color: #5f6368; font-size: 14px; line-height: 1.7;">
+                  你正在使用 Attention 的身份验证功能。请使用以下验证码继续：
+                </p>
+                <div style="padding: 20px; border-radius: 10px; background: #f5f7fb; color: #1769e0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 30px; font-weight: 700; letter-spacing: 6px; text-align: center;">
+                  {{{verification_code}}}
+                </div>
+                <p style="margin: 22px 0 0; color: #7a7d81; font-size: 13px; line-height: 1.7;">
+                  该验证码在 {{{valid_minutes}}} 分钟内有效。若非本人操作，请忽略此邮件；不要向任何人透露验证码。
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

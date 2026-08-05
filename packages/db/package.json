@@ -1,0 +1,28 @@
+{
+  "name": "@attention/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./migrate": "./src/migrate.ts"
+  },
+  "scripts": {
+    "build": "esbuild src/migrate-cli.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/migrate.js",
+    "generate": "drizzle-kit generate",
+    "migrate": "tsx src/migrate-cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@attention/domain": "workspace:*",
+    "drizzle-orm": "latest",
+    "postgres": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "drizzle-kit": "latest",
+    "esbuild": "^0.28.1",
+    "tsx": "latest",
+    "typescript": "^6.0.3"
+  }
+}
