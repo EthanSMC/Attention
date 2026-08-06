@@ -9,10 +9,7 @@ import { z, ZodError } from "zod";
 
 import { mutationRequestError, noStoreJson } from "../../../../../server/api-guard";
 import { getWebDatabase } from "../../../../../server/db";
-import {
-  getEmailOtpSender,
-  mayExposeDevelopmentOtp,
-} from "../../../../../server/email-otp";
+import { getEmailOtpSender } from "../../../../../server/email-otp";
 import {
   InvalidRequestBodyError,
   readJsonRequestWithinLimit,
@@ -75,7 +72,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       challenge_id: challenge.challengeId,
       expires_at: challenge.expiresAt.toISOString(),
       retry_after_seconds: challenge.retryAfterSeconds,
-      ...(mayExposeDevelopmentOtp() ? { development_code: challenge.code } : {}),
     });
   } catch (error) {
     if (error instanceof RequestBodyTooLargeError) {

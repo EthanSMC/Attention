@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { useRouter } from "next/navigation";
 
 interface ApiErrorBody {
   error?: { code?: string; retry_after_seconds?: number };
@@ -10,7 +9,6 @@ interface ApiErrorBody {
 
 interface ChallengeResponse {
   challenge_id: string;
-  development_code?: string;
   expires_at: string;
   retry_after_seconds: number;
 }
@@ -45,14 +43,11 @@ async function readApiError(response: Response): Promise<string> {
 
 export function EmailLoginForm({
   consumerInviteToken,
-  presentation = "page",
   returnTo,
 }: {
   consumerInviteToken?: string;
-  presentation?: "modal" | "page";
   returnTo: string;
 }) {
-  const router = useRouter();
   const [method, setMethod] = useState<"code" | "password">("code");
   const [stage, setStage] = useState<"email" | "verify">("email");
   const [email, setEmail] = useState("");
@@ -61,11 +56,6 @@ export function EmailLoginForm({
   const [error, setError] = useState<string | null>(null);
 
   function completeLogin(redirectTo: string) {
-    if (presentation === "modal") {
-      router.back();
-      router.refresh();
-      return;
-    }
     window.location.assign(redirectTo);
   }
 
@@ -209,11 +199,6 @@ export function EmailLoginForm({
           placeholder="000000"
           required
         />
-        {challenge.development_code ? (
-          <p className="auth-form__development-code">
-            本地验证码 <code>{challenge.development_code}</code>
-          </p>
-        ) : null}
         <label className="auth-form__consent">
           <input name="accept_terms" type="checkbox" />
           <span>

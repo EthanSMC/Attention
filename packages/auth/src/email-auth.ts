@@ -411,11 +411,9 @@ export async function verifyLoginChallenge(
 export async function cancelLoginChallenge(
   db: AttentionDatabase,
   challengeId: string,
-  now = new Date(),
 ): Promise<void> {
   await db
-    .update(loginChallenges)
-    .set({ consumedAt: now })
+    .delete(loginChallenges)
     .where(and(eq(loginChallenges.id, challengeId), isNull(loginChallenges.consumedAt)));
 }
 

@@ -9,7 +9,7 @@ describe("email OTP provider configuration", () => {
     vi.useRealTimers();
   });
 
-  it("sends the unified login template through the native Resend endpoint", async () => {
+  it("sends the unified login template with Resend-compatible variable types", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-04T12:00:00.000Z"));
     const timeoutSignal = new AbortController().signal;
@@ -44,7 +44,7 @@ describe("email OTP provider configuration", () => {
         template: {
           id: "attention-login-code",
           variables: {
-            valid_minutes: 10,
+            valid_minutes: "10",
             verification_code: "123456",
           },
         },
@@ -88,6 +88,68 @@ describe("email OTP provider configuration", () => {
       email: "a***@example.com",
       providerMessageId: "email_01K1TEST",
     });
+  });
+
+  it("recovers from consecutive transient Resend failures with one idempotency key", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockRejectedValueOnce(new TypeError("fetch failed again"))
+      .mockResolvedValueOnce(Response.json({ id: "email_01K1RETRY" }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const sender = getEmailOtpSender({
+      ATTENTION_EMAIL_PROVIDER: "resend",
+      ATTENTION_RESEND_FROM: "Attention <no_reply@service.noveltystudio.cn>",
+      ATTENTION_RESEND_TEMPLATE_ID: "attention-login-code",
+      NODE_ENV: "test",
+      RESEND_API_KEY: "test_resend_api_key",
+    });
+
+    const sending = sender.send({
+      challengeId: "018f6a43-36c7-75f1-bf3d-3f2cfbd20c01",
+      code: "123456",
+      email: "member@example.com",
+      expiresAt: new Date(Date.now() + 10 * 60_000),
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await sending;
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const attempts = fetchMock.mock.calls.map(([url, init]) => ({
+      body: init?.body,
+      idempotencyKey: new Headers(init?.headers).get("Idempotency-Key"),
+      url,
+    }));
+    expect(attempts).toEqual([attempts[0], attempts[0], attempts[0]]);
+  });
+
+  it("stops after three transient Resend transport failures", async () => {
+    vi.useFakeTimers();
+    const timeoutError = new Error("request timed out");
+    timeoutError.name = "TimeoutError";
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(timeoutError);
+    vi.stubGlobal("fetch", fetchMock);
+    const sender = getEmailOtpSender({
+      ATTENTION_EMAIL_PROVIDER: "resend",
+      ATTENTION_RESEND_FROM: "Attention <no_reply@service.noveltystudio.cn>",
+      ATTENTION_RESEND_TEMPLATE_ID: "attention-login-code",
+      NODE_ENV: "test",
+      RESEND_API_KEY: "test_resend_api_key",
+    });
+
+    const sending = sender.send({
+      challengeId: "018f6a43-36c7-75f1-bf3d-3f2cfbd20c01",
+      code: "123456",
+      email: "member@example.com",
+      expiresAt: new Date(Date.now() + 10 * 60_000),
+    });
+    const rejection = expect(sending).rejects.toThrow("request timed out");
+    await vi.advanceTimersByTimeAsync(1_000);
+    await rejection;
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it.each([

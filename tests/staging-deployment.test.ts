@@ -358,14 +358,14 @@ describe("staging application rollback", () => {
     mkdirSync(stateDirectory, { mode: 0o700 });
     writeFileSync(resolve(stateDirectory, "current-release"), "fedcba987654\n");
     writeFileSync(resolve(stateDirectory, "previous-release"), "0123456789ab\n");
-    writeFileSync(resolve(stateDirectory, "current-schema-head"), "1785937200000\n");
-    writeFileSync(resolve(stateDirectory, "previous-schema-head"), "1785937200000\n");
 
     const journal = JSON.parse(
       readFileSync(resolve(root, "packages/db/drizzle/meta/_journal.json"), "utf8"),
     ) as { entries: Array<{ when: number }> };
     const expectedCount = String(journal.entries.length);
     const expectedHead = String(Math.max(...journal.entries.map((entry) => entry.when)));
+    writeFileSync(resolve(stateDirectory, "current-schema-head"), `${expectedHead}\n`);
+    writeFileSync(resolve(stateDirectory, "previous-schema-head"), `${expectedHead}\n`);
 
     const dockerLog = resolve(directory, "docker.log");
     const fakeDocker = resolve(directory, "docker");
@@ -443,6 +443,7 @@ describe("staging release source gate", () => {
       "packages/db/drizzle/0016_attention_id.sql",
       "packages/db/drizzle/0017_consumer_invite_quota.sql",
       "packages/db/drizzle/0018_schema_checkpoint.sql",
+      "packages/db/drizzle/0019_login_challenge_delivery_failure.sql",
       "packages/db/drizzle/meta/0018_snapshot.json",
       "packages/db/drizzle/meta/_journal.json",
     ];

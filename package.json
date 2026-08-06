@@ -17,6 +17,7 @@
     "lint": "eslint .",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "vitest run",
+    "test:e2e:resend": "pnpm --filter @attention/web test:e2e:resend",
     "test:watch": "vitest",
     "db:generate": "pnpm --filter @attention/db generate",
     "db:migrate": "pnpm --filter @attention/db migrate"
