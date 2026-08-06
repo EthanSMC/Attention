@@ -1,12 +1,12 @@
 import { listModerationCourtCases } from "@attention/db";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 
 import {
   ModerationCourt,
   type ModerationCourtItem,
 } from "../../../components/moderation-court";
+import { LoginModuleFallback } from "../../../components/login-module";
 import { PageIntro } from "../../../components/page-intro";
 import { getWebDatabase } from "../../../server/db";
 import { getPagePrincipal } from "../../../server/session";
@@ -16,7 +16,7 @@ export const metadata: Metadata = { title: "Filter 小法庭" };
 
 export default async function ModerationCourtPage() {
   const principal = await getPagePrincipal();
-  if (!principal) redirect("/login?return_to=%2Faccount%2Fcourt");
+  if (!principal) return <LoginModuleFallback returnTo="/account/court" />;
   if (!principal.isFilter) {
     return (
       <div className="page-shell page-shell--form">

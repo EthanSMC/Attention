@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
 
 import { AccountSettingsShell } from "../../../components/account-settings-shell";
 import { ConnectionManager } from "../../../components/connection-manager";
+import { LoginModuleFallback } from "../../../components/login-module";
 import { loadConnectionOverview } from "../../../server/account";
 import { getWebDatabase } from "../../../server/db";
 import { getPagePrincipal } from "../../../server/session";
@@ -16,7 +16,9 @@ function publicOrigin(): string {
 
 export default async function ConnectionsPage() {
   const principal = await getPagePrincipal();
-  if (!principal) redirect("/login?return_to=%2Faccount%2Fconnections");
+  if (!principal) {
+    return <LoginModuleFallback returnTo="/account/connections" />;
+  }
   const connections = await loadConnectionOverview(getWebDatabase(), principal.accountId);
   const origin = publicOrigin();
   return (

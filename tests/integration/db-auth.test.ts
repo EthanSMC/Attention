@@ -78,6 +78,7 @@ import {
 } from "../../apps/web/src/server/account";
 
 import {
+  cancelLoginChallenge,
   completeChannelPendingRequest,
   confirmChannelBindIntent,
   createApiCredential,
@@ -537,6 +538,33 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
         secondRuntime.sql.unsafe("RESET ROLE").catch(() => undefined),
       ]);
       await Promise.all([firstRuntime.close(), secondRuntime.close()]);
+    }
+  });
+
+  it("does not count cancelled undelivered challenges toward resend limits", async () => {
+    const runtime = createDatabase(databaseUrl!, { maxConnections: 1 });
+    const now = new Date("2026-08-06T12:00:00.000Z");
+    try {
+      await runtime.sql.unsafe("SET ROLE attention_web_runtime");
+      for (let attempt = 0; attempt < 21; attempt += 1) {
+        const cancelled = await createLoginChallenge(runtime.db, {
+          email: "delivery-failed@example.com",
+          now,
+          requesterFingerprint: "e".repeat(64),
+        });
+        await cancelLoginChallenge(runtime.db, cancelled.challengeId);
+      }
+
+      await expect(
+        createLoginChallenge(runtime.db, {
+          email: "delivery-failed@example.com",
+          now,
+          requesterFingerprint: "e".repeat(64),
+        }),
+      ).resolves.toMatchObject({ retryAfterSeconds: 60 });
+    } finally {
+      await runtime.sql.unsafe("RESET ROLE").catch(() => undefined);
+      await runtime.close();
     }
   });
 

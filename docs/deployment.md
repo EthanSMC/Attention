@@ -120,7 +120,7 @@ Resend 模板源文件见 [`email-login-code-template.html`](email-login-code-te
 
 仓库的 `.env.compose.example` 默认是 Resend-only staging：Web 使用原生 Resend，`ATTENTION_DIGEST_WORKER_ENABLED=false`，日报 webhook URL/token 留空。若要启用日报，必须同时设置 `ATTENTION_DIGEST_WORKER_ENABLED=true`、`ATTENTION_EMAIL_WEBHOOK_URL` 与 `ATTENTION_EMAIL_WEBHOOK_TOKEN`。Compose 允许日报关闭时传入空 webhook 值；一旦日报开启，Worker 会构造 webhook provider，并在任一凭据缺失时 fail closed。
 
-`PUBLIC_FEED_PREVIEW_LIMIT`、价格展示、OAuth 动态注册全局/单来源频率等有安全默认值，但仍应在部署配置中显式审阅。生产不要设置 `ATTENTION_AUTH_EXPOSE_OTP=true`；即使误设，代码也不会在 production 展示验证码。
+`PUBLIC_FEED_PREVIEW_LIMIT`、价格展示、OAuth 动态注册全局/单来源频率等有安全默认值，但仍应在部署配置中显式审阅。登录验证码不会写入浏览器响应；本地和 staging 的邮件 E2E 也必须通过实际邮件 provider 完成发送验证。
 
 若启用订阅结账，设置 `ATTENTION_BILLING_PROVIDER=webhook`、可信的 `ATTENTION_BILLING_CHECKOUT_WEBHOOK` 与 `ATTENTION_BILLING_WEBHOOK_SECRET`。仓库内的 `demo` 仅适用于非生产环境；当前仓库不包含真实支付商、退款/拒付对账或地区合规实现。
 

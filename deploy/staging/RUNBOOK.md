@@ -183,7 +183,7 @@ Before validation, confirm operationally that:
   `verification_code` and `valid_minutes`, and uses neutral copy that does not
   reveal whether an account exists;
 - `ATTENTION_DIGEST_WORKER_ENABLED=false` for the first deployment;
-- `ATTENTION_AUTH_EXPOSE_OTP` is absent or false;
+- the obsolete `ATTENTION_AUTH_EXPOSE_OTP` setting is absent;
 - the generated domain, Compose project, loopback bind, port, and `/data` paths
   retain the fixed values in this runbook.
 
@@ -378,7 +378,7 @@ file, repository, ticket, or shell history. In a private browser window:
 
 Failure to deliver, unresolved template variables, an invalid sender, or an OTP
 exposed in the HTTP response is a release blocker. Do not switch to the console
-provider or enable `ATTENTION_AUTH_EXPOSE_OTP` as a workaround.
+provider or reintroduce OTP response exposure as a workaround.
 
 ## 9. Backup and application rollback
 

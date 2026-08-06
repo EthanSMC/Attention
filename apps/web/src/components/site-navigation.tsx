@@ -45,13 +45,19 @@ function SignalLogo() {
 }
 
 function NavigationLinks({
+  authenticated,
   mobile = false,
 }: {
+  authenticated: boolean;
   mobile?: boolean;
 }) {
   const pathname = usePathname();
 
   return navigationItems.map((item) => {
+    const href =
+      item.href === "/account" && !authenticated
+        ? "/login?return_to=%2Faccount"
+        : item.href;
     const active =
       pathname === item.href ||
       (item.href === "/account"
@@ -63,7 +69,7 @@ function NavigationLinks({
       <Link
         aria-current={active ? "page" : undefined}
         className={mobile ? "mobile-nav__link" : "site-nav__link"}
-        href={item.href}
+        href={href}
         key={item.href}
         title={item.label}
       >
@@ -90,7 +96,7 @@ export function SiteHeader({ identity }: { identity: NavigationIdentity | null }
           <span>Attention</span>
         </Link>
         <nav aria-label="主导航" className="site-nav">
-          <NavigationLinks />
+          <NavigationLinks authenticated={identity !== null} />
         </nav>
         <div className="account-nav">
           <button
@@ -132,10 +138,10 @@ export function SiteHeader({ identity }: { identity: NavigationIdentity | null }
   );
 }
 
-export function MobileNavigation() {
+export function MobileNavigation({ identity }: { identity: NavigationIdentity | null }) {
   return (
     <nav aria-label="移动端主导航" className="mobile-nav">
-      <NavigationLinks mobile />
+      <NavigationLinks authenticated={identity !== null} mobile />
     </nav>
   );
 }

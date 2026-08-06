@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { safeReturnTo } from "@attention/auth";
 
 import { AuthModal } from "../../../components/auth-modal";
-import { EmailLoginForm } from "../../../components/email-login-form";
+import { LoginModule } from "../../../components/login-module";
 import { getPagePrincipal } from "../../../server/session";
 
 export const dynamic = "force-dynamic";
@@ -17,9 +17,7 @@ export default async function InterceptedLoginPage({
   if (principal) redirect(returnTo);
   return (
     <AuthModal>
-      <p className="login-panel__step">Attention 账号</p>
-      <h2>登录</h2>
-      <EmailLoginForm presentation="modal" returnTo={returnTo} />
+      <LoginModule returnTo={returnTo} />
     </AuthModal>
   );
 }

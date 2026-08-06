@@ -76,7 +76,9 @@ pnpm dev:wechat
 
 当前 Worker 默认完成确定性元数据整理；未设置 `ATTENTION_AI_MODEL` 时，摘要会进入明确的 unavailable 状态，网页 Agent 使用关键词检索降级。配置 `ATTENTION_AI_MODEL`、可选的 `ATTENTION_AI_BASE_URL` 和 `ATTENTION_AI_API_KEY` 后，Worker 会通过隔离 Fetcher 临时读取受限页面内容并生成摘要/标签，网页 Agent 会基于当前账号可访问的引用生成回答。原文正文不会写入数据库，供应商失败也不会伪装成生成成功。
 
-本地验证码与 Domain 日报可使用 `ATTENTION_EMAIL_PROVIDER=console`；只有非生产环境设置 `ATTENTION_AUTH_EXPOSE_OTP=true` 时，页面才会显示开发验证码。生产 Web 登录验证码可使用原生 Resend 或 webhook provider；Worker 日报目前仍只使用 webhook adapter。日报请求使用 `template=attention-daily-digest-v1`，并以 delivery UUID 同时填充 `message_id` 与 `Idempotency-Key`。供应商必须按该键去重重试；仓库不包含供应商密钥。
+普通本地开发与 Domain 日报可使用 `ATTENTION_EMAIL_PROVIDER=console`，验证码只写入服务端终端，浏览器和 API 响应永远不会收到验证码。登录邮件 E2E 必须配置原生 Resend 并实际调用 Resend 服务；生产 Web 登录验证码也可使用原生 Resend 或 webhook provider。Worker 日报目前仍只使用 webhook adapter。日报请求使用 `template=attention-daily-digest-v1`，并以 delivery UUID 同时填充 `message_id` 与 `Idempotency-Key`。供应商必须按该键去重重试；仓库不包含供应商密钥。
+
+配置 `apps/web/.env.local` 中的真实 Resend provider、发件人和 `attention-login-code` 模板后，可运行 `DATABASE_URL=... ATTENTION_AUTH_SECRET=... pnpm test:e2e:resend`。该入口会在缺少 Resend 配置时直接失败，使用 Resend 官方交付测试地址实际发送，并断言浏览器响应不包含验证码。
 
 Member 与 Filter 可在 `/account/digests` 订阅 Domain 并设置 IANA 时区、发送开始时间和窗口长度。Worker 每天选择账号当地日期的前一日新增内容；无新增不发。真正调用邮件 adapter 前会重新检查当前 Member/Filter 权益、退订状态、Domain/Filter/Collection 公开资格、摘要隐藏状态和条目快照的 `visibility_version`。第一版只种子化 AI Domain，表结构支持后续增加独立 Domain。
 
