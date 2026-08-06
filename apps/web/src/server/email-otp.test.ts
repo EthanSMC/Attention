@@ -24,7 +24,7 @@ describe("email OTP provider configuration", () => {
     const sender = getEmailOtpSender({
       ATTENTION_EMAIL_PROVIDER: "resend",
       ATTENTION_RESEND_FROM: "Attention <no_reply@service.noveltystudio.cn>",
-      ATTENTION_RESEND_TEMPLATE_ID: "login-code-attention",
+      ATTENTION_RESEND_TEMPLATE_ID: "attention-login-code",
       NODE_ENV: "test",
       RESEND_API_KEY: "test_resend_api_key",
     });
@@ -42,7 +42,7 @@ describe("email OTP provider configuration", () => {
         from: "Attention <no_reply@service.noveltystudio.cn>",
         subject: "Attention 登录验证码",
         template: {
-          id: "login-code-attention",
+          id: "attention-login-code",
           variables: {
             valid_minutes: 10,
             verification_code: "123456",
@@ -71,7 +71,7 @@ describe("email OTP provider configuration", () => {
     const sender = getEmailOtpSender({
       ATTENTION_EMAIL_PROVIDER: "resend",
       ATTENTION_RESEND_FROM: "Attention <no_reply@service.noveltystudio.cn>",
-      ATTENTION_RESEND_TEMPLATE_ID: "login-code-attention",
+      ATTENTION_RESEND_TEMPLATE_ID: "attention-login-code",
       NODE_ENV: "test",
       RESEND_API_KEY: "test_resend_api_key",
     });
@@ -91,8 +91,8 @@ describe("email OTP provider configuration", () => {
   });
 
   it.each([
-    [undefined, "Attention <no_reply@service.noveltystudio.cn>", "login-code-attention"],
-    ["test_resend_api_key", undefined, "login-code-attention"],
+    [undefined, "Attention <no_reply@service.noveltystudio.cn>", "attention-login-code"],
+    ["test_resend_api_key", undefined, "attention-login-code"],
     ["test_resend_api_key", "Attention <no_reply@service.noveltystudio.cn>", undefined],
   ])(
     "rejects incomplete native Resend configuration",
@@ -120,7 +120,7 @@ describe("email OTP provider configuration", () => {
     const sender = getEmailOtpSender({
       ATTENTION_EMAIL_PROVIDER: "resend",
       ATTENTION_RESEND_FROM: "Attention <no_reply@service.noveltystudio.cn>",
-      ATTENTION_RESEND_TEMPLATE_ID: "login-code-attention",
+      ATTENTION_RESEND_TEMPLATE_ID: "attention-login-code",
       NODE_ENV: "test",
       RESEND_API_KEY: "test_resend_api_key",
     });

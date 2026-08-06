@@ -15,7 +15,7 @@
 - Treat public reachability of host port `5432` as a hard deployment blocker until the Alibaba Cloud security group is corrected.
 - Never commit, print, or copy real API keys, database passwords, or application secrets into logs.
 - The Resend key previously pasted into chat must be revoked; staging accepts only a newly rotated key stored outside the repository.
-- Staging email uses the single neutral `login-code-attention` template with `verification_code` and `valid_minutes` variables.
+- Staging email uses the single neutral `attention-login-code` template with `verification_code` and `valid_minutes` variables.
 - First staging deployment keeps digests and WeChat disabled.
 - Deployment commands must always use Compose project `attention-staging` and both the base and staging Compose files.
 - Build on the 4-core/8-GB ECS serially to avoid starving Novelty QA.
