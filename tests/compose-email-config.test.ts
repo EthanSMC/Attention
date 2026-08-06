@@ -87,7 +87,7 @@ describe("Compose email configuration", () => {
       ATTENTION_EMAIL_WEBHOOK_TOKEN: "",
       ATTENTION_EMAIL_WEBHOOK_URL: "",
       ATTENTION_RESEND_FROM: "Attention <no_reply@service.noveltystudio.cn>",
-      ATTENTION_RESEND_TEMPLATE_ID: "login-code-attention",
+      ATTENTION_RESEND_TEMPLATE_ID: "attention-login-code",
       RESEND_API_KEY: "replace-me-with-a-dedicated-resend-api-key",
     });
 
@@ -96,7 +96,7 @@ describe("Compose email configuration", () => {
       ATTENTION_CONSUMER_INVITE_QUOTA: "1",
       ATTENTION_EMAIL_PROVIDER: "resend",
       ATTENTION_RESEND_FROM: "Attention <no_reply@service.noveltystudio.cn>",
-      ATTENTION_RESEND_TEMPLATE_ID: "login-code-attention",
+      ATTENTION_RESEND_TEMPLATE_ID: "attention-login-code",
       RESEND_API_KEY: "replace-me-with-a-dedicated-resend-api-key",
     });
 

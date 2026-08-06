@@ -78,7 +78,7 @@ umask 077
   printf 'ATTENTION_EMAIL_PROVIDER=resend\n'
   printf 'RESEND_API_KEY=replace-me-with-a-new-rotated-resend-key\n'
   printf '%s\n' 'ATTENTION_RESEND_FROM="Attention <no_reply@service.noveltystudio.cn>"'
-  printf 'ATTENTION_RESEND_TEMPLATE_ID=login-code-attention\n'
+  printf 'ATTENTION_RESEND_TEMPLATE_ID=attention-login-code\n'
   printf 'ATTENTION_EMAIL_WEBHOOK_URL=\n'
   printf 'ATTENTION_EMAIL_WEBHOOK_TOKEN=\n'
   printf 'ATTENTION_DIGEST_WORKER_ENABLED=false\n'

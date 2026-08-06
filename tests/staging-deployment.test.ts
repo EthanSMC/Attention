@@ -70,7 +70,7 @@ describe("staging environment preparation", () => {
       ATTENTION_MIGRATION_DATABASE_NAME: "attention_staging",
       ATTENTION_MIGRATION_DATABASE_ROLE: "attention_migration_owner",
       ATTENTION_POSTGRES_DATA_PATH: "/data/attention-staging/postgres",
-      ATTENTION_RESEND_TEMPLATE_ID: "login-code-attention",
+      ATTENTION_RESEND_TEMPLATE_ID: "attention-login-code",
       COMPOSE_PROJECT_NAME: "attention-staging",
       NEXT_PUBLIC_APP_URL: "https://attention-staging.noveltystudio.cn",
       WEB_BIND_ADDRESS: "127.0.0.1",

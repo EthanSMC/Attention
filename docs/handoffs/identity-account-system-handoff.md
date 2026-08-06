@@ -120,7 +120,7 @@
 
 本地可演示 adapter 不等于生产供应商已经接入：
 
-- 邮件登录：Web 可配置 `ATTENTION_EMAIL_PROVIDER=resend`，并从 secret store 注入 `RESEND_API_KEY`、`ATTENTION_RESEND_FROM`、`ATTENTION_RESEND_TEMPLATE_ID`。建议模板 alias 为 `login-code-attention`，注册、登录、重新验证和密码重设验证共用同一中性文案，只包含 `verification_code` 与 `valid_minutes`；当前 TTL 为 10 分钟。现有 `welcome-email-attention` 与 `password-reset-attention` 不得按账号是否存在分别发送，以免形成账号枚举侧信道。模板源文件见 [`../email-login-code-template.html`](../email-login-code-template.html)。
+- 邮件登录：Web 可配置 `ATTENTION_EMAIL_PROVIDER=resend`，并从 secret store 注入 `RESEND_API_KEY`、`ATTENTION_RESEND_FROM`、`ATTENTION_RESEND_TEMPLATE_ID`。当前模板 alias 为 `attention-login-code`，注册、登录、重新验证和密码重设验证共用同一中性文案，只包含 `verification_code` 与 `valid_minutes`；当前 TTL 为 10 分钟。现有 `welcome-email-attention` 与 `password-reset-attention` 不得按账号是否存在分别发送，以免形成账号枚举侧信道。模板源文件见 [`../email-login-code-template.html`](../email-login-code-template.html)。
 - 邮件兼容与日报：登录 OTP 仍保留 `console`（仅开发）和 `webhook` provider。Resend-only staging 必须设置 `ATTENTION_DIGEST_WORKER_ENABLED=false`，webhook URL/token 可以留空；启用日报时必须补齐两项 webhook 凭据，否则 Worker 启动时 fail closed。Worker 日报继续使用 webhook adapter、`attention-daily-digest-v1` 模板和 delivery UUID 幂等键，供应商需返回可选的 `message_id` 并保证重复请求不重复投递。
 - 支付：`ATTENTION_BILLING_PROVIDER=webhook` 与 checkout webhook；生产禁用 demo provider。首订、已结算续费、退款和拒付账本已有 provider-neutral 服务合同，但仍需真实支付商的验签 webhook 和对账层调用，仓库没有假装某一支付商已联调。
 - 微信：需要官方账号资质、签名/消息加密、回调和回复 Adapter；内部 Channel 合同与账号绑定已经可用。

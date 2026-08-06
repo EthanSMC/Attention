@@ -108,7 +108,7 @@ PostgreSQL 至少使用三种身份：
 | `ATTENTION_EMAIL_PROVIDER` | Web 生产使用 `resend` 或 `webhook`，不能使用 `console`。原生 Resend 仅发送统一身份验证码。 |
 | `RESEND_API_KEY` | `resend` provider 的专用 Key，只放 secret store；泄露后必须轮换。 |
 | `ATTENTION_RESEND_FROM` | 已在 Resend 验证的发件人，例如 `Attention <no_reply@service.noveltystudio.cn>`。 |
-| `ATTENTION_RESEND_TEMPLATE_ID` | 中性统一验证码模板 ID/alias，建议 `login-code-attention`。 |
+| `ATTENTION_RESEND_TEMPLATE_ID` | 中性统一验证码模板 ID/alias，当前为 `attention-login-code`。 |
 | `ATTENTION_EMAIL_WEBHOOK_URL` | `webhook` provider 的无 credentials/query/fragment 可信 HTTPS 邮件入口。 |
 | `ATTENTION_EMAIL_WEBHOOK_TOKEN` | `webhook` provider 的邮件服务 Bearer token。 |
 | `ATTENTION_MCP_PUBLIC_URL` | 对外 HTTPS MCP resource URL。 |

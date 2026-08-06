@@ -179,7 +179,7 @@ Before validation, confirm operationally that:
   into chat or a ticket;
 - `service.noveltystudio.cn` is a verified Resend sending domain and the From
   address is authorized;
-- the published template alias is `login-code-attention`, accepts only
+- the published template alias is `attention-login-code`, accepts only
   `verification_code` and `valid_minutes`, and uses neutral copy that does not
   reveal whether an account exists;
 - `ATTENTION_DIGEST_WORKER_ENABLED=false` for the first deployment;
@@ -369,7 +369,7 @@ file, repository, ticket, or shell history. In a private browser window:
 2. Confirm the UI advances without revealing whether the mailbox already has
    an account.
 3. Confirm exactly one message arrives from the verified Attention sender. The
-   neutral `login-code-attention` template must have both variables rendered,
+   neutral `attention-login-code` template must have both variables rendered,
    must not reveal account existence, and should state the 10-minute validity.
 4. Enter the received code in the browser. Complete terms consent if this is a
    new staging-only account, and confirm the authenticated page loads.

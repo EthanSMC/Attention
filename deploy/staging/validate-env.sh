@@ -140,7 +140,7 @@ require_equal ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER x-attention-client-source
 require_equal WEB_BIND_ADDRESS 127.0.0.1
 require_equal WEB_PUBLISH_PORT 9199
 require_equal ATTENTION_EMAIL_PROVIDER resend
-require_equal ATTENTION_RESEND_TEMPLATE_ID login-code-attention
+require_equal ATTENTION_RESEND_TEMPLATE_ID attention-login-code
 require_equal ATTENTION_DIGEST_WORKER_ENABLED false
 require_equal WECHAT_ASYNC_REPLY_PROVIDER disabled
 
