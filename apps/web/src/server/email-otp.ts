@@ -173,10 +173,3 @@ export function getEmailOtpSender(
   }
   throw new Error(`Unsupported ATTENTION_EMAIL_PROVIDER: ${provider}`);
 }
-
-export function mayExposeDevelopmentOtp(): boolean {
-  return (
-    process.env.NODE_ENV !== "production" &&
-    process.env.ATTENTION_AUTH_EXPOSE_OTP?.trim().toLocaleLowerCase("en-US") === "true"
-  );
-}

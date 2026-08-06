@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "test:e2e:resend": "set -a; . ./.env.local; set +a; cd ../..; ATTENTION_LIVE_RESEND_E2E=true vitest run apps/web/src/app/api/auth/email/start/route.live.test.ts",
     "start": "next start",
     "typecheck": "tsc --noEmit"
   },

@@ -9,7 +9,6 @@ interface ApiErrorBody {
 
 interface ChallengeResponse {
   challenge_id: string;
-  development_code?: string;
   expires_at: string;
   retry_after_seconds: number;
 }
@@ -200,11 +199,6 @@ export function EmailLoginForm({
           placeholder="000000"
           required
         />
-        {challenge.development_code ? (
-          <p className="auth-form__development-code">
-            本地验证码 <code>{challenge.development_code}</code>
-          </p>
-        ) : null}
         <label className="auth-form__consent">
           <input name="accept_terms" type="checkbox" />
           <span>
