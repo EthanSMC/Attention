@@ -35,7 +35,7 @@ export default async function RootLayout({
         <SiteHeader identity={identity} />
         <main id="main-content">{children}</main>
         {auth}
-        <MobileNavigation identity={identity} />
+        <MobileNavigation />
       </body>
     </html>
   );

@@ -3125,31 +3125,6 @@ main {
     display: none;
   }
 }
-.account-nav__collect {
-  align-items: center;
-  background: var(--ink, #1d1d1f);
-  border: 0;
-  border-radius: 9px;
-  color: white;
-  cursor: pointer;
-  display: inline-flex;
-  min-height: 44px;
-  font-size: 13px;
-  font-weight: 560;
-  gap: 9px;
-  padding: 7px 11px;
-  text-decoration: none;
-}
-
-.account-nav__collect:hover {
-  background: var(--ai-signal);
-}
-
-.account-nav__collect svg {
-  height: 17px;
-  width: 17px;
-}
-
 .site-nav__settings {
   display: none;
 }
@@ -3619,10 +3594,6 @@ main {
 }
 
 @media (max-width: 780px) {
-  .account-nav__collect span {
-    display: none;
-  }
-
   .page-shell--profile {
     padding-top: 28px;
   }
@@ -5322,5 +5293,60 @@ main {
   .account-profile__stats {
     grid-column: auto;
     grid-row: auto;
+  }
+}
+
+/* Keep the floating collection action and login in one visual language. */
+.collect-fab,
+.account-nav__login {
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 9px;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: 13px;
+  font-weight: 560;
+  text-decoration: none;
+}
+
+.collect-fab {
+  position: fixed;
+  z-index: 60;
+  display: inline-flex;
+  right: 24px;
+  bottom: 24px;
+  gap: 9px;
+  padding: 0 11px;
+  cursor: pointer;
+}
+
+.collect-fab svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+}
+
+.collect-fab:hover,
+.account-nav__login:hover {
+  background: var(--ai-signal);
+}
+
+@media (min-width: 980px) {
+  .account-nav__login {
+    width: 100%;
+    padding: 0;
+  }
+}
+
+@media (max-width: 979px) {
+  .mobile-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .collect-fab {
+    right: 16px;
+    bottom: calc(78px + env(safe-area-inset-bottom));
   }
 }
