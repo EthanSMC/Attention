@@ -1,6 +1,5 @@
 import { loadGrowthDashboard } from "@attention/auth";
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
 
 import { AccountSettingsShell } from "../../../components/account-settings-shell";
 import { AccountSettingsForm } from "../../../components/account-settings-form";
@@ -8,6 +7,7 @@ import {
   GrowthRewards,
   type GrowthRewardsData,
 } from "../../../components/growth-rewards";
+import { LoginModuleFallback } from "../../../components/login-module";
 import { loadAccountOverview } from "../../../server/account";
 import { getWebDatabase } from "../../../server/db";
 import { loadCurrentSubscription } from "../../../server/membership";
@@ -18,14 +18,16 @@ export const metadata: Metadata = { title: "账号资料" };
 
 export default async function AccountSettingsPage() {
   const principal = await getPagePrincipal();
-  if (!principal) redirect("/login?return_to=%2Faccount%2Fsettings");
+  if (!principal) {
+    return <LoginModuleFallback returnTo="/account/settings" />;
+  }
   const db = getWebDatabase();
   const [account, currentSubscription, dashboard] = await Promise.all([
     loadAccountOverview(db, principal.accountId),
     loadCurrentSubscription(db, principal.accountId),
     loadGrowthDashboard(db, principal.accountId),
   ]);
-  if (!account) redirect("/login?return_to=%2Faccount%2Fsettings");
+  if (!account) return <LoginModuleFallback returnTo="/account/settings" />;
 
   const rewardsData: GrowthRewardsData = {
     consumerInvite: {

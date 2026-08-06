@@ -13,6 +13,21 @@ export interface EmailOtpSender {
   send(message: EmailOtpMessage): Promise<void>;
 }
 
+const resendTransportRetryDelaysMs = [250, 750] as const;
+
+function isRetryableTransportError(error: unknown): boolean {
+  return (
+    error instanceof TypeError ||
+    (error instanceof Error && error.name === "TimeoutError")
+  );
+}
+
+async function waitForResendRetry(delayMs: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
+}
+
 function maskEmail(email: string): string {
   const separator = email.lastIndexOf("@");
   if (separator <= 0) return "***";
@@ -72,28 +87,41 @@ class ResendEmailOtpSender implements EmailOtpSender {
       1,
       Math.ceil((message.expiresAt.getTime() - Date.now()) / 60_000),
     );
-    const response = await fetch("https://api.resend.com/emails", {
-      body: JSON.stringify({
-        from: this.from,
-        subject: "Attention 登录验证码",
-        template: {
-          id: this.templateId,
-          variables: {
-            valid_minutes: String(validMinutes),
-            verification_code: message.code,
+    let response: Response | undefined;
+    for (let attempt = 0; attempt <= resendTransportRetryDelaysMs.length; attempt += 1) {
+      try {
+        response = await fetch("https://api.resend.com/emails", {
+          body: JSON.stringify({
+            from: this.from,
+            subject: "Attention 登录验证码",
+            template: {
+              id: this.templateId,
+              variables: {
+                valid_minutes: String(validMinutes),
+                verification_code: message.code,
+              },
+            },
+            to: [message.email],
+          }),
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            "Content-Type": "application/json",
+            "Idempotency-Key": `attention-login-otp:${message.challengeId}`,
           },
-        },
-        to: [message.email],
-      }),
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json",
-        "Idempotency-Key": `attention-login-otp:${message.challengeId}`,
-      },
-      method: "POST",
-      redirect: "error",
-      signal: AbortSignal.timeout(8_000),
-    });
+          method: "POST",
+          redirect: "error",
+          signal: AbortSignal.timeout(8_000),
+        });
+        break;
+      } catch (error) {
+        const retryDelayMs = resendTransportRetryDelaysMs[attempt];
+        if (retryDelayMs === undefined || !isRetryableTransportError(error)) {
+          throw error;
+        }
+        await waitForResendRetry(retryDelayMs);
+      }
+    }
+    if (!response) throw new Error("OTP email provider did not respond");
     if (!response.ok) {
       throw new Error(`OTP email provider returned ${response.status}`);
     }

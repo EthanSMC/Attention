@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 
 import { CollectionList } from "../../components/collection-list";
+import { LoginModuleFallback } from "../../components/login-module";
 import { ProfileIdentityEditor } from "../../components/profile-identity-editor";
 import { loadAccountOverview } from "../../server/account";
 import { loadMyCollections } from "../../server/content-queries";
@@ -18,13 +18,13 @@ export const metadata: Metadata = {
 
 export default async function AccountPage() {
   const principal = await getPagePrincipal();
-  if (!principal) redirect("/login?return_to=%2Faccount");
+  if (!principal) return <LoginModuleFallback returnTo="/account" />;
   const db = getWebDatabase();
   const [account, collections] = await Promise.all([
     loadAccountOverview(db, principal.accountId),
     loadMyCollections(db, principal.accountId),
   ]);
-  if (!account) redirect("/login?return_to=%2Faccount");
+  if (!account) return <LoginModuleFallback returnTo="/account" />;
 
   const publicCount = collections.filter(
     (item) => item.effectiveVisibility === "public",

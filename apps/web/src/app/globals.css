@@ -1788,13 +1788,14 @@ main {
 }
 
 @media (min-width: 768px) {
+  .page-intro {
+    margin-bottom: 48px;
+  }
+}
+
+@media (min-width: 980px) {
   body {
     padding-bottom: 0;
-  }
-
-  .site-header {
-    position: sticky;
-    top: 0;
   }
 
   .site-nav {
@@ -1803,10 +1804,6 @@ main {
 
   .mobile-nav {
     display: none;
-  }
-
-  .page-intro {
-    margin-bottom: 48px;
   }
 
 }
@@ -5186,12 +5183,12 @@ main {
   min-height: 44px;
 }
 
-@media (max-width: 780px) {
-  .site-header--authenticated {
+@media (width < 980px) {
+  .site-header {
     display: none;
   }
 
-  .site-header--authenticated + main {
+  .site-header + main {
     min-height: 100vh;
   }
 }

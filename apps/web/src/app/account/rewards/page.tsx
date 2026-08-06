@@ -1,11 +1,11 @@
 import { loadGrowthDashboard } from "@attention/auth";
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
 
 import {
   GrowthRewards,
   type GrowthRewardsData,
 } from "../../../components/growth-rewards";
+import { LoginModuleFallback } from "../../../components/login-module";
 import { PageIntro } from "../../../components/page-intro";
 import { getWebDatabase } from "../../../server/db";
 import { getPagePrincipal } from "../../../server/session";
@@ -15,7 +15,7 @@ export const metadata: Metadata = { title: "邀请、年卡与积分" };
 
 export default async function RewardsPage() {
   const principal = await getPagePrincipal();
-  if (!principal) redirect("/login?return_to=%2Faccount%2Frewards");
+  if (!principal) return <LoginModuleFallback returnTo="/account/rewards" />;
   const dashboard = await loadGrowthDashboard(
     getWebDatabase(),
     principal.accountId,

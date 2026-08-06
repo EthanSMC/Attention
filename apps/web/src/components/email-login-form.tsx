@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { useRouter } from "next/navigation";
 
 interface ApiErrorBody {
   error?: { code?: string; retry_after_seconds?: number };
@@ -45,14 +44,11 @@ async function readApiError(response: Response): Promise<string> {
 
 export function EmailLoginForm({
   consumerInviteToken,
-  presentation = "page",
   returnTo,
 }: {
   consumerInviteToken?: string;
-  presentation?: "modal" | "page";
   returnTo: string;
 }) {
-  const router = useRouter();
   const [method, setMethod] = useState<"code" | "password">("code");
   const [stage, setStage] = useState<"email" | "verify">("email");
   const [email, setEmail] = useState("");
@@ -61,11 +57,6 @@ export function EmailLoginForm({
   const [error, setError] = useState<string | null>(null);
 
   function completeLogin(redirectTo: string) {
-    if (presentation === "modal") {
-      router.back();
-      router.refresh();
-      return;
-    }
     window.location.assign(redirectTo);
   }
 

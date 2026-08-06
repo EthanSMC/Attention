@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
 
 import { AccountSettingsShell } from "../../../components/account-settings-shell";
 import { DigestSettingsForm } from "../../../components/digest-settings-form";
+import { LoginModuleFallback } from "../../../components/login-module";
 import { getWebDatabase } from "../../../server/db";
 import { loadDigestSettings } from "../../../server/digest-settings";
 import { getPagePrincipal } from "../../../server/session";
@@ -12,7 +12,7 @@ export const metadata: Metadata = { title: "日报" };
 
 export default async function DigestSettingsPage() {
   const principal = await getPagePrincipal();
-  if (!principal) redirect("/login?return_to=%2Faccount%2Fdigests");
+  if (!principal) return <LoginModuleFallback returnTo="/account/digests" />;
   const settings = await loadDigestSettings(getWebDatabase(), principal.accountId);
   return (
     <AccountSettingsShell

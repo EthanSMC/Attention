@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
 
 import { AccountSecurityForm } from "../../../components/account-security-form";
 import { AccountSettingsShell } from "../../../components/account-settings-shell";
+import { LoginModuleFallback } from "../../../components/login-module";
 import { loadAccountOverview } from "../../../server/account";
 import { getWebDatabase } from "../../../server/db";
 import { getPagePrincipal } from "../../../server/session";
@@ -12,10 +12,12 @@ export const metadata: Metadata = { title: "安全" };
 
 export default async function AccountSecurityPage() {
   const principal = await getPagePrincipal();
-  if (!principal) redirect("/login?return_to=%2Faccount%2Fsecurity");
+  if (!principal) {
+    return <LoginModuleFallback returnTo="/account/security" />;
+  }
 
   const account = await loadAccountOverview(getWebDatabase(), principal.accountId);
-  if (!account) redirect("/login?return_to=%2Faccount%2Fsecurity");
+  if (!account) return <LoginModuleFallback returnTo="/account/security" />;
 
   return (
     <AccountSettingsShell
