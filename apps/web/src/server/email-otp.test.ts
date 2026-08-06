@@ -9,7 +9,7 @@ describe("email OTP provider configuration", () => {
     vi.useRealTimers();
   });
 
-  it("sends the unified login template through the native Resend endpoint", async () => {
+  it("sends the unified login template with Resend-compatible variable types", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-04T12:00:00.000Z"));
     const timeoutSignal = new AbortController().signal;
@@ -44,7 +44,7 @@ describe("email OTP provider configuration", () => {
         template: {
           id: "attention-login-code",
           variables: {
-            valid_minutes: 10,
+            valid_minutes: "10",
             verification_code: "123456",
           },
         },

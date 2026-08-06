@@ -79,7 +79,7 @@ class ResendEmailOtpSender implements EmailOtpSender {
         template: {
           id: this.templateId,
           variables: {
-            valid_minutes: validMinutes,
+            valid_minutes: String(validMinutes),
             verification_code: message.code,
           },
         },
