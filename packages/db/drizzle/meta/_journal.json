@@ -134,6 +134,13 @@
       "when": 1785937200000,
       "tag": "0018_schema_checkpoint",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786014000000,
+      "tag": "0019_login_challenge_delivery_failure",
+      "breakpoints": true
     }
   ]
 }
