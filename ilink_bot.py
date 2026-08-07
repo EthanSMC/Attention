@@ -1,7 +1,7 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 ilink-bot —— 腾讯官方 iLink 接口的微信个人助手最小实现
-协议逻辑提取自 AstrBot v4.27.2 的 weixin_oc 适配器，只保留：
+协议逻辑提取自 Attention 的 weixin_oc 适配器，只保留：
   1. 扫码登录（终端二维码 + qrcode.png）
   2. 长轮询接收消息（微信龙虾只与扫码者本人对话，单会话）
   3. 文本回复（大脑可切换 echo / openai / codex），维护一份对话历史
