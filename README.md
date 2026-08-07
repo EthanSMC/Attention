@@ -1,6 +1,6 @@
-﻿# ilink-bot（iLink 微信个人助手最小机器人）
+# ilink-bot（iLink 微信个人助手最小机器人）
 
-协议逻辑提取自 AstrBot v4.27.2 的 weixin_oc 适配器。
+协议逻辑提取自 Attention 的 weixin_oc 适配器。
 微信龙虾（ClawBot）只与扫码者本人对话，因此本程序是单会话个人助手，
 维护一份对话历史（长度见 config.json 的 brain.history_len）。
 
