@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ChangeEvent,
@@ -10,6 +11,11 @@ import {
   type RefObject,
   type WheelEvent as ReactWheelEvent,
 } from "react";
+
+import {
+  profileNameEditorWidth,
+  shouldSubmitProfileNameEnter,
+} from "./profile-name-editor-behavior";
 
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const AVATAR_SIZE = 256;
@@ -126,6 +132,11 @@ export function ProfileIdentityEditor({
   const avatarButton = useRef<HTMLButtonElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const nameButton = useRef<HTMLButtonElement>(null);
+  const profileCopyRef = useRef<HTMLDivElement>(null);
+  const nameMeasureRef = useRef<HTMLSpanElement>(null);
+  const nameActionsRef = useRef<HTMLSpanElement>(null);
+  const initialNameEditorWidthRef = useRef(0);
+  const nameCompositionActiveRef = useRef(false);
   const avatarDraftRef = useRef<AvatarImageDraft | null>(null);
   const avatarInitial = Array.from(displayName.trim()).at(0) ?? "A";
 
@@ -135,6 +146,40 @@ export function ProfileIdentityEditor({
       if (avatarDraftRef.current) URL.revokeObjectURL(avatarDraftRef.current.src);
     };
   }, []);
+
+  useLayoutEffect(() => {
+    if (!editingName) return;
+
+    const updateWidth = () => {
+      const copy = profileCopyRef.current;
+      const measure = nameMeasureRef.current;
+      if (!copy || !measure) return;
+
+      const actions = nameActionsRef.current;
+      const actionSpace =
+        actions && window.getComputedStyle(actions).position === "absolute"
+          ? actions.getBoundingClientRect().width + 8
+          : 0;
+      setEditorWidth(
+        profileNameEditorWidth({
+          availableWidth: Math.max(
+            0,
+            copy.getBoundingClientRect().width - actionSpace,
+          ),
+          contentWidth: measure.getBoundingClientRect().width,
+          initialWidth: initialNameEditorWidthRef.current,
+        }),
+      );
+    };
+
+    updateWidth();
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(updateWidth);
+    if (profileCopyRef.current) observer.observe(profileCopyRef.current);
+    if (nameActionsRef.current) observer.observe(nameActionsRef.current);
+    return () => observer.disconnect();
+  }, [draftName, editingName]);
 
   function showToast(text: string, tone: "error" | "success" = "success") {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -154,6 +199,7 @@ export function ProfileIdentityEditor({
   }
 
   function closeNameEditor(nextName = displayName) {
+    nameCompositionActiveRef.current = false;
     setDraftName(nextName);
     setEditingName(false);
     requestAnimationFrame(() => nameButton.current?.focus());
@@ -268,7 +314,7 @@ export function ProfileIdentityEditor({
         type="file"
       />
 
-      <div className="account-profile__copy">
+      <div className="account-profile__copy" ref={profileCopyRef}>
         {editingName ? (
           <form
             className="profile-name-editor"
@@ -282,6 +328,13 @@ export function ProfileIdentityEditor({
             <label className="sr-only" htmlFor="quick-display-name">
               展示名
             </label>
+            <span
+              aria-hidden="true"
+              className="profile-name-editor__measure"
+              ref={nameMeasureRef}
+            >
+              {draftName || " "}
+            </span>
             <span className="profile-name-editor__field">
               <span aria-hidden="true" className="profile-name-editor__mirror">
                 {draftName || "\u200b"}
@@ -294,12 +347,25 @@ export function ProfileIdentityEditor({
                 onChange={(event) =>
                   setDraftName(event.target.value.replace(/[\r\n]+/g, " "))
                 }
+                onCompositionEnd={() => {
+                  nameCompositionActiveRef.current = false;
+                }}
+                onCompositionStart={() => {
+                  nameCompositionActiveRef.current = true;
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Escape") {
                     closeNameEditor();
                     return;
                   }
-                  if (event.key === "Enter") {
+                  if (
+                    shouldSubmitProfileNameEnter({
+                      compositionActive: nameCompositionActiveRef.current,
+                      key: event.key,
+                      keyCode: event.nativeEvent.keyCode,
+                      nativeIsComposing: event.nativeEvent.isComposing,
+                    })
+                  ) {
                     event.preventDefault();
                     event.currentTarget.form?.requestSubmit();
                   }
@@ -309,7 +375,10 @@ export function ProfileIdentityEditor({
                 value={draftName}
               />
             </span>
-            <span className="profile-name-editor__actions">
+            <span
+              className="profile-name-editor__actions"
+              ref={nameActionsRef}
+            >
               <button disabled={busy !== null} type="submit">
                 {busy === "name" ? "保存中" : "保存"}
               </button>
@@ -329,7 +398,10 @@ export function ProfileIdentityEditor({
               className="profile-name-trigger"
               disabled={busy !== null}
               onClick={() => {
-                setEditorWidth(nameButton.current?.getBoundingClientRect().width ?? null);
+                const initialWidth =
+                  nameButton.current?.getBoundingClientRect().width ?? null;
+                initialNameEditorWidthRef.current = initialWidth ?? 0;
+                setEditorWidth(initialWidth);
                 setEditingName(true);
               }}
               ref={nameButton}

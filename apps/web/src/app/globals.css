@@ -3302,6 +3302,24 @@ main {
   min-width: 0;
 }
 
+.profile-name-editor__measure {
+  position: fixed;
+  top: -10000px;
+  left: -10000px;
+  width: max-content;
+  box-sizing: border-box;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 4.6vw, 3rem);
+  font-weight: 650;
+  letter-spacing: -0.05em;
+  line-height: 1.08;
+  pointer-events: none;
+  visibility: hidden;
+  white-space: pre;
+}
+
 .profile-name-editor__mirror,
 .profile-name-editor textarea {
   grid-area: 1 / 1;
@@ -3850,6 +3868,7 @@ main {
     font-size: clamp(1.65rem, 7vw, 1.95rem);
   }
 
+  .profile-name-editor__measure,
   .profile-name-editor__mirror,
   .profile-name-editor textarea {
     font-size: clamp(1.65rem, 7vw, 1.95rem);
