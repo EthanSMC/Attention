@@ -1,10 +1,12 @@
 import type { AttentionDatabase } from "@attention/db";
+import { extractWWWAuthenticateParams } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { NextRequest } from "next/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { POST as startEmailLogin } from "./api/auth/email/start/route";
 import { POST as verifyEmailLogin } from "./api/auth/email/verify/route";
 import { POST as passwordLogin } from "./api/auth/password/route";
+import { handleMcpProtectedResourceMetadataRequest } from "./.well-known/oauth-protected-resource/route";
 import { handleMcpRequest } from "./mcp/route";
 import { handleOAuthRevokeRequest } from "./oauth/revoke/route";
 import { handleOAuthTokenRequest } from "./oauth/token/route";
@@ -125,7 +127,10 @@ describe("public route request body limits", () => {
       "application/json",
     );
     const resolver = vi.fn(async () => null);
-    const response = await handleMcpRequest(input.request, resolver);
+    const response = await handleMcpRequest(input.request, {
+      getDatabase: () => ({} as AttentionDatabase),
+      principalResolver: resolver,
+    });
 
     await expectCancelled(input, response);
     expect(resolver).not.toHaveBeenCalled();
@@ -150,10 +155,117 @@ describe("public route request body limits", () => {
         },
         method: "POST",
       }),
-      resolver,
+      {
+        getDatabase: () => ({} as AttentionDatabase),
+        principalResolver: resolver,
+      },
     );
 
     expect(response.status).toBe(401);
     expect(resolver).toHaveBeenCalledOnce();
+  });
+
+  it("advertises the MCP resource scopes in the unauthorized challenge", async () => {
+    const response = await handleMcpRequest(
+      new Request("https://attention.example/mcp", { method: "GET" }),
+      {
+        getDatabase: () => ({} as AttentionDatabase),
+        principalResolver: async () => null,
+      },
+    );
+
+    expect(response.status).toBe(401);
+    const challenge = extractWWWAuthenticateParams(response);
+    expect(challenge.resourceMetadataUrl?.href).toBe(
+      "https://attention.example/.well-known/oauth-protected-resource",
+    );
+    expect(challenge.scope).toBe(
+      "profile:read collection:read collection:write digest:read digest:write moderation:write moderation:court:read moderation:court:vote public:read public:full ai:search subscription:read",
+    );
+    const metadataResponse = handleMcpProtectedResourceMetadataRequest(
+      new Request("https://attention.example/.well-known/oauth-protected-resource"),
+    );
+    const metadata = await metadataResponse.json() as {
+      scopes_supported: string[];
+    };
+    expect(metadata.scopes_supported).toEqual([
+      "profile:read",
+      "collection:read",
+      "collection:write",
+      "digest:read",
+      "digest:write",
+      "moderation:write",
+      "moderation:court:read",
+      "moderation:court:vote",
+      "public:read",
+      "public:full",
+      "ai:search",
+      "subscription:read",
+    ]);
+    expect(
+      challenge.scope?.split(" ").every((scope) =>
+        metadata.scopes_supported.includes(scope),
+      ),
+    ).toBe(true);
+  });
+
+  it("returns a structured retry response when the shared MCP budget is exhausted", async () => {
+    const response = await handleMcpRequest(
+      new Request("https://attention.example/mcp", { method: "GET" }),
+      {
+        getDatabase: () => ({} as AttentionDatabase),
+        principalResolver: async () => ({
+          accountId: "00000000-0000-4000-8000-000000000001",
+          clientId: "codex-desktop",
+          credentialId: "00000000-0000-4000-8000-000000000002",
+          credentialKind: "oauth",
+          isFilter: false,
+          isMember: true,
+          scopes: ["collection:read"],
+        }),
+        rateLimitConsumer: async () => ({
+          allowed: false,
+          limit: 120,
+          remaining: 0,
+          retryAfterSeconds: 17,
+        }),
+      },
+    );
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("17");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("access-control-allow-origin")).toBe("*");
+    await expect(response.json()).resolves.toEqual({
+      error: "rate_limited",
+      retry_after_seconds: 17,
+    });
+  });
+
+  it("fails closed when the shared MCP budget cannot be verified", async () => {
+    const response = await handleMcpRequest(
+      new Request("https://attention.example/mcp", { method: "GET" }),
+      {
+        getDatabase: () => {
+          throw new Error("database unavailable");
+        },
+        principalResolver: async () => ({
+          accountId: "00000000-0000-4000-8000-000000000001",
+          clientId: null,
+          credentialId: "00000000-0000-4000-8000-000000000002",
+          credentialKind: "pat",
+          isFilter: false,
+          isMember: false,
+          scopes: ["collection:read"],
+        }),
+      },
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    await expect(response.json()).resolves.toEqual({
+      error: "rate_limit_unavailable",
+      error_description: "Attention could not verify the MCP request budget.",
+    });
   });
 });

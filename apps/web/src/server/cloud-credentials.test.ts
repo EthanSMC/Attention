@@ -12,7 +12,10 @@ vi.mock("@attention/auth", () => ({
 }));
 vi.mock("./db", () => ({ getWebDatabase: mocks.getWebDatabase }));
 
-import { resolveCloudPrincipal } from "./cloud-credentials";
+import {
+  resolveCloudPrincipal,
+  resolveRuntimePrincipal,
+} from "./cloud-credentials";
 
 describe("cloud credential provenance", () => {
   beforeEach(() => {
@@ -70,6 +73,47 @@ describe("cloud credential provenance", () => {
       credentialId: "pat-1",
       credentialKind: "pat",
     });
+    expect(mocks.resolveOAuthAccessToken).not.toHaveBeenCalled();
+  });
+
+  it("resolves runtime credentials only against the runtime OAuth audience", async () => {
+    mocks.resolveOAuthAccessToken.mockResolvedValue({
+      accountId: "account-1",
+      audience: "attention-channel-runtime",
+      clientId: "runtime-client-1",
+      isFilter: false,
+      isMember: false,
+      scopes: ["runtime:register"],
+      tokenId: "runtime-token-1",
+    });
+
+    await expect(
+      resolveRuntimePrincipal(
+        new Request("https://attention.example/api/runtime", {
+          headers: { authorization: "Bearer runtime-oauth-token" },
+        }),
+      ),
+    ).resolves.toMatchObject({
+      clientId: "runtime-client-1",
+      credentialId: "runtime-token-1",
+      credentialKind: "oauth",
+    });
+    expect(mocks.resolveOAuthAccessToken).toHaveBeenCalledWith(
+      {},
+      "runtime-oauth-token",
+      { audience: "attention-channel-runtime" },
+    );
+  });
+
+  it("rejects PAT credentials at the runtime control plane", async () => {
+    await expect(
+      resolveRuntimePrincipal(
+        new Request("https://attention.example/api/runtime", {
+          headers: { authorization: `Bearer att_pat_${"a".repeat(43)}` },
+        }),
+      ),
+    ).resolves.toBeNull();
+    expect(mocks.resolveApiCredential).not.toHaveBeenCalled();
     expect(mocks.resolveOAuthAccessToken).not.toHaveBeenCalled();
   });
 });

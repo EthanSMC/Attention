@@ -27,6 +27,11 @@ export type CloudPrincipal = CloudPrincipalBase & (
     }
 );
 
+export type OAuthCloudPrincipal = Extract<
+  CloudPrincipal,
+  { credentialKind: "oauth" }
+>;
+
 export function readBearerToken(request: Request): string | null {
   const match = /^Bearer ([^\s]+)$/u.exec(request.headers.get("authorization") ?? "");
   return match?.[1] ?? null;
@@ -53,6 +58,26 @@ export async function resolveCloudPrincipal(
   }
   const principal = await resolveOAuthAccessToken(getWebDatabase(), token, {
     audience,
+  });
+  if (!principal) return null;
+  return {
+    accountId: principal.accountId,
+    clientId: principal.clientId,
+    credentialId: principal.tokenId,
+    credentialKind: "oauth",
+    isFilter: principal.isFilter,
+    isMember: principal.isMember,
+    scopes: principal.scopes,
+  };
+}
+
+export async function resolveRuntimePrincipal(
+  request: Request,
+): Promise<OAuthCloudPrincipal | null> {
+  const token = readBearerToken(request);
+  if (!token || token.startsWith("att_pat_")) return null;
+  const principal = await resolveOAuthAccessToken(getWebDatabase(), token, {
+    audience: "attention-channel-runtime",
   });
   if (!principal) return null;
   return {

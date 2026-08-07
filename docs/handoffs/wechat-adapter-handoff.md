@@ -1,12 +1,14 @@
-# Attention 微信 Adapter 开发交接
+# Attention 微信 Adapter 历史交接（第一期已暂停）
 
 账号、Free/Member、Channel 权益与绑定体验以 [`2026-08-04-attention-identity-membership-growth-design.md`](../superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md) 为准。
 
-更新时间：2026-08-04
+更新时间：2026-08-07
 
-实现更新：`apps/wechat-adapter` 已完成第一期协议 Adapter，包括 GET 服务器验证、POST 验签、安全 XML、兼容/明文/安全模式 AES、文本与链接卡片映射、进程内重试幂等、被动回复、可选客服消息、access token 缓存和内部 Channel API 接入。单元/回调测试已覆盖这些合同；由于仓库没有真实公众号凭据与相应资质，目前没有宣称完成微信平台后台联调。
+当前产品决策：第一期只交付本地 Agent、Skill、MCP、OAuth 与 Local Channel Runtime 基础设施，不提供官方微信/Hosted Channel 产品入口。`apps/wechat-adapter` 与底层 Auth 合同作为历史原型保留，但 Web 旧 Channel API 统一返回 `410 Gone`，绑定页面已经移除，因此 Adapter 不能形成可用产品链路，也不应部署到生产。
 
-## 1. 任务目标
+历史实现包括 GET 服务器验证、POST 验签、安全 XML、兼容/明文/安全模式 AES、文本与链接卡片映射、进程内重试幂等、被动回复、可选客服消息和 access token 缓存。以下内容用于未来重新设计时参考，不代表当前可用能力。
+
+## 1. 历史任务目标
 
 实现 Attention 的官方微信 Channel Adapter。已绑定且具备 Member/Filter Channel 权益的用户在微信中发送文本、链接或公众号链接卡片后，获得与网页共用的 Attention Agent/MCP 业务结果；未绑定或 Free 用户进入绑定/升级路径，不直接执行私人任务。
 
@@ -65,15 +67,14 @@ flowchart LR
 
 ## 3. 当前项目状态
 
-- 已实现统一邮箱注册/登录、opaque Browser Session、Free/Member 实时权益与明确的 Channel 绑定页面。
+- 已实现统一邮箱注册/登录、opaque Browser Session 和 Free/Member 实时权益；Channel 绑定页面已移除。
 - 已实现 `channel_identities`、加密 `channel_pending_requests` 和一次性 `bind_intents`；subject ID 只以 keyed HMAC 保存，pending 原消息和处理结果使用 AES-GCM 保存。
-- 已实现内部 Channel Adapter 合同 `POST /api/channels/messages`。它只接受内部 Bearer secret，支持 `wechat`、`wecom`、`douyin`、`xiaohongshu` 的统一身份、幂等、绑定与业务 continuation。
-- 已实现 `GET /channel/bind` 与 `POST /api/channels/bind`：用户通过统一登录后看到目标账号（已设置时包含 Attention ID），Free 先升级 Member，确认后自动继续原收藏或 Agent 请求。
-- 已实现 `GET /api/channels/pending/:id` 的可信 Adapter 轮询回执，以及 `/account/connections` 中的独立 Channel 解绑。
+- 历史 `POST /api/channels/messages`、`POST /api/channels/bind`、`GET /api/channels/pending/:id` 和账号 Channel 撤销接口现在统一返回 `410 Gone`，不认证、不写库，也不生成 `/channel/bind`。
+- `/channel/bind` 页面已删除；`/account/connections` 只展示本地 Agent、OAuth 和 API Key 基础设施。
 - 已实现网页 Agent、Hosted MCP、收藏 Service、隔离 Fetcher、URL 安全策略和确定性去重。当前 Agent 检索是可演示的确定性检索，不伪装成尚未接入的模型服务。
 - 已实现微信官方服务器回调层的代码合同：官方签名/解密、安全 XML 映射、微信 access token 管理、被动回复和客服文字消息 provider。模板消息不在第一期范围内；真实平台验证仍需要认证公众号、官方凭据和实际接口权限。
 
-内部接口不是面向微信公网暴露的回调地址。公网只暴露 Adapter 的 `/wechat/callback`，Adapter 继续依赖内部 Channel 合同，不复制 Collector、不直接访问业务数据库，也不绕过 Channel 权益判断。
+历史内部接口不是面向微信公网暴露的回调地址。由于这些接口已禁用，当前也不应再把 Adapter 的 `/wechat/callback` 暴露为 Attention 第一期开口。
 
 当前幂等缓存位于 Adapter 进程内；收藏路径还由核心服务的幂等键兜底。多副本或进程重启后的 Agent 查询若要求严格 exactly-once，需要后续把相同 `channel_message_id` 合同接到共享 Gateway 幂等存储，不能误称现阶段已具备跨实例 exactly-once。
 
@@ -88,9 +89,9 @@ flowchart LR
 | `apps/web/src/server/collection-service.ts` | 当前收藏业务参考，不能复制进微信 Adapter |
 | `packages/auth/src/sessions.ts` | 当前 Attention 账号 Principal 结构 |
 | `packages/auth/src/channels.ts` | Channel subject HMAC、pending 加密、一次性绑定、解绑与回执 |
-| `apps/web/src/app/api/channels/messages/route.ts` | 受内部 Bearer 保护的统一 Channel 入站合同 |
-| `apps/web/src/app/channel/bind/page.tsx` | 登录/升级后明确显示展示名与可选 Attention ID 的绑定确认体验 |
-| `apps/web/src/app/api/channels/bind/route.ts` | 单次确认并自动继续原请求 |
+| `apps/web/src/app/api/channels/messages/route.ts` | 第一期间稳定返回 `410 Gone` 的历史入口 |
+| `apps/web/src/app/channel/bind/page.tsx` | 已删除，不得重新生成指向它的链接 |
+| `apps/web/src/app/api/channels/bind/route.ts` | 第一期间稳定返回 `410 Gone` 的历史入口 |
 | `apps/fetcher/src` | 外部 URL 的安全访问边界 |
 
 ## 4. 建议的代码位置
@@ -186,7 +187,7 @@ wechat_app_id + openid -> attention_account_id
 - 一个公众号内以 `app_id + openid` 唯一定位微信身份。
 - 若官方条件允许，可保存 `unionid` 用于同主体产品间关联，但不能只依赖 `unionid`。
 - `openid` 是 Channel Identity，不是 Attention 网站登录凭据；普通注册不主动要求绑定微信。
-- Hosted Channel 是 Member 能力。Free 可使用 Web 收藏、云同步和账号允许的 Hosted MCP 个人收藏能力，但不能通过微信 Adapter 执行收藏或读取私人数据。
+- 以下身份与绑定规则是未来重新启用 Adapter 时的历史设计；第一期所有账号都不能通过官方微信 Adapter 执行收藏或读取私人数据。
 - 未绑定用户不执行收藏、搜索或读取私人数据。Adapter 创建短期 pending request 与一次性 `BindIntent`，然后返回绑定链接。
 - `BindIntent` 创建时只绑定微信身份与 pending request，不能接受或预先写入目标 Attention 账号。
 - 用户打开链接后复用统一邮箱验证码/密码登录；Free 用户先进入公开会员展示与开通流程，再看到目标展示名与可选 Attention ID 的明确确认页。

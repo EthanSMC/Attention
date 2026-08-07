@@ -3,6 +3,26 @@ import { describe, expect, it, vi } from "vitest";
 
 import { handleOAuthRegistrationRequest } from "./route";
 
+function registrationDatabase(inserted: Array<Record<string, unknown>>): AttentionDatabase {
+  const transaction = {
+    execute: async () => undefined,
+    insert: () => ({
+      values: async (value: Record<string, unknown>) => {
+        inserted.push(value);
+      },
+    }),
+    select: () => ({
+      from: () => ({
+        where: async () => [{ value: 0 }],
+      }),
+    }),
+  };
+  return {
+    transaction: async <T>(callback: (tx: typeof transaction) => Promise<T>) =>
+      callback(transaction),
+  } as unknown as AttentionDatabase;
+}
+
 describe("OAuth dynamic registration request limits", () => {
   it("fails closed in production when ingress source identity is not configured", async () => {
     vi.stubEnv("NODE_ENV", "production");
@@ -73,5 +93,62 @@ describe("OAuth dynamic registration request limits", () => {
     expect(response.status).toBe(413);
     expect(cancelled).toBe(true);
     expect(pulls).toBe(1);
+  });
+
+  it("rejects a partial runtime scope registration", async () => {
+    const response = await handleOAuthRegistrationRequest(
+      new Request("https://attention.example/oauth/register", {
+        body: JSON.stringify({
+          client_name: "Partial runtime client",
+          redirect_uris: ["http://127.0.0.1:43123/callback"],
+          scope: "runtime:register",
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      }),
+      {} as AttentionDatabase,
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "invalid_client_metadata",
+    });
+  });
+
+  it("persists and returns canonical exact runtime scopes", async () => {
+    vi.stubEnv(
+      "ATTENTION_HMAC_SECRET",
+      "attention-registration-test-secret-at-least-32-characters",
+    );
+    const inserted: Array<Record<string, unknown>> = [];
+    try {
+      const response = await handleOAuthRegistrationRequest(
+        new Request("https://attention.example/oauth/register", {
+          body: JSON.stringify({
+            client_name: "Runtime client",
+            redirect_uris: ["http://127.0.0.1:43123/callback"],
+            scope:
+              "runtime:heartbeat channel:disconnect:report runtime:register channel:bind:report",
+          }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        }),
+        registrationDatabase(inserted),
+      );
+
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toMatchObject({
+        scope:
+          "channel:bind:report channel:disconnect:report runtime:heartbeat runtime:register",
+      });
+      expect(inserted[0]?.allowedScopes).toEqual([
+        "channel:bind:report",
+        "channel:disconnect:report",
+        "runtime:heartbeat",
+        "runtime:register",
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

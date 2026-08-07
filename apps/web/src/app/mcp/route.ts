@@ -1,4 +1,6 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { oauthDefaultScopesByAudience } from "@attention/auth";
+import type { AttentionDatabase } from "@attention/db";
 import { after, type NextRequest } from "next/server";
 
 import { resolveCloudPrincipal, type CloudPrincipal } from "../../server/cloud-credentials";
@@ -6,6 +8,10 @@ import { getWebDatabase } from "../../server/db";
 import { createAttentionMcpServer } from "../../server/mcp-tool-adapter";
 import { oauthResourceMetadataUrl } from "../../server/oauth-resources";
 import { recordAttentionToolAuditBestEffort } from "../../server/attention-tool-audit";
+import {
+  consumeMcpRequestBudget,
+  type McpRateLimitDecision,
+} from "../../server/mcp-rate-limit";
 import {
   readRequestBytesWithinLimit,
   RequestBodyTooLargeError,
@@ -22,7 +28,7 @@ function unauthorized(request: Request): Response {
     {
       headers: {
         "Cache-Control": "no-store",
-        "WWW-Authenticate": `Bearer resource_metadata="${oauthResourceMetadataUrl(request, "attention-mcp")}"`,
+        "WWW-Authenticate": `Bearer resource_metadata="${oauthResourceMetadataUrl(request, "attention-mcp")}", scope="${oauthDefaultScopesByAudience["attention-mcp"].join(" ")}"`,
       },
       status: 401,
     },
@@ -42,9 +48,25 @@ type CloudPrincipalResolver = (
   audience: "attention-mcp" | "attention-sync",
 ) => Promise<CloudPrincipal | null>;
 
+type McpRateLimitConsumer = (
+  db: AttentionDatabase,
+  principal: CloudPrincipal,
+) => Promise<McpRateLimitDecision>;
+
+export interface McpRequestDependencies {
+  getDatabase(): AttentionDatabase;
+  principalResolver: CloudPrincipalResolver;
+  rateLimitConsumer?: McpRateLimitConsumer;
+}
+
+const defaultMcpRequestDependencies: McpRequestDependencies = {
+  getDatabase: getWebDatabase,
+  principalResolver: resolveCloudPrincipal,
+};
+
 export async function handleMcpRequest(
   request: Request,
-  principalResolver: CloudPrincipalResolver = resolveCloudPrincipal,
+  dependencies: McpRequestDependencies = defaultMcpRequestDependencies,
 ): Promise<Response> {
   let boundedRequest: Request;
   try {
@@ -72,8 +94,52 @@ export async function handleMcpRequest(
     }
     throw error;
   }
-  const principal = await principalResolver(boundedRequest, "attention-mcp");
+  const principal = await dependencies.principalResolver(
+    boundedRequest,
+    "attention-mcp",
+  );
   if (!principal) return withMcpCors(unauthorized(boundedRequest));
+  let database: AttentionDatabase;
+  let rateLimit: McpRateLimitDecision;
+  try {
+    database = dependencies.getDatabase();
+    rateLimit = await (
+      dependencies.rateLimitConsumer ?? consumeMcpRequestBudget
+    )(database, principal);
+  } catch (error) {
+    console.error("attention_mcp_rate_limit_failed", {
+      name: error instanceof Error ? error.name : "UnknownError",
+    });
+    return withMcpCors(
+      Response.json(
+        {
+          error: "rate_limit_unavailable",
+          error_description: "Attention could not verify the MCP request budget.",
+        },
+        {
+          headers: { "Cache-Control": "no-store" },
+          status: 503,
+        },
+      ),
+    );
+  }
+  if (!rateLimit.allowed) {
+    return withMcpCors(
+      Response.json(
+        {
+          error: "rate_limited",
+          retry_after_seconds: rateLimit.retryAfterSeconds,
+        },
+        {
+          headers: {
+            "Cache-Control": "no-store",
+            "Retry-After": String(rateLimit.retryAfterSeconds),
+          },
+          status: 429,
+        },
+      ),
+    );
+  }
   const transport = new WebStandardStreamableHTTPServerTransport({
     enableJsonResponse: true,
   });
@@ -85,13 +151,14 @@ export async function handleMcpRequest(
       credentialKind: principal.credentialKind,
       entrypoint: "hosted_mcp",
     },
-    getDatabase: getWebDatabase,
+    getDatabase: () => database,
     isFilter: principal.isFilter,
     isMember: principal.isMember,
     recordAudit: (db, input) => {
       after(() => recordAttentionToolAuditBestEffort(db, input));
     },
     requestId: crypto.randomUUID(),
+    serviceOrigin: new URL(boundedRequest.url).origin,
     scopes: principal.scopes,
   });
   await server.connect(transport);

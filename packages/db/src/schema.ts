@@ -1,11 +1,20 @@
 import { sql } from "drizzle-orm";
 import {
+  AGENT_INTEGRATION_IDS,
+  CHANNEL_BINDING_STATUSES,
+  CHANNEL_OWNER_KINDS,
+  INSTALLATION_STATUSES,
+  LOCAL_CHANNEL_PROVIDERS,
+  type RuntimeCapabilities
+} from "@attention/contracts";
+import {
   type AnyPgColumn,
   bigint,
   boolean,
   char,
   check,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -16,6 +25,7 @@ import {
   smallint,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
   varchar
@@ -99,6 +109,26 @@ export const apiCredentialStatusEnum = pgEnum("api_credential_status", [
   "active",
   "revoked"
 ]);
+export const agentIntegrationIdEnum = pgEnum(
+  "agent_integration_id",
+  AGENT_INTEGRATION_IDS
+);
+export const channelOwnerKindEnum = pgEnum(
+  "channel_owner_kind",
+  CHANNEL_OWNER_KINDS
+);
+export const installationStatusEnum = pgEnum(
+  "installation_status",
+  INSTALLATION_STATUSES
+);
+export const localChannelProviderEnum = pgEnum(
+  "local_channel_provider",
+  LOCAL_CHANNEL_PROVIDERS
+);
+export const externalChannelBindingStatusEnum = pgEnum(
+  "external_channel_binding_status",
+  CHANNEL_BINDING_STATUSES
+);
 export const channelProviderEnum = pgEnum("channel_provider", [
   "wechat",
   "wecom",
@@ -1023,6 +1053,235 @@ export const apiCredentials = pgTable(
   ]
 );
 
+export const mcpRateLimitBuckets = pgTable(
+  "mcp_rate_limit_buckets",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    credentialId: uuid("credential_id").notNull(),
+    clientKey: varchar("client_key", { length: 128 }).notNull(),
+    windowStartedAt: timestamp("window_started_at", { withTimezone: true }).notNull(),
+    requestCount: integer("request_count").default(1).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("mcp_rate_limit_bucket_unique").on(
+      table.accountId,
+      table.credentialId,
+      table.clientKey,
+      table.windowStartedAt,
+    ),
+    index("mcp_rate_limit_account_window_idx").on(
+      table.accountId,
+      table.windowStartedAt,
+    ),
+    check(
+      "mcp_rate_limit_request_count_positive",
+      sql`${table.requestCount} > 0`,
+    ),
+    check(
+      "mcp_rate_limit_client_key_not_blank",
+      sql`btrim(${table.clientKey}) <> ''`,
+    ),
+    pgPolicy("mcp_rate_limit_bucket_owner_access", {
+      as: "permissive",
+      for: "all",
+      to: "attention_web_runtime",
+      using: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`,
+      withCheck: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`,
+    }),
+  ],
+).enableRLS();
+
+export const agentInstallations = pgTable(
+  "agent_installations",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    oauthClientId: varchar("oauth_client_id", { length: 128 })
+      .notNull()
+      .references(() => oauthClients.clientId, { onDelete: "restrict" }),
+    agentIntegrationId: agentIntegrationIdEnum("agent_integration_id").notNull(),
+    ownerKind: channelOwnerKindEnum("owner_kind").notNull(),
+    deviceName: varchar("device_name", { length: 100 }).notNull(),
+    adapterVersion: varchar("adapter_version", { length: 64 }).notNull(),
+    skillVersion: varchar("skill_version", { length: 64 }).notNull(),
+    toolContractVersion: varchar("tool_contract_version", { length: 64 }).notNull(),
+    capabilities: jsonb("capabilities").$type<RuntimeCapabilities>().notNull(),
+    status: installationStatusEnum("status").default("registered").notNull(),
+    registeredAt: timestamp("registered_at", { withTimezone: true }).defaultNow().notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => {
+    const ownerPredicate = sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`;
+    return [
+      unique("agent_installations_id_account_unique").on(table.id, table.accountId),
+      uniqueIndex("agent_installations_oauth_client_unique").on(table.oauthClientId),
+      index("agent_installations_account_status_idx").on(table.accountId, table.status),
+      index("agent_installations_status_last_seen_idx").on(table.status, table.lastSeenAt),
+      check("agent_installations_device_name_not_blank", sql`btrim(${table.deviceName}) <> ''`),
+      check(
+        "agent_installations_versions_not_blank",
+        sql`btrim(${table.adapterVersion}) <> '' AND btrim(${table.skillVersion}) <> '' AND btrim(${table.toolContractVersion}) <> ''`
+      ),
+      check(
+        "agent_installations_owner_kind_matches_agent",
+        sql`(${table.agentIntegrationId} IN ('openclaw', 'hermes', 'workbuddy') AND ${table.ownerKind} = 'native') OR (${table.agentIntegrationId} IN ('codex', 'claude-code') AND ${table.ownerKind} = 'bridge')`
+      ),
+      check(
+        "agent_installations_capabilities_shape",
+        sql`jsonb_typeof(${table.capabilities}) = 'object' AND ${table.capabilities} ?& ARRAY['heartbeat_mode', 'pairing_verification', 'restricted_profile'] AND ${table.capabilities} - ARRAY['heartbeat_mode', 'pairing_verification', 'restricted_profile'] = '{}'::jsonb AND ${table.capabilities}->>'heartbeat_mode' IN ('runtime', 'event_driven') AND ${table.capabilities}->'pairing_verification' = 'true'::jsonb AND jsonb_typeof(${table.capabilities}->'restricted_profile') = 'boolean' AND (${table.ownerKind} <> 'bridge' OR ${table.capabilities}->'restricted_profile' = 'true'::jsonb)`
+      ),
+      check(
+        "agent_installations_terminal_status_shape",
+        sql`(${table.status} = 'disconnected' AND ${table.disconnectedAt} IS NOT NULL AND ${table.revokedAt} IS NULL) OR (${table.status} = 'revoked' AND ${table.revokedAt} IS NOT NULL) OR (${table.status} NOT IN ('disconnected', 'revoked') AND ${table.disconnectedAt} IS NULL AND ${table.revokedAt} IS NULL)`
+      ),
+      check(
+        "agent_installations_timestamp_order",
+        sql`(${table.lastSeenAt} IS NULL OR ${table.lastSeenAt} >= ${table.registeredAt}) AND (${table.disconnectedAt} IS NULL OR ${table.disconnectedAt} >= ${table.registeredAt}) AND (${table.revokedAt} IS NULL OR ${table.revokedAt} >= ${table.registeredAt})`
+      ),
+      pgPolicy("agent_installations_owner_access", {
+        as: "permissive",
+        for: "all",
+        to: "attention_web_runtime",
+        using: ownerPredicate,
+        withCheck: ownerPredicate
+      })
+    ];
+  }
+).enableRLS();
+
+export const externalChannelBindings = pgTable(
+  "external_channel_bindings",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    installationId: uuid("installation_id").notNull(),
+    provider: localChannelProviderEnum("provider").notNull(),
+    channelAccountFingerprint: char("channel_account_fingerprint", { length: 64 }).notNull(),
+    pairedPeerFingerprint: char("paired_peer_fingerprint", { length: 64 }),
+    status: externalChannelBindingStatusEnum("status").default("reported").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => {
+    const ownerPredicate = sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`;
+    return [
+      unique("external_channel_bindings_id_account_unique").on(table.id, table.accountId),
+      foreignKey({
+        name: "external_channel_bindings_installation_account_fk",
+        columns: [table.installationId, table.accountId],
+        foreignColumns: [agentInstallations.id, agentInstallations.accountId]
+      }).onDelete("cascade"),
+      uniqueIndex("external_channel_bindings_active_owner_unique")
+        .on(table.provider, table.channelAccountFingerprint)
+        .where(sql`${table.status} IN ('reported', 'verified', 'healthy', 'stale')`),
+      index("external_channel_bindings_account_status_idx").on(table.accountId, table.status),
+      index("external_channel_bindings_installation_status_idx").on(
+        table.installationId,
+        table.status
+      ),
+      index("external_channel_bindings_status_last_seen_idx").on(
+        table.status,
+        table.lastSeenAt
+      ),
+      check(
+        "external_channel_bindings_channel_fingerprint_format",
+        sql`${table.channelAccountFingerprint} ~ '^[0-9a-f]{64}$'`
+      ),
+      check(
+        "external_channel_bindings_peer_fingerprint_format",
+        sql`${table.pairedPeerFingerprint} IS NULL OR ${table.pairedPeerFingerprint} ~ '^[0-9a-f]{64}$'`
+      ),
+      check(
+        "external_channel_bindings_verification_shape",
+        sql`(${table.status} = 'reported' AND ${table.verifiedAt} IS NULL AND ${table.pairedPeerFingerprint} IS NULL) OR (${table.status} IN ('verified', 'healthy', 'stale') AND ${table.verifiedAt} IS NOT NULL AND ${table.pairedPeerFingerprint} IS NOT NULL) OR (${table.status} IN ('disconnected', 'revoked'))`
+      ),
+      check(
+        "external_channel_bindings_terminal_status_shape",
+        sql`(${table.status} = 'disconnected' AND ${table.disconnectedAt} IS NOT NULL AND ${table.revokedAt} IS NULL) OR (${table.status} = 'revoked' AND ${table.revokedAt} IS NOT NULL) OR (${table.status} NOT IN ('disconnected', 'revoked') AND ${table.disconnectedAt} IS NULL AND ${table.revokedAt} IS NULL)`
+      ),
+      check(
+        "external_channel_bindings_timestamp_order",
+        sql`(${table.verifiedAt} IS NULL OR ${table.verifiedAt} >= ${table.createdAt}) AND (${table.lastSeenAt} IS NULL OR ${table.lastSeenAt} >= ${table.createdAt}) AND (${table.disconnectedAt} IS NULL OR ${table.disconnectedAt} >= ${table.createdAt}) AND (${table.revokedAt} IS NULL OR ${table.revokedAt} >= ${table.createdAt})`
+      ),
+      pgPolicy("external_channel_bindings_owner_access", {
+        as: "permissive",
+        for: "all",
+        to: "attention_web_runtime",
+        using: ownerPredicate,
+        withCheck: ownerPredicate
+      })
+    ];
+  }
+).enableRLS();
+
+export const externalChannelBindingChallenges = pgTable(
+  "external_channel_binding_challenges",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    bindingId: uuid("binding_id").notNull(),
+    pairingCodeHash: char("pairing_code_hash", { length: 64 }).notNull(),
+    issuedAt: timestamp("issued_at", { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true })
+  },
+  (table) => {
+    const ownerPredicate = sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`;
+    return [
+      foreignKey({
+        name: "external_channel_binding_challenges_binding_account_fk",
+        columns: [table.bindingId, table.accountId],
+        foreignColumns: [externalChannelBindings.id, externalChannelBindings.accountId]
+      }).onDelete("cascade"),
+      uniqueIndex("external_channel_binding_challenges_code_hash_unique").on(
+        table.pairingCodeHash
+      ),
+      index("external_channel_binding_challenges_binding_expiry_idx").on(
+        table.bindingId,
+        table.expiresAt
+      ),
+      index("external_channel_binding_challenges_expiry_idx").on(table.expiresAt),
+      check(
+        "external_channel_binding_challenges_code_hash_format",
+        sql`${table.pairingCodeHash} ~ '^[0-9a-f]{64}$'`
+      ),
+      check(
+        "external_channel_binding_challenges_valid_window",
+        sql`${table.expiresAt} > ${table.issuedAt} AND ${table.expiresAt} <= ${table.issuedAt} + interval '15 minutes'`
+      ),
+      check(
+        "external_channel_binding_challenges_terminal_shape",
+        sql`NOT (${table.consumedAt} IS NOT NULL AND ${table.revokedAt} IS NOT NULL) AND (${table.consumedAt} IS NULL OR (${table.consumedAt} >= ${table.issuedAt} AND ${table.consumedAt} < ${table.expiresAt})) AND (${table.revokedAt} IS NULL OR ${table.revokedAt} >= ${table.issuedAt})`
+      ),
+      pgPolicy("external_channel_binding_challenges_owner_access", {
+        as: "permissive",
+        for: "all",
+        to: "attention_web_runtime",
+        using: ownerPredicate,
+        withCheck: ownerPredicate
+      })
+    ];
+  }
+).enableRLS();
+
 export const channelIdentities = pgTable(
   "channel_identities",
   {
@@ -1816,6 +2075,24 @@ export const eventLedger = pgTable(
       for: "insert",
       to: "attention_web_runtime",
       withCheck: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid AND ${table.eventType} = 'agent.tool_call.v1' AND ${table.scope} = 'private' AND ${table.contentId} IS NULL AND ${table.anonymousSessionId} IS NULL AND ${table.requestId} IS NOT NULL AND ${table.dedupeKey} IS NULL`
+    }),
+    pgPolicy("event_ledger_web_mcp_retrieval_insert", {
+      as: "permissive",
+      for: "insert",
+      to: "attention_web_runtime",
+      withCheck: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid AND ${table.eventType} = 'mcp_retrieval' AND ${table.scope} = 'public' AND ${table.contentId} IS NOT NULL AND ${table.anonymousSessionId} IS NULL AND ${table.requestId} IS NOT NULL AND ${table.dedupeKey} IS NOT NULL AND EXISTS (SELECT 1 FROM public_contents_current AS visible_content WHERE visible_content.id = ${table.contentId})`
+    }),
+    pgPolicy("event_ledger_web_runtime_lifecycle_insert", {
+      as: "permissive",
+      for: "insert",
+      to: "attention_web_runtime",
+      withCheck: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid AND ${table.eventType} IN ('agent.installation.registered.v1', 'agent.installation.heartbeat.v1', 'agent.installation.revoked.v1', 'channel.binding.reported.v1', 'channel.binding.verified.v1', 'channel.binding.activity.v1', 'channel.binding.disconnected.v1') AND ${table.scope} = 'private' AND ${table.contentId} IS NULL AND ${table.anonymousSessionId} IS NULL AND ${table.requestId} IS NOT NULL`
+    }),
+    pgPolicy("event_ledger_web_runtime_lifecycle_replay_read", {
+      as: "permissive",
+      for: "select",
+      to: "attention_web_runtime",
+      using: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid AND ${table.eventType} IN ('agent.installation.registered.v1', 'agent.installation.heartbeat.v1', 'agent.installation.revoked.v1', 'channel.binding.reported.v1', 'channel.binding.verified.v1', 'channel.binding.activity.v1', 'channel.binding.disconnected.v1') AND ${table.scope} = 'private' AND ${table.contentId} IS NULL AND ${table.anonymousSessionId} IS NULL AND ${table.requestId} IS NOT NULL AND ${table.dedupeKey} IS NOT NULL`
     })
   ]
 ).enableRLS();

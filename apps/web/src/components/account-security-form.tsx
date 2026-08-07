@@ -93,7 +93,7 @@ export function AccountSecurityForm({
         <div>
           <p className="settings-card__eyebrow">当前会话</p>
           <h2>退出账号</h2>
-          <p>只退出这个浏览器，不会撤销 Agent、OAuth 或 Channel 连接。</p>
+          <p>只退出这个浏览器，不会撤销 Agent、OAuth 或 API Key 连接。</p>
         </div>
         <form action="/api/auth/logout" method="post">
           <button className="button button--secondary" type="submit">

@@ -738,7 +738,7 @@ export async function loadGrowthDashboard(
         .orderBy(desc(pointsLedgerEntries.occurredAt))
         .limit(50),
     ]);
-    const latest = referrals[0];
+    const latest = referrals.find((item) => item.status === "active") ?? referrals[0];
     const successfulCount = referrals.filter((item) => item.status === "redeemed").length;
     const latestStatus = latest
       ? latest.status === "active" && latest.expiresAt <= now

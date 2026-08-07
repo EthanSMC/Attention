@@ -1,6 +1,6 @@
 # Attention 账号体系首版交接
 
-更新时间：2026-08-04
+更新时间：2026-08-07
 
 权威产品规格：[`2026-08-04-attention-identity-membership-growth-design.md`](../superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md)
 
@@ -17,7 +17,7 @@
 - 单一类型的命名 API Key，一次显示明文、独立撤销；Key 不分级，实际能力随账号实时权益变化。
 - SDK 实现的 Streamable HTTP Hosted MCP、公开 Skill 和 Free/Member 动态工具集。
 - 云同步 Pull cursor 与 Push mutation；历史首次导入强制私密。
-- Hosted Channel pending request、一次性明确绑定、原请求 continuation、结果轮询和独立解绑。
+- 历史 Channel Identity、pending 与 BindIntent 底层实现仍保留；第一期产品 HTTP 入口已禁用，不生成绑定链接。
 - 网页 Agent 页面与 Member 服务端权限门。
 - Consumer 新邮箱 OTP 邀请注册、双方三个月顺延 grant，以及 referral 账号永久排除 direct trial。
 - Filter 每 UTC 自然年累计五张单次年卡、注册后兑换与十二个月顺延 grant。
@@ -35,7 +35,7 @@
 | 收藏 | `/collect` | Guest 只看到登录门；验证前 DOM 中没有 URL 输入框 |
 | 我的账号 | `/account` | 显示 handle、Free/Member 状态和设置入口 |
 | 安全设置 | `/account/settings` | 修改显示名、设置密码、继续保留验证码登录 |
-| 连接管理 | `/account/connections` | OAuth、API Key、MCP/Skill 安装信息与 Channel 解绑 |
+| 连接管理 | `/account/connections` | 本地 Agent 的 MCP/Skill 安装信息、OAuth 与 API Key；不展示 Channel 连接状态 |
 | 会员 | `/membership`、`/membership/checkout` | 展示 Free/Member 价值并在创建订阅前明确确认扣费信息 |
 | 增长权益 | `/account/rewards`、`/join/:token` | 创建新用户邀请、签发/兑换 Filter 年卡、查看积分；邀请注册页不泄露 inviter |
 | Agent | `/agent` | Member 才能执行检索；Free 看到升级说明 |
@@ -47,7 +47,7 @@
 1. Browser Session 只用于网站；Cookie 不携带会员权益，权益在每次请求实时解析。
 2. OAuth token 用于第三方客户端、Hosted MCP 与 Sync API；access/refresh 可按 client 吊销。
 3. API Key 是 OAuth 不可用时的备用；所有 Key 类型相同，只保存哈希和前缀，可逐个吊销。Key 不选择产品权限，服务端每次调用按账号当前 Free/Member/Filter 权益决定能力。
-4. Channel Identity 是 `provider + app_id + subject HMAC` 到账号的绑定，不是登录凭据，可单独解绑。
+4. Channel Identity 是保留给未来本地 Runtime/Adapter 的底层映射，不是网站登录凭据；第一期没有可用的 Hosted Channel 产品入口。
 
 吊销其中一种不会退出其他 Browser Session、撤销其他 API Key/OAuth client 或解除其他 Channel。
 
@@ -77,13 +77,16 @@
 
 动态 client redirect URI 必须是 HTTPS，或本机 loopback HTTP，并禁止 fragment 与 URL credentials；授权与取消回跳都会重新验证 client 和精确 redirect URI。DCR 接受 RFC 7591/OIDC 客户端常见的 `grant_types`、`response_types`、`scope`、`application_type`、`software_id` 等元数据，并按 RFC 7591 忽略不理解的字段；服务端最终注册为 public client，并在响应中明确返回 `token_endpoint_auth_method: none`。
 
-### Cloud 与 Channel
+### Cloud 与第一期 Channel 边界
 
 - `POST /mcp`：OAuth/API Key Bearer；Streamable HTTP JSON response。
 - `GET|POST /api/sync`：OAuth/API Key Bearer，audience 为 `attention-sync`。
-- `POST /api/channels/messages`：仅可信 Adapter 的内部 Bearer。
-- `POST /api/channels/bind`：Browser Session 明确确认。
-- `GET /api/channels/pending/:id`：可信 Adapter 轮询 continuation 结果。
+- `POST /api/channels/messages`：`410 Gone`。
+- `POST /api/channels/bind`：`410 Gone`。
+- `GET /api/channels/pending/:id`：`410 Gone`。
+- `DELETE /api/account/channels/:id`：`410 Gone`。
+
+四个旧入口统一返回 `hosted_channel_not_available`，不会认证、写库、恢复 pending request 或生成 `/channel/bind`。这不删除底层 Auth/Runtime 合同；未来重新启用时必须引入新的版本化产品入口和完整验收，不能静默恢复这些旧路由。
 
 ### 增长权益
 
@@ -103,7 +106,7 @@
 | 公开收藏 | 否 | 否 | 否 | 是 |
 | 个人收藏 MCP | 否 | 是 | 是 | 是 |
 | Agent / Member 专属 MCP 能力 | 否 | 否 | 是 | 是 |
-| Hosted Channel | 否 | 否 | 是 | 是 |
+| Hosted Channel | 第一期开启前均不可用 | 第一期开启前均不可用 | 第一期开启前均不可用 | 第一期开启前均不可用 |
 
 `PUBLIC_FEED_PREVIEW_LIMIT` 默认 20，所有网页、原文跳转和 MCP 公共读取都由服务端执行边界。未来新增标签、搜索或 Filter 主页时必须复用同一权限服务，不能只做前端遮罩。
 

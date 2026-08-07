@@ -1,3 +1,4 @@
+import { extractWWWAuthenticateParams } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -93,5 +94,23 @@ describe("sync push request limits", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.pushSyncMutations).toHaveBeenCalledOnce();
+  });
+
+  it("advertises sync scopes in an unauthorized challenge", async () => {
+    mocks.resolveCloudPrincipal.mockResolvedValue(null);
+    const request = new Request("https://attention.example/api/sync", {
+      body: JSON.stringify({ mutations: [] }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+
+    const response = await POST(request as NextRequest);
+
+    expect(response.status).toBe(401);
+    const challenge = extractWWWAuthenticateParams(response);
+    expect(challenge.resourceMetadataUrl?.href).toBe(
+      "https://attention.example/.well-known/oauth-protected-resource/api/sync",
+    );
+    expect(challenge.scope).toBe("sync:read sync:write");
   });
 });

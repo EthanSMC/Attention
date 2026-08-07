@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@attention/contracts": "workspace:*",
     "@attention/domain": "workspace:*",
     "drizzle-orm": "latest",
     "postgres": "latest",

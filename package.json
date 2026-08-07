@@ -9,6 +9,10 @@
     "node": ">=24.0.0"
   },
   "scripts": {
+    "agent-installations:check": "pnpm --filter @attention/cli exec tsx ../../scripts/sync-agent-installation-artifacts.ts --check",
+    "agent-installations:sync": "pnpm --filter @attention/cli exec tsx ../../scripts/sync-agent-installation-artifacts.ts",
+    "capabilities:check": "pnpm --filter @attention/cli exec tsx ../../scripts/sync-attention-capability-artifacts.ts --check",
+    "capabilities:sync": "pnpm --filter @attention/cli exec tsx ../../scripts/sync-attention-capability-artifacts.ts",
     "dev": "pnpm --filter @attention/web dev",
     "dev:fetcher": "pnpm --filter @attention/fetcher dev",
     "dev:wechat": "pnpm --filter @attention/wechat-adapter dev",
@@ -17,6 +21,7 @@
     "lint": "eslint .",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "vitest run",
+    "test:e2e:ui": "playwright test tests/e2e",
     "test:e2e:resend": "pnpm --filter @attention/web test:e2e:resend",
     "test:watch": "vitest",
     "db:generate": "pnpm --filter @attention/db generate",

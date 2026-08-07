@@ -20,7 +20,7 @@ export default async function ExternalAuthPage({
   return (
     <div className="page-shell page-shell--form">
       <PageIntro
-        description={<p>用于 CLI、Agent、Hosted MCP 或 Channel 绑定。完成登录后会回到原授权操作。</p>}
+        description={<p>用于 CLI、Agent、Attention Skill 或 Hosted MCP 授权。完成登录后会回到原授权操作。</p>}
         eyebrow="Attention 安全授权"
         title="先确认你的账号"
       />

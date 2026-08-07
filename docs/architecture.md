@@ -1,21 +1,23 @@
 # Attention 系统架构
 
-状态：长期目标架构；账号、连接与增长账本首版已实现
+状态：第一期基础设施架构；账号、OAuth、MCP 与 Local Channel Runtime 持续实现
 
-更新日期：2026-08-04
+更新日期：2026-08-07
 
 账号、Free/Member、OAuth、Local/Cloud、Hosted MCP 和增长权益的产品边界以 [`docs/superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md`](./superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md) 为准。
 
-当前交付顺序以 [`Attention Core-first Agent 路线设计`](./superpowers/specs/2026-08-04-attention-core-first-agent-roadmap-design.md) 为准：第一阶段先向 Filter 和项目方自己的 AI 开放 Core/MCP/Skill；企业微信客服和官方 Hosted Agent 后移，并以真实使用数据完成选型和建设。下方 Hosted Agent 与 Channel 图表示长期目标，不表示第一阶段全部实现。
+当前交付顺序以 [`Local Agent Channel Runtime 设计`](./superpowers/specs/2026-08-07-local-agent-channel-runtime-design.md) 为准：第一期不建设官方 Hosted Agent，也不在 Web 展示 Hosted Channel。用户继续使用自己的 Agent；Attention 交付账号、Skill、MCP、隔离的 Runtime OAuth、安装/绑定状态协议和审计基础设施。下方 Hosted Agent 与自有 Channel 图仅表示历史长期设想，不属于第一期产品面。
+
+Web 与 MCP 的能力等价矩阵、安全例外和补齐顺序以 [`Web 与 MCP 能力等价交接`](./handoffs/mcp-web-capability-parity.md) 为准。
 
 ## 1. 架构原则
 
-1. 网页和微信只是不同的交互渠道，不分别实现内容理解和收藏逻辑；但 Channel 可以有独立的接入权益门槛。
-2. 独立的 Attention AI Agent 统一负责对话、意图判断、任务规划和链接解析。已经通过渠道身份与权益前置检查的请求，应在网页和微信中得到一致的 Agent/MCP 业务结果。
-3. 链接解析是 Agent 的能力。Agent 可调用受控的 Web/Browser MCP 访问公开网页、还原跳转并提取元数据。
+1. Attention Core 是业务真相；Web 和用户自己的 Agent 必须经过同一收藏、权限、去重与审计规则。
+2. 第一期开源 Skill 描述工作流，Hosted MCP 暴露业务工具；Attention 不托管模型、会话或 Agent 运行时。
+3. 链接深度读取与浏览器自动化由用户自己的 Agent 负责，Attention 只处理传入 Core 的业务结果和链接预处理任务。
 4. Attention MCP 是 Agent 业务能力的统一入口；离线增量同步使用独立 Sync API，不把数据复制协议永久绑定在 MCP 上。
 5. Codex、Claude Code 等外部 Agent 优先通过 OAuth Authorization Code + PKCE 连接 Hosted MCP；API Key 只作为不支持浏览器 OAuth 时的备用。所有 Key 类型相同，实际能力按账号实时权益计算；OAuth 仍受用户授权 Scope 约束。
-6. 开源 Local Core、CLI、Local MCP 与 Skill 无需账号即可运行；Free 可连接云同步和 Hosted MCP 个人收藏能力，Member 获得托管 AI、完整公开流、Member 专属 MCP 能力与 Hosted Channel。
+6. 开源 Local Core、CLI、Local MCP 与 Skill 无需账号即可运行；Free 可连接云同步和 Hosted MCP 个人收藏能力，Member 获得托管 AI、完整公开流与 Member 专属 MCP 能力。
 7. Attention 不保存原文，只保存链接、必要元数据、AI 派生信息、收藏关系和使用事件；阅读始终回到原作者和原平台。
 
 > 内容采集链路仍有一组未封口问题：当前静态 Fetcher、规则解析、未来 Browser Worker 与 AI Content Processor 如何判断“信息足够”，以及 Runtime 网页工具如何承载 Agent 的自主控制循环，尚未形成最终设计。长期方向已确认由 Hosted Agent 作为逻辑规划者，但当前 Fetcher HTTP 合同不得直接视为 Agent Tool Contract。详见 [`内容采集与 AI 预处理：待设计议题`](./content-acquisition-open-questions.md)。

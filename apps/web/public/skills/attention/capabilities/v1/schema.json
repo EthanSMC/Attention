@@ -1,0 +1,334 @@
+{
+  "$id": "https://attention.noveltystudio.cn/skills/attention/capabilities/v1/schema.json",
+  "title": "Attention capability manifest v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "independent_protocols": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "audience": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96,
+            "pattern": "^[a-z][a-z0-9_.-]*$"
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^\\/[A-Za-z0-9._~!$&'()*+,;=:@%/?-]*$"
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "mcp_streamable_http",
+              "oauth_2_1_pkce",
+              "runtime_reporting_http",
+              "sync_http"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 12,
+            "maxLength": 1000
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        },
+        "required": [
+          "audience",
+          "id",
+          "path",
+          "protocol",
+          "reason",
+          "scopes"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "mcp": {
+      "type": "object",
+      "properties": {
+        "audience": {
+          "type": "string",
+          "const": "attention-mcp"
+        },
+        "contract_version": {
+          "type": "string",
+          "const": "1.3.0"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "profile:read",
+              "collection:read",
+              "collection:write",
+              "digest:read",
+              "digest:write",
+              "moderation:write",
+              "moderation:court:read",
+              "moderation:court:vote",
+              "public:read",
+              "public:full",
+              "ai:search",
+              "subscription:read"
+            ]
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "contract_version": {
+                "type": "string",
+                "const": "1.3.0"
+              },
+              "entitlement": {
+                "type": "object",
+                "properties": {
+                  "conditional": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "filter_for_public_visibility",
+                          "member_for_full_public_feed"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "required": {
+                    "type": "string",
+                    "enum": [
+                      "authenticated_account",
+                      "member",
+                      "filter",
+                      "member_or_filter"
+                    ]
+                  }
+                },
+                "required": [
+                  "conditional",
+                  "required"
+                ],
+                "additionalProperties": false
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 96,
+                "pattern": "^[a-z][a-z0-9_.-]*$"
+              },
+              "oauth": {
+                "type": "object",
+                "properties": {
+                  "any_of_scopes": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "profile:read",
+                        "collection:read",
+                        "collection:write",
+                        "digest:read",
+                        "digest:write",
+                        "moderation:write",
+                        "moderation:court:read",
+                        "moderation:court:vote",
+                        "public:read",
+                        "public:full",
+                        "ai:search",
+                        "subscription:read"
+                      ]
+                    }
+                  },
+                  "audience": {
+                    "type": "string",
+                    "const": "attention-mcp"
+                  }
+                },
+                "required": [
+                  "any_of_scopes",
+                  "audience"
+                ],
+                "additionalProperties": false
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 12,
+                "maxLength": 1000
+              },
+              "tool_name": {
+                "type": "string",
+                "enum": [
+                  "attention_get_my_account",
+                  "attention_get_membership_status",
+                  "attention_list_collections",
+                  "attention_collect_content",
+                  "attention_select_collection_candidate",
+                  "attention_get_collection_status",
+                  "attention_update_collection",
+                  "attention_list_public_content",
+                  "attention_search_content",
+                  "attention_report_content",
+                  "attention_list_moderation_cases",
+                  "attention_cast_moderation_vote",
+                  "attention_get_digest_settings",
+                  "attention_update_digest_settings"
+                ]
+              },
+              "web_surface": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "page",
+                      "api"
+                    ]
+                  },
+                  "path": {
+                    "type": "string",
+                    "pattern": "^\\/[A-Za-z0-9._~!$&'()*+,;=:@%/?-]*$"
+                  },
+                  "shared_policy": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                },
+                "required": [
+                  "kind",
+                  "path",
+                  "shared_policy"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "contract_version",
+              "entitlement",
+              "id",
+              "oauth",
+              "summary",
+              "tool_name",
+              "web_surface"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "audience",
+        "contract_version",
+        "scopes",
+        "tools"
+      ],
+      "additionalProperties": false
+    },
+    "release_stage": {
+      "type": "string",
+      "const": "infrastructure_only"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "web_only": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96,
+            "pattern": "^[a-z][a-z0-9_.-]*$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 12,
+            "maxLength": 1000
+          },
+          "reason_code": {
+            "type": "string",
+            "enum": [
+              "anti_abuse_boundary",
+              "credential_bootstrap_boundary",
+              "credential_lifecycle_boundary",
+              "human_identity_boundary",
+              "interactive_payment_boundary"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 12,
+            "maxLength": 1000
+          },
+          "web_surface": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "page",
+                  "api"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^\\/[A-Za-z0-9._~!$&'()*+,;=:@%/?-]*$"
+              }
+            },
+            "required": [
+              "kind",
+              "path"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "reason",
+          "reason_code",
+          "summary",
+          "web_surface"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "independent_protocols",
+    "mcp",
+    "release_stage",
+    "schema_version",
+    "web_only"
+  ],
+  "additionalProperties": false
+}

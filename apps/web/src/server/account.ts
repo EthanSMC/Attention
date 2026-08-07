@@ -1,10 +1,10 @@
 import "server-only";
 
+import { apiKeyScopes } from "@attention/auth";
 import {
   accounts,
   and,
   apiCredentials,
-  channelIdentities,
   desc,
   eq,
   filterProfiles,
@@ -289,7 +289,7 @@ export async function updateDisplayName(
 }
 
 export async function loadConnectionOverview(db: AttentionDatabase, accountId: string) {
-  const [oauth, pats, channels] = await Promise.all([
+  const [oauth, pats] = await Promise.all([
     db
       .select({
         clientId: oauthRefreshTokens.clientId,
@@ -318,22 +318,18 @@ export async function loadConnectionOverview(db: AttentionDatabase, accountId: s
         keyPrefix: apiCredentials.keyPrefix,
         lastUsedAt: apiCredentials.lastUsedAt,
         name: apiCredentials.name,
+        scopes: apiCredentials.scopes,
         status: apiCredentials.status,
       })
       .from(apiCredentials)
       .where(eq(apiCredentials.accountId, accountId))
       .orderBy(desc(apiCredentials.createdAt)),
-    db
-      .select({
-        appId: channelIdentities.appId,
-        boundAt: channelIdentities.boundAt,
-        id: channelIdentities.id,
-        provider: channelIdentities.provider,
-        revokedAt: channelIdentities.revokedAt,
-      })
-      .from(channelIdentities)
-      .where(eq(channelIdentities.accountId, accountId))
-      .orderBy(desc(channelIdentities.boundAt)),
   ]);
-  return { channels, oauth, pats };
+  return {
+    oauth,
+    pats: pats.map((pat) => ({
+      ...pat,
+      needsRotation: apiKeyScopes.some((scope) => !pat.scopes.includes(scope)),
+    })),
+  };
 }

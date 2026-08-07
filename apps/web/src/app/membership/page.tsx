@@ -37,7 +37,7 @@ export default async function MembershipPage({
           <p className="plan-card__name">Member</p>
           <h2>{offer.priceLabel}</h2>
           <p>首次主动绑定订阅可体验 {offer.trialMonths} 个月；{offer.billingIntervalLabel}。</p>
-          <ul><li>完整公开发现与日报</li><li>托管 AI 检索、筛选和订阅</li><li>高级 Hosted MCP 与 Hosted Channel</li></ul>
+          <ul><li>完整公开发现与日报</li><li>托管 AI 检索、筛选和订阅</li><li>Attention Skill、Hosted MCP 与第三方 Agent 接入</li></ul>
           <p className="plan-card__charge">首次扣费：体验结束后 {offer.firstChargeAmountLabel}</p>
           <MembershipAction
             isAuthenticated={principal !== null}

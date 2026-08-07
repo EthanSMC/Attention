@@ -1,15 +1,18 @@
 import "server-only";
 
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 
 import {
   eventLedger,
+  inArray,
+  publicContentsCurrent,
   setAccountContext,
   type AttentionDatabase,
 } from "@attention/db";
 import { z } from "zod";
 
 export const ATTENTION_TOOL_AUDIT_EVENT_TYPE = "agent.tool_call.v1";
+export const MCP_RETRIEVAL_EVENT_TYPE = "mcp_retrieval";
 
 const opaqueIdentifierSchema = z
   .string()
@@ -40,10 +43,15 @@ const attentionToolAuditInputSchema = z
     credentialId: z.string().uuid(),
     credentialKind: z.enum(["oauth", "pat"]),
     durationMs: z.number().finite().nonnegative().max(86_400_000),
+    entitlementTier: z.enum(["free", "member", "filter"]),
     entrypoint: z.enum(["hosted_agent", "hosted_mcp"]),
     outcome: z.enum(["success", "tool_error", "internal_error", "cancelled"]),
+    protocolRequestId: opaqueIdentifierSchema.nullish(),
+    publicCitationIds: z.array(z.string().uuid()).max(8).default([]),
     reportedSkillId: z.literal("attention").nullish(),
-    reportedSkillVersion: z.literal("1.0.0").nullish(),
+    reportedSkillVersion: z
+      .enum(["1.0.0", "1.1.0", "1.2.0", "1.3.0"])
+      .nullish(),
     reportedWorkflowId: opaqueIdentifierSchema.nullish(),
     requestId: opaqueIdentifierSchema,
     resultStatus: stableCodeSchema.nullish(),
@@ -76,6 +84,41 @@ function auditMetadata(
     outcome: input.outcome,
     result_status: input.resultStatus ?? null,
     stable_error_code: input.stableErrorCode ?? null,
+    tool_name: input.toolName,
+  };
+}
+
+function retrievalDedupeKey(
+  input: z.output<typeof attentionToolAuditInputSchema>,
+  contentId: string,
+): string {
+  const clientNamespace = input.clientId ?? input.credentialId;
+  const requestNamespace =
+    input.reportedWorkflowId && input.protocolRequestId
+      ? `${input.reportedWorkflowId}\0${input.protocolRequestId}`
+      : input.requestId;
+  const digest = createHash("sha256")
+    .update("attention:mcp-retrieval:v1\0")
+    .update(input.accountId)
+    .update("\0")
+    .update(clientNamespace)
+    .update("\0")
+    .update(requestNamespace)
+    .update("\0")
+    .update(contentId)
+    .digest("hex");
+  return `mcp-retrieval-v1:${digest}`;
+}
+
+function retrievalMetadata(
+  input: z.output<typeof attentionToolAuditInputSchema>,
+): Record<string, unknown> {
+  return {
+    client_id: input.clientId ?? null,
+    credential_id: input.credentialId,
+    credential_kind: input.credentialKind,
+    entitlement_tier: input.entitlementTier,
+    entrypoint: input.entrypoint,
     tool_name: input.toolName,
   };
 }
@@ -116,6 +159,44 @@ export async function recordAttentionToolAuditBestEffort(
         requestId: parsed.data.requestId,
         scope: "private",
       });
+      if (
+        parsed.data.entrypoint !== "hosted_mcp" ||
+        parsed.data.outcome !== "success" ||
+        parsed.data.toolName !== "attention_search_content" ||
+        parsed.data.publicCitationIds.length === 0
+      ) {
+        return;
+      }
+      const publicRows = await tx
+        .select({
+          contentId: publicContentsCurrent.id,
+          publicId: publicContentsCurrent.publicId,
+        })
+        .from(publicContentsCurrent)
+        .where(
+          inArray(
+            publicContentsCurrent.publicId,
+            parsed.data.publicCitationIds,
+          ),
+        );
+      const byContent = new Map(
+        publicRows.map((row) => [row.contentId, row] as const),
+      );
+      if (byContent.size === 0) return;
+      await tx
+        .insert(eventLedger)
+        .values(
+          [...byContent.values()].map((row) => ({
+            accountId: parsed.data.accountId,
+            contentId: row.contentId,
+            dedupeKey: retrievalDedupeKey(parsed.data, row.contentId),
+            eventType: MCP_RETRIEVAL_EVENT_TYPE,
+            metadata: retrievalMetadata(parsed.data),
+            requestId: parsed.data.requestId,
+            scope: "public" as const,
+          })),
+        )
+        .onConflictDoNothing({ target: eventLedger.dedupeKey });
     });
   } catch (error) {
     console.error("attention_tool_audit_write_failed", {

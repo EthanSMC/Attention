@@ -1,0 +1,27 @@
+{
+  "capabilities": {
+    "allow_mcp_servers": [
+      "attention"
+    ],
+    "allow_mcp_tool_prefixes": [
+      "attention_"
+    ],
+    "deny": [
+      "arbitrary_mcp",
+      "browser_automation",
+      "code_execution",
+      "filesystem_write",
+      "shell"
+    ]
+  },
+  "context": {
+    "inherit_session_history": false,
+    "inherit_working_directory": false
+  },
+  "id": "attention-channel-restricted",
+  "logging": {
+    "include_channel_credentials": false,
+    "include_full_message_body": false
+  },
+  "schema_version": "2.2.0"
+}

@@ -1,3 +1,4 @@
+import { oauthScopesByAudience } from "@attention/auth";
 import type { NextRequest, NextResponse } from "next/server";
 
 import { noStoreJson } from "../../../../../server/api-guard";
@@ -10,6 +11,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     authorization_servers: [publicWebOrigin(request)],
     bearer_methods_supported: ["header"],
     resource: oauthResourceMap(request)["attention-sync"],
-    scopes_supported: ["sync:read", "sync:write"],
+    scopes_supported: oauthScopesByAudience["attention-sync"],
   });
 }

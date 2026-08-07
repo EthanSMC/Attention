@@ -13,13 +13,20 @@ const publicSkillUrl = new URL(
 );
 
 const expectedPublicTools = [
+  "attention_cast_moderation_vote",
   "attention_collect_content",
   "attention_get_collection_status",
+  "attention_get_digest_settings",
+  "attention_get_membership_status",
+  "attention_get_my_account",
   "attention_list_collections",
+  "attention_list_moderation_cases",
   "attention_list_public_content",
+  "attention_report_content",
   "attention_search_content",
   "attention_select_collection_candidate",
   "attention_update_collection",
+  "attention_update_digest_settings",
 ] as const;
 
 async function readPublicSkill(): Promise<string> {
@@ -35,9 +42,9 @@ describe("public Attention Skill contract", () => {
     const skill = await readPublicSkill();
     const registryNames = [...ATTENTION_PUBLIC_TOOL_NAMES].sort();
 
-    expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe("1.0.0");
+    expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe("1.3.0");
     expect(skill).toContain("Skill ID: `attention`");
-    expect(skill).toContain("Skill version: `1.0.0`");
+    expect(skill).toContain("Skill version: `1.3.0`");
     expect(skill).toContain(
       `Tool contract version: \`${ATTENTION_TOOL_CONTRACT_VERSION}\``,
     );
@@ -59,6 +66,12 @@ describe("public Attention Skill contract", () => {
     expect(skill).toMatch(/Agent's own Browser, Computer Use, or Web Search/u);
     expect(skill).toMatch(/Third-party extraction is not trusted Attention acquisition evidence/u);
     expect(skill).toMatch(/Only an active Filter may make a collection public/u);
+    expect(skill).toMatch(/Do not invent allegations/u);
+    expect(skill).toMatch(/explicitly confirms that case and decision/u);
+    expect(skill).toMatch(/Never manufacture confirmation/u);
+    expect(skill).toMatch(/explicit_confirmation: true/u);
+    expect(skill).toMatch(/do not transfer the old confirmation/u);
+    expect(skill).toMatch(/Preserve values the user did not ask to change/u);
     expect(skill).toMatch(/Do not retry through a public or anonymous endpoint to bypass it/u);
   });
 

@@ -1,0 +1,144 @@
+{
+  "acceptance": {
+    "config_probe_is_acceptance": false,
+    "requirement": "successful_tool_result",
+    "tool_name": "attention_get_my_account"
+  },
+  "channel": {
+    "availability": "host_managed_unverifiable",
+    "credentials": "local_device_only",
+    "docs_url": "https://www.codebuddy.cn/docs/workbuddy/WeixinBot-Guide",
+    "hosted_by_attention": false,
+    "minimum_version": null,
+    "mode": "native",
+    "owner": "workbuddy",
+    "package_ref": null,
+    "setup": "host_ui_qr",
+    "setup_command_templates": [],
+    "status_evidence": "host_ui_only"
+  },
+  "claims": {
+    "can_confirm_channel_pairing": false,
+    "can_confirm_mcp": true,
+    "can_confirm_runtime": false,
+    "can_confirm_wechat_identity": false
+  },
+  "compatibility": {
+    "command_checks": [],
+    "minimum_version": "4.8.2",
+    "policy": "pinned"
+  },
+  "desktop": {
+    "inbound": "host_managed_unverifiable",
+    "interactive": "available",
+    "platforms": [
+      "macos",
+      "windows"
+    ],
+    "shared_skill_mcp": true,
+    "visible_session": "host_managed"
+  },
+  "display_name": "WorkBuddy",
+  "id": "workbuddy",
+  "inbound": {
+    "availability": "host_managed_unverifiable",
+    "docs_url": "https://www.codebuddy.cn/docs/workbuddy/WeixinBot-Guide",
+    "engine": "host_native",
+    "minimum_version": null,
+    "requires_byo_api_key": false,
+    "requires_running_cli": false,
+    "stable_alternative": null
+  },
+  "install_steps": [
+    {
+      "availability": "available",
+      "credential_target": "none",
+      "executor": "attention_installer",
+      "id": "detect_host",
+      "requires_browser": false
+    },
+    {
+      "availability": "available",
+      "credential_target": "none",
+      "executor": "attention_installer",
+      "id": "install_skill",
+      "requires_browser": false
+    },
+    {
+      "availability": "available",
+      "credential_target": "none",
+      "executor": "user",
+      "id": "configure_mcp",
+      "requires_browser": false
+    },
+    {
+      "availability": "available",
+      "credential_target": "mcp_oauth",
+      "executor": "user",
+      "id": "authorize_mcp",
+      "requires_browser": true
+    },
+    {
+      "availability": "host_managed_unverifiable",
+      "credential_target": "local_channel",
+      "executor": "user",
+      "id": "connect_channel",
+      "requires_browser": false
+    }
+  ],
+  "interactive": {
+    "availability": "available"
+  },
+  "mcp": {
+    "add_command_template": null,
+    "auth": "oauth",
+    "docs_url": "https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide",
+    "login_command_template": null,
+    "oauth_client": "dedicated_mcp_client",
+    "probe_evidence": "none",
+    "probe_command_template": null,
+    "server_name": "attention",
+    "setup_mode": "host_ui",
+    "transport": "streamable_http",
+    "url_template": "{attention_origin}/mcp"
+  },
+  "platforms": [
+    "macos",
+    "windows"
+  ],
+  "release_stage": "infrastructure_only",
+  "restricted_profile": {
+    "allowed_mcp_servers": [],
+    "denied_capabilities": [],
+    "required": false,
+    "template_path": null
+  },
+  "runtime_reporting": {
+    "availability": "unsupported",
+    "heartbeat": "unavailable",
+    "mode": "none",
+    "oauth_client_boundary": "not_applicable",
+    "pairing_reports": false,
+    "resource_url_template": null,
+    "scopes": []
+  },
+  "skill": {
+    "availability": "available",
+    "bundle_path": "/skills/attention/bundles/attention-workbuddy-1.3.0.zip",
+    "bundle_sha256": "a9151767dc7b06106d0b6dc91024f670ccd76b9adba03d50ac45cc0c7e09fad8",
+    "bundle_skill_path": "SKILL.md",
+    "delivery": "host_upload_bundle",
+    "docs_url": "https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Skills-Market",
+    "document_sha256": "b0a0b73436d1172633932d72e1a1f20baa32dfbc88732400037ca0b075c829ee",
+    "format": "skill_md",
+    "id": "attention",
+    "install": "upload_bundle",
+    "install_command_template": null,
+    "local_path": null,
+    "package_ref": "/skills/attention/bundles/attention-workbuddy-1.3.0.zip",
+    "source_kind": "upload_bundle",
+    "source_path": "/skills/attention/SKILL.md",
+    "tool_contract_version": "1.3.0",
+    "version": "1.3.0"
+  }
+}

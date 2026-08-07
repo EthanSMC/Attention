@@ -201,13 +201,6 @@ export function DigestSettingsForm({
               </span>
               <span className="digest-channel-option__status">当前支持</span>
             </label>
-            <div aria-disabled="true" className="digest-channel-option digest-channel-option--disabled">
-              <span>
-                <strong>微信 / 企业微信</strong>
-                <small>绑定 Channel 后开放</small>
-              </span>
-              <span className="digest-channel-option__status">即将支持</span>
-            </div>
           </fieldset>
         </div>
 

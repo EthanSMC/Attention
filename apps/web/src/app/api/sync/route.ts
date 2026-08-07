@@ -1,3 +1,4 @@
+import { oauthDefaultScopesByAudience } from "@attention/auth";
 import type { NextRequest, NextResponse } from "next/server";
 import { z, ZodError } from "zod";
 
@@ -34,7 +35,7 @@ function unauthorized(request: Request): NextResponse {
   const response = noStoreJson({ error: { code: "invalid_token" } }, { status: 401 });
   response.headers.set(
     "WWW-Authenticate",
-    `Bearer resource_metadata="${oauthResourceMetadataUrl(request, "attention-sync")}"`,
+    `Bearer resource_metadata="${oauthResourceMetadataUrl(request, "attention-sync")}", scope="${oauthDefaultScopesByAudience["attention-sync"].join(" ")}"`,
   );
   return response;
 }

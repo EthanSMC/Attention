@@ -1,12 +1,12 @@
 import {
   ModerationRepositoryError,
-  submitContentReport,
 } from "@attention/db";
 import type { NextRequest, NextResponse } from "next/server";
 import { z, ZodError } from "zod";
 
 import { mutationRequestError, noStoreJson } from "../../../../server/api-guard";
 import { getWebDatabase } from "../../../../server/db";
+import { reportPublicContent } from "../../../../server/moderation-service";
 import {
   InvalidRequestBodyError,
   readJsonRequestWithinLimit,
@@ -21,9 +21,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_REPORT_BODY_BYTES = 8_192;
-const DEFAULT_FILTER_REPORT_CASE_LIMIT_24H = 10;
-const MAX_FILTER_REPORT_CASE_LIMIT_24H = 100;
-
 const bodySchema = z
   .object({
     details: z.string().max(2000).nullable().optional(),
@@ -31,16 +28,6 @@ const bodySchema = z
     reason_code: z.string().min(1).max(64),
   })
   .strict();
-
-function filterReportCaseLimit(): number {
-  const raw = process.env.ATTENTION_FILTER_REPORT_CASE_LIMIT_24H?.trim();
-  if (!raw) return DEFAULT_FILTER_REPORT_CASE_LIMIT_24H;
-  const configured = Number(raw);
-  return Number.isSafeInteger(configured) && configured >= 1 &&
-    configured <= MAX_FILTER_REPORT_CASE_LIMIT_24H
-    ? configured
-    : DEFAULT_FILTER_REPORT_CASE_LIMIT_24H;
-}
 
 export function moderationRepositoryErrorResponse(
   error: ModerationRepositoryError,
@@ -81,13 +68,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const body = bodySchema.parse(
       await readJsonRequestWithinLimit(request, MAX_REPORT_BODY_BYTES),
     );
-    const result = await submitContentReport(getWebDatabase(), {
-      accountId: requestSession.principal.accountId,
+    const result = await reportPublicContent(
+      getWebDatabase(),
+      requestSession.principal.accountId,
+      {
       details: body.details ?? null,
-      filterCaseOpenLimit: filterReportCaseLimit(),
       publicContentId: body.public_content_id,
       reasonCode: body.reason_code,
-    });
+      },
+    );
     return noStoreJson({
       case_id: result.caseId,
       case_opened: result.caseOpened,

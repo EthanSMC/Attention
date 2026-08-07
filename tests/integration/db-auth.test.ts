@@ -11,6 +11,9 @@ import {
   startAuthorization,
   StreamableHTTPClientTransport,
 } from "../../apps/web/src/test-support/mcp-sdk";
+import {
+  ATTENTION_MCP_OAUTH_SCOPES,
+} from "@attention/contracts";
 import { handleOAuthAuthorizationServerMetadataRequest } from "../../apps/web/src/app/.well-known/oauth-authorization-server/route";
 import { handleMcpProtectedResourceMetadataRequest } from "../../apps/web/src/app/.well-known/oauth-protected-resource/route";
 import { handleMcpRequest } from "../../apps/web/src/app/mcp/route";
@@ -78,6 +81,7 @@ import {
 } from "../../apps/web/src/server/account";
 
 import {
+  apiKeyScopes,
   cancelLoginChallenge,
   completeChannelPendingRequest,
   confirmChannelBindIntent,
@@ -94,7 +98,6 @@ import {
   issueFilterAnnualCode,
   loadGrowthDashboard,
   loginWithPassword,
-  oauthScopes,
   prepareConsumerReferralIntent,
   recordPaidSubscriptionBound,
   recordReferralRenewalReversal,
@@ -147,6 +150,7 @@ import {
   moderationCases,
   moderationVotes,
   membershipGrants,
+  oauthClients,
   type ModerationRepositoryError,
   pendingCandidateSets,
   publicContentAttributionsCurrent,
@@ -178,6 +182,7 @@ process.env.FETCHER_SHARED_SECRET =
   "attention-fetcher-integration-secret-at-least-32-characters";
 
 const oauthResources = {
+  "attention-channel-runtime": "http://localhost:3000/api/runtime",
   "attention-mcp": "http://localhost:3000/mcp",
   "attention-sync": "http://localhost:3000/api/sync",
 } as const;
@@ -833,14 +838,64 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     expect(await resolveSession(handle.db, verified.session.token, { touch: false })).not.toBeNull();
   });
 
+  it("rejects rather than silently dropping scopes from another OAuth audience", async () => {
+    const client = await registerPublicOAuthClient(handle.db, {
+      name: "Generic metadata client",
+      requesterFingerprint: "c".repeat(64),
+      redirectUris: ["http://127.0.0.1:43821/callback"],
+    });
+
+    await expect(
+      validateAuthorizationRequest(handle.db, {
+        clientId: client.clientId,
+        codeChallenge: "generic-client-pkce-challenge-that-is-long-enough-123456",
+        codeChallengeMethod: "S256",
+        redirectUri: "http://127.0.0.1:43821/callback",
+        resource: oauthResources["attention-mcp"],
+        resources: oauthResources,
+        responseType: "code",
+        scope: "profile:read sync:read",
+        state: "generic-client-state",
+      }),
+    ).rejects.toMatchObject({ code: "invalid_scope" });
+  });
+
+  it("does not downscope past an OAuth client's allowed scope boundary", async () => {
+    const client = await registerPublicOAuthClient(handle.db, {
+      name: "Restricted metadata client",
+      requesterFingerprint: "d".repeat(64),
+      redirectUris: ["http://127.0.0.1:43822/callback"],
+    });
+    await handle.db
+      .update(oauthClients)
+      .set({ allowedScopes: ["collection:read"] })
+      .where(eq(oauthClients.clientId, client.clientId));
+
+    await expect(validateAuthorizationRequest(handle.db, {
+      clientId: client.clientId,
+      codeChallenge: "restricted-client-pkce-challenge-that-is-long-enough-1",
+      codeChallengeMethod: "S256",
+      redirectUri: "http://127.0.0.1:43822/callback",
+      resource: oauthResources["attention-mcp"],
+      resources: oauthResources,
+      responseType: "code",
+      scope: "collection:read collection:write sync:read",
+      state: "restricted-client-state",
+    })).rejects.toMatchObject({ code: "invalid_scope" });
+  });
+
   it("completes SDK DCR, RFC 8707 PKCE, token exchange, initialize, and tools/list", async () => {
     const origin = "http://localhost:3000";
     const redirectUri = "http://127.0.0.1:43820/callback";
-    const scope = "profile:read collection:read collection:write public:read";
+    const scope = ATTENTION_MCP_OAUTH_SCOPES.join(" ");
     const resource = new URL(oauthResources["attention-mcp"]);
     vi.stubEnv("NEXT_PUBLIC_APP_URL", origin);
     vi.stubEnv("ATTENTION_MCP_PUBLIC_URL", oauthResources["attention-mcp"]);
     vi.stubEnv("ATTENTION_SYNC_PUBLIC_URL", oauthResources["attention-sync"]);
+    vi.stubEnv(
+      "ATTENTION_CHANNEL_RUNTIME_PUBLIC_URL",
+      oauthResources["attention-channel-runtime"],
+    );
     const clientMetadata: OAuthClientMetadata = {
       application_type: "native",
       client_name: "Attention SDK integration client",
@@ -952,13 +1007,27 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     const transport = new StreamableHTTPClientTransport(resource, {
       fetch: async (input, init) => {
         const request = new Request(input, init);
-        return handleMcpRequest(request, async (authenticatedRequest, audience) => {
-          const bearer = /^Bearer ([^\s]+)$/u.exec(
-            authenticatedRequest.headers.get("authorization") ?? "",
-          )?.[1];
-          return bearer
-            ? resolveOAuthAccessToken(handle.db, bearer, { audience })
-            : null;
+        return handleMcpRequest(request, {
+          getDatabase: () => handle.db,
+          principalResolver: async (authenticatedRequest, audience) => {
+            const bearer = /^Bearer ([^\s]+)$/u.exec(
+              authenticatedRequest.headers.get("authorization") ?? "",
+            )?.[1];
+            const principal = bearer
+              ? await resolveOAuthAccessToken(handle.db, bearer, { audience })
+              : null;
+            return principal
+              ? {
+                  accountId: principal.accountId,
+                  clientId: principal.clientId,
+                  credentialId: principal.tokenId,
+                  credentialKind: "oauth",
+                  isFilter: principal.isFilter,
+                  isMember: principal.isMember,
+                  scopes: principal.scopes,
+                }
+              : null;
+          },
         });
       },
       requestInit: {
@@ -968,11 +1037,37 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     await client.connect(transport);
     const tools = await client.listTools();
     expect(client.getServerVersion()?.name).toBe("attention-mcp-server");
-    expect(tools.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
-      "attention_collect_content",
+    expect(tools.tools.map((tool) => tool.name)).toEqual([
+      "attention_get_my_account",
+      "attention_get_membership_status",
       "attention_list_collections",
+      "attention_collect_content",
+      "attention_select_collection_candidate",
+      "attention_get_collection_status",
+      "attention_update_collection",
       "attention_list_public_content",
-    ]));
+      "attention_report_content",
+      "attention_get_digest_settings",
+    ]);
+    expect(
+      tools.tools.every(
+        (tool) => tool.inputSchema.type === "object" && tool.outputSchema?.type === "object",
+      ),
+    ).toBe(true);
+    const account = await client.callTool({
+      arguments: {
+        client_context: {
+          skill_id: "attention",
+          skill_version: "1.3.0",
+          workflow_run_id: "oauth-sdk-integration",
+        },
+      },
+      name: "attention_get_my_account",
+    });
+    expect(account.isError).not.toBe(true);
+    expect(account.structuredContent).toMatchObject({
+      capabilities: { is_filter: false, is_member: false },
+    });
     await client.close();
   });
 
@@ -986,7 +1081,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     expect(await resolveApiCredential(handle.db, credential.key)).toMatchObject({
       accountId: redeemed.accountId,
       isMember: true,
-      scopes: oauthScopes,
+      scopes: apiKeyScopes,
     });
     // Simulate a Key created by the former basic/advanced model. Stored
     // scopes remain a security ceiling until the user rotates it.
@@ -1281,6 +1376,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
         credentialId: "00000000-0000-4000-8000-000000000010",
         credentialKind: "oauth",
         durationMs: 12,
+        entitlementTier: "member",
         entrypoint: "hosted_mcp",
         outcome: "success",
         reportedSkillId: "attention",

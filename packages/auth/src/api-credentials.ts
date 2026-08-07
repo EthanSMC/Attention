@@ -11,7 +11,7 @@ import {
   type AttentionDatabase,
 } from "@attention/db";
 
-import { oauthScopes, type OAuthScope } from "./oauth";
+import { oauthDefaultClientScopes, type OAuthScope } from "./oauth";
 import { resolveAccountCapabilities } from "./sessions";
 
 const patPattern = /^att_pat_([A-Za-z0-9_-]{32,256})$/u;
@@ -22,7 +22,7 @@ const patPattern = /^att_pat_([A-Za-z0-9_-]{32,256})$/u;
  * scopes, while the account's live Free/Member/Filter capabilities decide
  * which operations are actually available on every request.
  */
-export const apiKeyScopes: readonly OAuthScope[] = oauthScopes;
+export const apiKeyScopes: readonly OAuthScope[] = oauthDefaultClientScopes;
 const apiKeyScopeSet = new Set<string>(apiKeyScopes);
 
 function hashPat(value: string): string {

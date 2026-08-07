@@ -82,6 +82,29 @@ require_min_length() {
   [[ ${#value} -ge $minimum ]] || fail "$key must contain at least $minimum characters"
 }
 
+require_integer_range() {
+  local key=$1 minimum=$2 maximum=$3
+  local value
+  value=$(value_of "$key")
+  [[ "$value" =~ ^[0-9]+$ ]] || fail "$key must be an integer"
+  (( value >= minimum && value <= maximum )) || \
+    fail "$key must be between $minimum and $maximum"
+}
+
+require_distinct_secrets() {
+  local keys=("$@")
+  local left_index right_index left_value right_value
+  for ((left_index = 0; left_index < ${#keys[@]}; left_index += 1)); do
+    left_value=$(value_of "${keys[$left_index]}")
+    for ((right_index = left_index + 1; right_index < ${#keys[@]}; right_index += 1)); do
+      right_value=$(value_of "${keys[$right_index]}")
+      if [[ "$left_value" == "$right_value" ]]; then
+        fail "${keys[$left_index]} and ${keys[$right_index]} must use independent secrets"
+      fi
+    done
+  done
+}
+
 require_postgres_url() {
   local key=$1 expected_user=$2 password_key=$3
   command -v python3 >/dev/null 2>&1 || fail "python3 is required"
@@ -136,6 +159,7 @@ require_equal ATTENTION_MIGRATION_DATABASE_NAME attention_staging
 require_equal NEXT_PUBLIC_APP_URL https://attention-staging.noveltystudio.cn
 require_equal ATTENTION_MCP_PUBLIC_URL https://attention-staging.noveltystudio.cn/mcp
 require_equal ATTENTION_SYNC_PUBLIC_URL https://attention-staging.noveltystudio.cn/api/sync
+require_equal ATTENTION_CHANNEL_RUNTIME_PUBLIC_URL https://attention-staging.noveltystudio.cn/api/runtime
 require_equal ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER x-attention-client-source
 require_equal WEB_BIND_ADDRESS 127.0.0.1
 require_equal WEB_PUBLISH_PORT 9199
@@ -143,6 +167,7 @@ require_equal ATTENTION_EMAIL_PROVIDER resend
 require_equal ATTENTION_RESEND_TEMPLATE_ID attention-login-code
 require_equal ATTENTION_DIGEST_WORKER_ENABLED false
 require_equal WECHAT_ASYNC_REPLY_PROVIDER disabled
+require_integer_range ATTENTION_MCP_REQUESTS_PER_MINUTE 10 1000
 
 for key in \
   POSTGRES_PASSWORD \
@@ -151,10 +176,19 @@ for key in \
   ATTENTION_HMAC_SECRET \
   ATTENTION_AUTH_SECRET \
   ATTENTION_CHANNEL_SECRET \
+  ATTENTION_CHANNEL_PAIRING_SECRET \
   ATTENTION_CHANNEL_ADAPTER_SECRET \
   FETCHER_SHARED_SECRET; do
   require_min_length "$key" 32
 done
+
+require_distinct_secrets \
+  ATTENTION_HMAC_SECRET \
+  ATTENTION_AUTH_SECRET \
+  ATTENTION_CHANNEL_SECRET \
+  ATTENTION_CHANNEL_PAIRING_SECRET \
+  ATTENTION_CHANNEL_ADAPTER_SECRET \
+  FETCHER_SHARED_SECRET
 
 require_min_length RESEND_API_KEY 20
 resend_key=$(value_of RESEND_API_KEY)

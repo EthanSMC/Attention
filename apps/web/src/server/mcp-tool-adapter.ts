@@ -1,5 +1,7 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
@@ -7,6 +9,7 @@ import {
   type CallToolResult,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import { AttentionToolStructuredErrorSchema } from "@attention/contracts";
 import { z } from "zod";
 
 import {
@@ -21,7 +24,18 @@ const MCP_SERVER_INFO = {
   version: "0.1.0",
 } as const;
 
-function encodeToolResult(result: AttentionToolResult): CallToolResult {
+function protocolRequestFingerprint(value: string | number): string {
+  return `mcp-${createHash("sha256")
+    .update(typeof value)
+    .update("\0")
+    .update(String(value))
+    .digest("hex")}`;
+}
+
+function encodeToolResult(
+  result: AttentionToolResult,
+  requestId: string,
+): CallToolResult {
   if (!result.ok) {
     return {
       content: [
@@ -31,6 +45,22 @@ function encodeToolResult(result: AttentionToolResult): CallToolResult {
         },
       ],
       isError: true,
+      structuredContent: {
+        error: {
+          code: result.code,
+          guidance: result.guidance,
+          request_id: requestId,
+          ...(result.requiredScope
+            ? { required_scope: result.requiredScope }
+            : {}),
+          ...(result.requiredEntitlement
+            ? { required_entitlement: result.requiredEntitlement }
+            : {}),
+          ...(result.retryAfterSeconds !== undefined
+            ? { retry_after_seconds: result.retryAfterSeconds }
+            : {}),
+        },
+      },
     };
   }
   return {
@@ -45,6 +75,27 @@ function jsonInputSchema(
   return z.toJSONSchema(definition.inputSchema, {
     target: "draft-7",
   }) as Tool["inputSchema"];
+}
+
+function jsonSchemaBranch(schema: z.ZodType): Record<string, unknown> {
+  const converted = z.toJSONSchema(schema, {
+    target: "draft-7",
+  }) as Record<string, unknown>;
+  const { $schema: _schema, ...branch } = converted;
+  return branch;
+}
+
+function jsonOutputSchema(
+  definition: AttentionToolDefinition,
+): Tool["outputSchema"] {
+  return {
+    $schema: "http://json-schema.org/draft-07/schema#",
+    oneOf: [
+      jsonSchemaBranch(definition.outputSchema),
+      jsonSchemaBranch(AttentionToolStructuredErrorSchema),
+    ],
+    type: "object",
+  } as Tool["outputSchema"];
 }
 
 /**
@@ -73,6 +124,7 @@ export function createAttentionMcpServer(
       description: definition.description,
       inputSchema: jsonInputSchema(definition),
       name: definition.name,
+      outputSchema: jsonOutputSchema(definition),
       title: definition.title,
     })),
   }));
@@ -80,21 +132,25 @@ export function createAttentionMcpServer(
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const definition = byName.get(request.params.name);
     if (!definition) {
-      return encodeToolResult({
-        code: "tool_not_found",
-        guidance: "Refresh the Attention tool list before calling this tool.",
-        ok: false,
-      });
+      return encodeToolResult(
+        {
+          code: "tool_not_found",
+          guidance: "Refresh the Attention tool list before calling this tool.",
+          ok: false,
+        },
+        context.requestId,
+      );
     }
     return encodeToolResult(
       await definition.invoke(
         {
           ...context,
-          runId: `${context.requestId}:${String(extra.requestId)}`,
+          runId: protocolRequestFingerprint(extra.requestId),
           signal: extra.signal,
         },
         request.params.arguments ?? {},
       ),
+      context.requestId,
     );
   });
 

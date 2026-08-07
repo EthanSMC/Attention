@@ -69,6 +69,7 @@ describe("staging environment preparation", () => {
       ATTENTION_MIGRATION_DATABASE_HOST: "postgres",
       ATTENTION_MIGRATION_DATABASE_NAME: "attention_staging",
       ATTENTION_MIGRATION_DATABASE_ROLE: "attention_migration_owner",
+      ATTENTION_MCP_REQUESTS_PER_MINUTE: "120",
       ATTENTION_POSTGRES_DATA_PATH: "/data/attention-staging/postgres",
       ATTENTION_RESEND_TEMPLATE_ID: "attention-login-code",
       COMPOSE_PROJECT_NAME: "attention-staging",
@@ -84,6 +85,7 @@ describe("staging environment preparation", () => {
       values.ATTENTION_HMAC_SECRET,
       values.ATTENTION_AUTH_SECRET,
       values.ATTENTION_CHANNEL_SECRET,
+      values.ATTENTION_CHANNEL_PAIRING_SECRET,
       values.ATTENTION_CHANNEL_ADAPTER_SECRET,
       values.FETCHER_SHARED_SECRET,
     ];
@@ -187,6 +189,42 @@ describe("staging environment preparation", () => {
     expect(mismatchedHeader.status).not.toBe(0);
     expect(`${mismatchedHeader.stdout}${mismatchedHeader.stderr}`).toContain(
       "ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER",
+    );
+  });
+
+  it("rejects a pairing secret reused from another trust boundary", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "attention-staging-pairing-"));
+    const target = createCompletedEnvironment(directory);
+    const values = parseEnv(readFileSync(target, "utf8"));
+    const reused = readFileSync(target, "utf8").replace(
+      /^ATTENTION_CHANNEL_PAIRING_SECRET=.*$/mu,
+      `ATTENTION_CHANNEL_PAIRING_SECRET=${values.ATTENTION_AUTH_SECRET}`,
+    );
+    writeFileSync(target, reused, { mode: 0o600 });
+
+    const validation = run("validate-env.sh", [target]);
+    expect(validation.status).not.toBe(0);
+    expect(`${validation.stdout}${validation.stderr}`).toContain(
+      "ATTENTION_CHANNEL_PAIRING_SECRET",
+    );
+    expect(`${validation.stdout}${validation.stderr}`).not.toContain(
+      values.ATTENTION_AUTH_SECRET,
+    );
+  });
+
+  it("rejects an invalid shared MCP request budget", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "attention-staging-mcp-limit-"));
+    const target = createCompletedEnvironment(directory);
+    const invalid = readFileSync(target, "utf8").replace(
+      /^ATTENTION_MCP_REQUESTS_PER_MINUTE=.*$/mu,
+      "ATTENTION_MCP_REQUESTS_PER_MINUTE=unlimited",
+    );
+    writeFileSync(target, invalid, { mode: 0o600 });
+
+    const validation = run("validate-env.sh", [target]);
+    expect(validation.status).not.toBe(0);
+    expect(`${validation.stdout}${validation.stderr}`).toContain(
+      "ATTENTION_MCP_REQUESTS_PER_MINUTE",
     );
   });
 });
@@ -385,9 +423,25 @@ describe("staging application rollback", () => {
       { mode: 0o755 },
     );
     const fakeCurl = resolve(directory, "curl");
-    writeFileSync(fakeCurl, "#!/usr/bin/env bash\nprintf '{\"status\":\"ok\"}'\n", {
-      mode: 0o755,
-    });
+    writeFileSync(
+      fakeCurl,
+      [
+        "#!/usr/bin/env bash",
+        "output=",
+        "url=${!#}",
+        "while (($#)); do",
+        "  if [[ $1 == --output ]]; then output=$2; shift 2; continue; fi",
+        "  shift",
+        "done",
+        "if [[ -n $output ]]; then",
+        "  relative=${url#http://127.0.0.1:9199}",
+        "  if [[ $relative == /ai* ]]; then : >\"$output\"; else cp \"$ATTENTION_FAKE_REPO_ROOT/apps/web/public$relative\" \"$output\"; fi",
+        "else",
+        "  printf '{\"status\":\"ok\"}'",
+        "fi",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
     const fakeFlock = resolve(directory, "flock");
     writeFileSync(fakeFlock, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
 
@@ -396,6 +450,7 @@ describe("staging application rollback", () => {
       ATTENTION_DOCKER_BIN: fakeDocker,
       ATTENTION_ENV_FILE: envFile,
       ATTENTION_FAKE_DOCKER_LOG: dockerLog,
+      ATTENTION_FAKE_REPO_ROOT: root,
       ATTENTION_FLOCK_BIN: fakeFlock,
       ATTENTION_STATE_DIR: stateDirectory,
       EXPECTED_MIGRATION_COUNT: expectedCount,

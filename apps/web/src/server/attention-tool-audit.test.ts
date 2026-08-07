@@ -12,21 +12,38 @@ const credentialId = "00000000-0000-4000-8000-000000000002";
 const attemptId = "00000000-0000-4000-8000-000000000003";
 const collectionId = "00000000-0000-4000-8000-000000000004";
 
-function databaseMock(options: { reject?: Error } = {}) {
+function databaseMock(options: {
+  publicRows?: { contentId: string; publicId: string }[];
+  reject?: Error;
+} = {}) {
+  const onConflictDoNothing = vi.fn().mockResolvedValue(undefined);
   const values = options.reject
     ? vi.fn().mockRejectedValue(options.reject)
-    : vi.fn().mockResolvedValue(undefined);
+    : vi.fn(() => {
+        const pending = Promise.resolve(undefined) as Promise<void> & {
+          onConflictDoNothing: typeof onConflictDoNothing;
+        };
+        pending.onConflictDoNothing = onConflictDoNothing;
+        return pending;
+      });
   const insert = vi.fn(() => ({ values }));
   const execute = vi.fn().mockResolvedValue(undefined);
+  const where = vi.fn().mockResolvedValue(options.publicRows ?? []);
+  const from = vi.fn(() => ({ where }));
+  const select = vi.fn(() => ({ from }));
   const transaction = vi.fn(async (callback: (tx: unknown) => unknown) =>
-    callback({ execute, insert }),
+    callback({ execute, insert, select }),
   );
   return {
     db: { transaction } as unknown as AttentionDatabase,
     execute,
+    from,
     insert,
+    onConflictDoNothing,
+    select,
     transaction,
     values,
+    where,
   };
 }
 
@@ -40,6 +57,7 @@ function validInput() {
     credentialId,
     credentialKind: "oauth" as const,
     durationMs: 42.6,
+    entitlementTier: "member" as const,
     entrypoint: "hosted_mcp" as const,
     outcome: "tool_error" as const,
     reportedSkillId: "attention" as const,
@@ -160,5 +178,46 @@ describe("Attention tool audit", () => {
       name: "Error",
     });
     expect(JSON.stringify(error.mock.calls)).not.toContain("att_pat_private-token");
+  });
+
+  it("records only server-resolved public citations as idempotent MCP contribution events", async () => {
+    const publicId = "00000000-0000-4000-8000-000000000007";
+    const contentId = "00000000-0000-4000-8000-000000000008";
+    const { db, onConflictDoNothing, values } = databaseMock({
+      publicRows: [{ contentId, publicId }],
+    });
+
+    await recordAttentionToolAuditBestEffort(db, {
+      ...validInput(),
+      outcome: "success",
+      protocolRequestId: "mcp-opaque-request",
+      publicCitationIds: [publicId],
+      stableErrorCode: null,
+      toolName: "attention_search_content",
+    });
+
+    expect(values).toHaveBeenCalledTimes(2);
+    expect(values.mock.calls[1]?.[0]).toEqual([
+      {
+        accountId,
+        contentId,
+        dedupeKey: expect.stringMatching(/^mcp-retrieval-v1:[a-f0-9]{64}$/u),
+        eventType: "mcp_retrieval",
+        metadata: {
+          client_id: "att_codex_client",
+          credential_id: credentialId,
+          credential_kind: "oauth",
+          entitlement_tier: "member",
+          entrypoint: "hosted_mcp",
+          tool_name: "attention_search_content",
+        },
+        requestId: "00000000-0000-4000-8000-000000000006",
+        scope: "public",
+      },
+    ]);
+    expect(onConflictDoNothing).toHaveBeenCalledWith({
+      target: eventLedger.dedupeKey,
+    });
+    expect(JSON.stringify(values.mock.calls)).not.toContain("private search query");
   });
 });

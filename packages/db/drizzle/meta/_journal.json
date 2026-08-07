@@ -141,6 +141,27 @@
       "when": 1786014000000,
       "tag": "0019_login_challenge_delivery_failure",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786035552929,
+      "tag": "0020_hot_metal_master",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1786040054425,
+      "tag": "0021_secret_deathbird",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1786041213431,
+      "tag": "0022_bored_rockslide",
+      "breakpoints": true
     }
   ]
 }

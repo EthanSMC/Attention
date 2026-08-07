@@ -16,7 +16,7 @@ Novelty Studio ECS 上的隔离 staging 部署使用专用的
 | `web` | Next.js standalone server | `3000`，`GET /api/health` |
 | `worker` | 收藏 enrichment 与可选日报 worker | 无 HTTP 端口；以进程存活和结构化日志监控 |
 | `fetcher` | 隔离的 URL/DNS/跳转抓取服务 | `4100`，`GET /health` |
-| `wechat-adapter` | 微信公众号回调 Adapter | `4200`，`GET /healthz` |
+| `wechat-adapter` | 保留的微信公众号协议原型；第一期不部署 | `4200`，`GET /healthz` |
 | `migrate` | Drizzle 一次性迁移任务 | 不常驻、无端口 |
 
 四个常驻 target 都以镜像内已有的非 root `node` 用户运行。Worker、Fetcher、微信 Adapter 均为单文件 bundle；Web 只复制 standalone server、静态文件和公开资源。源码、开发依赖、`.env*`、Git 元数据、测试输出、浏览器产物和本地构建目录不会进入运行时镜像。
@@ -35,7 +35,7 @@ docker build --target migrate -t attention-migrate:local .
 
 ## Compose 示例
 
-`compose.yaml` 是单机或本地通用示例，不是高可用编排。它不会把 PostgreSQL 发布到宿主机端口；Web 和可选微信 Adapter 也默认只绑定 `127.0.0.1`，等待宿主机反向代理。
+`compose.yaml` 是单机或本地通用示例，不是高可用编排。它不会把 PostgreSQL 发布到宿主机端口；Web 默认只绑定 `127.0.0.1`，等待宿主机反向代理。`wechat` profile 仅保留协议原型测试，第一期产品部署不要启用。
 
 先复制示例变量到不会提交的本地文件，并替换全部 `replace-me`：
 
@@ -57,7 +57,7 @@ docker compose --env-file .env.compose.local --profile tools run --rm runtime-ro
 docker compose --env-file .env.compose.local up -d postgres fetcher web worker
 ```
 
-启用微信 Adapter 需要先完成下文的微信生产配置：
+以下命令只用于维护历史协议原型，不能形成第一期产品链路，因为 Web Channel 入口稳定返回 `410 Gone`：
 
 ```bash
 docker compose --env-file .env.compose.local --profile wechat up -d wechat-adapter
@@ -81,7 +81,7 @@ PostgreSQL 至少使用三种身份：
 
 ## 必需环境变量
 
-所有 secret 都应来自部署平台 secret store 或只读文件注入，不能写入镜像、Compose 文件、CI 日志或 Git。长度要求以代码校验为准，以下 HMAC/Auth/Channel/Adapter/Fetcher secret 至少使用独立的 32 字节随机值，不能复用。
+所有 secret 都应来自部署平台 secret store 或只读文件注入，不能写入镜像、Compose 文件、CI 日志或 Git。长度要求以代码校验为准，以下 HMAC/Auth/Channel/Channel Pairing/Adapter/Fetcher secret 至少使用独立的 32 字节随机值，不能复用。
 
 ### Migrate
 
@@ -101,7 +101,8 @@ PostgreSQL 至少使用三种身份：
 | `NEXT_PUBLIC_APP_URL` | 用户访问的唯一 HTTPS origin，例如 `https://attention.example.com`。 |
 | `ATTENTION_HMAC_SECRET` | 候选与收藏流程的独立随机 secret。 |
 | `ATTENTION_AUTH_SECRET` | 浏览器认证的独立随机 secret。 |
-| `ATTENTION_CHANNEL_SECRET` | Channel intent 的独立随机 secret。 |
+| `ATTENTION_CHANNEL_SECRET` | 旧 Channel intent 协议的独立随机 secret。 |
+| `ATTENTION_CHANNEL_PAIRING_SECRET` | Local Agent Channel Runtime 配对 challenge 的独立 HMAC secret；至少 32 字符，只注入 Web 服务端，不能复用 Auth、旧 Channel 或 Adapter secret。 |
 | `ATTENTION_CHANNEL_ADAPTER_SECRET` | Web 与 Adapter 间 Bearer secret；两端必须一致。 |
 | `FETCHER_BASE_URL` | 内网 Fetcher 地址；Compose 为 `http://fetcher:4100`。 |
 | `FETCHER_SHARED_SECRET` | Web/Worker/Fetcher 三端一致的独立 Bearer secret。 |
@@ -112,7 +113,9 @@ PostgreSQL 至少使用三种身份：
 | `ATTENTION_EMAIL_WEBHOOK_URL` | `webhook` provider 的无 credentials/query/fragment 可信 HTTPS 邮件入口。 |
 | `ATTENTION_EMAIL_WEBHOOK_TOKEN` | `webhook` provider 的邮件服务 Bearer token。 |
 | `ATTENTION_MCP_PUBLIC_URL` | 对外 HTTPS MCP resource URL。 |
+| `ATTENTION_MCP_REQUESTS_PER_MINUTE` | 每个 MCP credential/client 的 PostgreSQL 共享分钟预算，必须为 10–1000 的整数；默认 120。超限返回 `429`、`Retry-After` 与 `retry_after_seconds`。 |
 | `ATTENTION_SYNC_PUBLIC_URL` | 对外 HTTPS Sync resource URL。 |
+| `ATTENTION_CHANNEL_RUNTIME_PUBLIC_URL` | 对外 HTTPS Local Channel Runtime control-plane resource URL。 |
 | `ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER` | 入口代理拥有的专用客户端来源头名称；代理必须先丢弃同名入站头再按连接源覆盖。生产缺失时登录与动态注册会 fail closed；应用拒绝 `Forwarded`、`X-Forwarded-For`、`X-Real-IP` 和 CDN 常规客户端地址头。 |
 | `ATTENTION_CONSUMER_INVITE_QUOTA` | 每个 active 注册账号（包括 Filter）可成功邀请的人数；账号页显示已使用 / 总名额，必须是 1–100 的整数。 |
 
@@ -143,7 +146,7 @@ Resend 模板源文件见 [`email-login-code-template.html`](email-login-code-te
 
 ### 微信 Adapter
 
-除与 Web 共享的 `ATTENTION_CHANNEL_ADAPTER_SECRET` 外，必须从微信公众号后台取得 `WECHAT_APP_ID`、`WECHAT_APP_SECRET`、`WECHAT_CALLBACK_TOKEN` 和 43 字符 `WECHAT_ENCODING_AES_KEY`。生产建议 `WECHAT_MESSAGE_MODE=safe`，并在微信后台同步配置。Compose 同栈内允许使用固定服务地址 `http://web:3000`；任何其他跨主机或公网 `ATTENTION_CHANNEL_API_BASE_URL` 都必须是无 credentials/query/fragment 的 HTTPS URL。
+本节只记录历史原型的安全要求，第一期不要把它部署到生产。未来若重新启用，除与 Web 共享的 `ATTENTION_CHANNEL_ADAPTER_SECRET` 外，必须从微信公众号后台取得 `WECHAT_APP_ID`、`WECHAT_APP_SECRET`、`WECHAT_CALLBACK_TOKEN` 和 43 字符 `WECHAT_ENCODING_AES_KEY`，并重新设计版本化 Web 产品入口；不得直接取消现有旧路由的 `410 Gone`。
 
 只有账号具备客服消息权限且真实联调通过后才启用 `WECHAT_ASYNC_REPLY_PROVIDER=customer_service`。当前代码测试了协议合同，但未宣称已经通过微信平台服务器验证、备案、IP 白名单、客服消息权限或资质审核。
 
@@ -154,7 +157,7 @@ Resend 模板源文件见 [`email-login-code-template.html`](email-login-code-te
 - TLS 终止与自动续期，HTTP 永久跳转 HTTPS；
 - 保留原始 `Host`/scheme，限制请求体和超时；
 - 对认证、OAuth 动态注册、收藏和微信回调设置合适的按 IP/账号限流；
-- 只把 Web 路由到 `3000`，需要微信时只把配置的 callback path 路由到 `4200`；
+- 第一时期只把 Web 路由到 `3000`，不要把历史 Adapter 的 `4200` 或 callback path 发布到公网；
 - 不对外发布 Fetcher、Worker、migration job 或 PostgreSQL。
 
 认证与 OAuth 动态注册的数据库限流只接受入口认证后的来源值，不读取客户端可伪造的 `X-Forwarded-For`。仓库提供 [`deploy/nginx/attention.conf.example`](../deploy/nginx/attention.conf.example) 作为最小 Nginx 参考：代理必须覆盖 `X-Attention-Client-Source`，并把同一名称配置到 `ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER`。应用会拒绝 `Forwarded`、`X-Forwarded-For`、`X-Real-IP`、`CF-Connecting-IP`、`True-Client-IP` 和 `Fastly-Client-IP` 等常规转发/客户端地址头；若使用 Cloudflare、ALB、Kubernetes ingress 等其他边缘，必须另外创建专用头并实现同等的“清除入站同名头、按已验证连接元数据重新设置、限制 Web 仅能由该入口访问”语义。

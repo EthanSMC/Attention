@@ -1,8 +1,8 @@
 # Attention
 
-Attention 是一个“人筛选，AI 整理”的收藏与公开信息层。当前仓库已经形成账号体系首版：Guest 公开预览、邮箱验证码注册/登录、Free 私人收藏、Member 权益门、网页 Agent、OAuth + PKCE、API Key、Hosted MCP、云同步、Hosted Channel 绑定、Consumer 裂变、Filter 年卡兑换和续费积分账本都执行真实的服务端身份与权限判断。生产支付与微信供应商仍未联调，仓库中的 provider-neutral 合同和本地 adapter 不能被当成已经上线的供应商能力。
+Attention 是一个“人筛选，AI 整理”的收藏与公开信息层。当前仓库已经形成账号体系首版：Guest 公开预览、邮箱验证码注册/登录、Free 私人收藏、Member 权益门、OAuth + PKCE、API Key、Hosted MCP、云同步、Consumer 裂变、Filter 年卡兑换和续费积分账本都执行真实的服务端身份与权限判断。第一期不提供官方 Hosted Agent 或 Hosted Channel；用户使用自己的 Agent，Attention 只建设 Skill、MCP、OAuth 与 Local Channel Runtime 基础设施。
 
-系统架构、微信统一 Agent 数据流与 Attention MCP 见 [`docs/architecture.md`](docs/architecture.md)。当前账号、Free/Member、OAuth、云同步、Channel 和增长机制的产品决策见 [`docs/superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md`](docs/superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md)。Web 视觉 token、组件和交互规则见 [`docs/design-system.md`](docs/design-system.md)；机器可读设计基线见 [`DESIGN.md`](DESIGN.md)，产品上下文见 [`PRODUCT.md`](PRODUCT.md)，设置页审查见 [`docs/settings-design-audit.md`](docs/settings-design-audit.md)。
+系统架构与 Attention MCP 见 [`docs/architecture.md`](docs/architecture.md)；第一期本地 Agent、Desktop Companion 与 iLink Runtime 边界见 [`Local Agent Channel Runtime 设计`](docs/superpowers/specs/2026-08-07-local-agent-channel-runtime-design.md)。当前账号、Free/Member、OAuth、云同步和增长机制的产品决策见 [`账号与会员设计`](docs/superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md)。Web 视觉 token、组件和交互规则见 [`docs/design-system.md`](docs/design-system.md)；机器可读设计基线见 [`DESIGN.md`](DESIGN.md)，产品上下文见 [`PRODUCT.md`](PRODUCT.md)，设置页审查见 [`docs/settings-design-audit.md`](docs/settings-design-audit.md)。
 
 通用容器、Compose、数据库角色、HTTPS 反代、环境变量和 CI 基线见 [`docs/deployment.md`](docs/deployment.md)。这些文件是可移植部署起点，不表示仓库或外部供应商已经上线。
 
@@ -17,15 +17,15 @@ Attention 是一个“人筛选，AI 整理”的收藏与公开信息层。当�
 - Free 可不限量私密收藏和云同步；Filter 默认公开收藏。公开可见性仍只能由 Filter 产生。
 - 同一用户重复收藏不会制造重复记录，也不会偷偷改变原可见性。
 - 收藏后立即可在“我的收藏”查看；公开内容按首次公开时间出现在 AI 公开流。
-- Member 解锁完整公开流、网页 Agent、托管 AI 检索、Member 专属 MCP 能力和 Hosted Channel；所有公共表面都使用相同服务端权益边界。
+- Member 解锁完整公开流、日报、托管 AI 检索和 Member 专属 MCP 能力；Web 与 MCP 使用相同服务端权益边界。
 - OAuth Authorization Code + PKCE 是 CLI、第三方 Agent、Sync API 与 Hosted MCP 的推荐连接方式；API Key 仅作为不支持浏览器 OAuth 的备用。API Key 只有一种，实际能力始终跟随账号当前权益。
-- 微信等 Hosted Channel 使用一次性绑定链接，明确显示目标账号及已设置的 Attention ID；Channel、OAuth、API Key 与网站 Session 可分别吊销。
+- Local Channel Runtime 使用独立 OAuth audience 和最小运行时 scopes；它只报告安装、心跳与用户自行持有的渠道绑定状态，不托管模型、会话或微信凭据。第一期 Web 不展示渠道绑定或连接状态。
 - “查看原文”统一经过受控跳转，并在跳转时重新检查 owner、公开资格、风控与下架状态。
 - 登录用户可以举报公开内容；两个不同 Consumer 或一个当前有效 Filter 会立即触发复核并从所有公共出口隐藏。有效 Filter 在 `/account/court` 一人一票，票一经投出不可更改。
 - `/account/rewards` 提供新用户邀请（内部 Consumer referral）、Filter 年卡签发/兑换和按币种积分账本；邀请与兑换原文只展示一次，数据库只存哈希，grant 会在既有权益后按日历月顺延。
 - 原始分享文案不落库，只保留 HMAC、被选中的安全 URL 和必要审计信息。
 
-微信入口的内部 Channel 合同、账号绑定与 pending continuation 已实现；独立 Adapter 已覆盖服务器验证、明文/安全模式回调、消息 AES、被动回复、客服消息 provider 和 access token 缓存。代码尚未在持有相应资质的真实公众号后台完成联调，生产前置条件见下方说明和 [`docs/handoffs/wechat-adapter-handoff.md`](docs/handoffs/wechat-adapter-handoff.md)。
+仓库仍保留早期官方公众号 Adapter 的实验代码与交接资料，但它不属于第一期产品面，也没有前端入口或生产联调承诺。第一期渠道方向以用户自己的 Agent 与 Local Channel Runtime 为准。
 
 ## 本地运行
 
@@ -47,6 +47,7 @@ WORKER_DATABASE_URL=postgresql:///attention_dev
 ATTENTION_HMAC_SECRET=replace-with-at-least-32-random-characters
 ATTENTION_AUTH_SECRET=replace-with-a-separate-32-character-auth-secret
 ATTENTION_CHANNEL_SECRET=replace-with-a-separate-32-character-channel-secret
+ATTENTION_CHANNEL_PAIRING_SECRET=replace-with-an-independent-32-character-pairing-secret
 ATTENTION_CHANNEL_ADAPTER_SECRET=replace-with-an-internal-adapter-bearer-secret
 FETCHER_BASE_URL=http://127.0.0.1:4100
 FETCHER_SHARED_SECRET=replace-with-at-least-32-random-characters
@@ -62,19 +63,19 @@ pnpm dev:worker
 pnpm --filter @attention/web dev --hostname 127.0.0.1
 ```
 
-### 微信公众号 Adapter
+### 早期微信公众号 Adapter（非第一期产品）
 
-在公众号后台取得 AppID、AppSecret、回调 Token 和 43 字符 EncodingAESKey 后，补齐 `.env.local` 中的 `WECHAT_*` 配置并启动：
+以下入口只用于维护已有协议测试，不代表 Attention 提供托管 Channel。取得 AppID、AppSecret、回调 Token 和 43 字符 EncodingAESKey 后，可补齐 `.env.local` 中的 `WECHAT_*` 配置并启动实验 Adapter：
 
 ```bash
 pnpm dev:wechat
 ```
 
-默认回调路径是 `/wechat/callback`。生产环境必须通过公网 HTTPS 把它暴露给微信服务器，并让 `ATTENTION_CHANNEL_API_BASE_URL` 指向 Attention Web 的可信内部地址；Adapter 使用 `ATTENTION_CHANNEL_ADAPTER_SECRET` 调用现有 `/api/channels/messages` 与 pending 接口，Free、未绑定和 Member 规则仍由 Web 内部 API 统一判断。
+默认回调路径是 `/wechat/callback`，但第一期不要把这个实验 Adapter 部署为产品入口。Web 中旧 `/api/channels/messages`、`/api/channels/bind`、`/api/channels/pending/:id` 和账号 Channel 撤销接口统一返回 `410 Gone`，不会再生成已经移除的 `/channel/bind` 链接。底层 Channel 身份、Auth 合同和 Local Channel Runtime 基础设施继续保留，等待未来重新设计并显式启用。
 
 `WECHAT_MESSAGE_MODE=compatible` 同时接受验签后的明文和 AES 消息，正式环境建议在公众号后台和 Adapter 一起切到 `safe`。只有公众号具备客服消息权限且已配置相应生产能力时，才设置 `WECHAT_ASYNC_REPLY_PROVIDER=customer_service`；否则保持 `disabled`，超时请求会安全确认并允许用户重试。Adapter 不记录原始 XML、openid 或 AppSecret。当前仓库只实现并测试了协议合同，未宣称已通过微信平台服务器验证或资质联调。
 
-当前 Worker 默认完成确定性元数据整理；未设置 `ATTENTION_AI_MODEL` 时，摘要会进入明确的 unavailable 状态，网页 Agent 使用关键词检索降级。配置 `ATTENTION_AI_MODEL`、可选的 `ATTENTION_AI_BASE_URL` 和 `ATTENTION_AI_API_KEY` 后，Worker 会通过隔离 Fetcher 临时读取受限页面内容并生成摘要/标签，网页 Agent 会基于当前账号可访问的引用生成回答。原文正文不会写入数据库，供应商失败也不会伪装成生成成功。
+当前 Worker 默认完成确定性元数据整理；未设置 `ATTENTION_AI_MODEL` 时，摘要会进入明确的 unavailable 状态，托管 AI 检索使用关键词降级。配置 `ATTENTION_AI_MODEL`、可选的 `ATTENTION_AI_BASE_URL` 和 `ATTENTION_AI_API_KEY` 后，Worker 会通过隔离 Fetcher 临时读取受限页面内容并生成摘要/标签，检索服务会基于当前账号可访问的引用生成回答。原文正文不会写入数据库，供应商失败也不会伪装成生成成功。
 
 普通本地开发与 Domain 日报可使用 `ATTENTION_EMAIL_PROVIDER=console`，验证码只写入服务端终端，浏览器和 API 响应永远不会收到验证码。登录邮件 E2E 必须配置原生 Resend 并实际调用 Resend 服务；生产 Web 登录验证码也可使用原生 Resend 或 webhook provider。Worker 日报目前仍只使用 webhook adapter。日报请求使用 `template=attention-daily-digest-v1`，并以 delivery UUID 同时填充 `message_id` 与 `Idempotency-Key`。供应商必须按该键去重重试；仓库不包含供应商密钥。
 
@@ -93,9 +94,26 @@ codex mcp add attention --url http://127.0.0.1:3000/mcp
 claude mcp add --transport http --scope user attention http://127.0.0.1:3000/mcp
 ```
 
-公开 Skill 位于 `/skills/attention/SKILL.md`，不会嵌入 token。`/mcp` 与 `/api/sync` 只接受 OAuth/API Key Bearer credential；网站 Cookie 不能冒充 Agent credential。OAuth 客户端必须按 RFC 8707 在授权请求和 token 请求（包括刷新）中发送同一个 `resource`：MCP 使用 `ATTENTION_MCP_PUBLIC_URL`（默认 `${NEXT_PUBLIC_APP_URL}/mcp`），同步使用 `ATTENTION_SYNC_PUBLIC_URL`（默认 `${NEXT_PUBLIC_APP_URL}/api/sync`）。两个 resource 的 token 不能交叉使用。首次本地历史同步必须标记 `historical=true`，服务端会强制作为私密收藏导入。
+仓库内的本地安装/诊断 CLI 会从同一份机器可读宿主 manifest 生成
+OpenClaw、Hermes、Codex、Claude Code 和 WorkBuddy 的配置，不会另建一套能力声明：
 
-公开 Tool Contract 当前为 `1.0.0`：包含收藏、候选选择、处理状态、个人列表、可见性修改、公开流和 Member 搜索 7 个工具。收藏调用必须提供由客户端生成并在重试间复用的 `idempotency_key`；一次性候选选择明确标记为非幂等。工具调用审计只记录受限的版本、耗时、稳定状态和 HMAC 工作流指纹，不记录 URL、query、分享文本、正文、token 或一次性凭证。
+```bash
+pnpm --filter @attention/cli build
+apps/cli/dist/index.js integrations list
+apps/cli/dist/index.js configure codex --origin http://127.0.0.1:3000
+apps/cli/dist/index.js configure workbuddy --origin http://127.0.0.1:3000
+apps/cli/dist/index.js doctor codex --origin http://127.0.0.1:3000
+```
+
+`configure` 默认只打印可复制步骤；只有显式加入 `--apply` 才会落地 Skill/MCP
+配置，OAuth 还需要额外加入 `--login`。CLI 不接收 iLink token，也不会把
+WorkBuddy 的宿主内微信状态或尚未交付的 Codex/Claude inbound companion 显示为
+“已连接”。WorkBuddy 的 `--apply` 只会下载并校验公开 ZIP，用户仍须在宿主 UI
+手动导入。完整用法与安全边界见 [`apps/cli/README.md`](apps/cli/README.md)。
+
+公开 Skill 位于 `/skills/attention/SKILL.md`，不会嵌入 token。`/mcp` 与 `/api/sync` 只接受 OAuth/API Key Bearer credential；网站 Cookie 不能冒充 Agent credential。OAuth 客户端必须按 RFC 8707 在授权请求和 token 请求（包括刷新）中发送同一个 `resource`：MCP 使用 `ATTENTION_MCP_PUBLIC_URL`（默认 `${NEXT_PUBLIC_APP_URL}/mcp`），同步使用 `ATTENTION_SYNC_PUBLIC_URL`（默认 `${NEXT_PUBLIC_APP_URL}/api/sync`），本地 Channel Runtime 使用 `ATTENTION_CHANNEL_RUNTIME_PUBLIC_URL`（默认 `${NEXT_PUBLIC_APP_URL}/api/runtime`）且只接受 OAuth。三个 resource 的 token 不能交叉使用。Runtime 的短期配对码只以 `ATTENTION_CHANNEL_PAIRING_SECRET` 派生的 HMAC 落库；该 secret 只注入 Web 服务端，必须与 Auth、旧 Channel 和 Adapter secret 独立。首次本地历史同步必须标记 `historical=true`，服务端会强制作为私密收藏导入。
+
+公开 Tool Contract 当前为 `1.3.0`：包含账号与会员状态读取、收藏、候选选择、处理状态、个人列表、可见性修改、公开流、Member 搜索、内容举报、Filter 小法庭案件/投票与日报读写 14 个工具。小法庭投票只接受当前有效 Filter，并强制逐案逐决定传入 `explicit_confirmation: true`；Skill 禁止模型自行推断确认。收藏调用必须提供由客户端生成并在重试间复用的 `idempotency_key`；一次性候选选择明确标记为非幂等。工具调用审计只记录受限的版本、耗时、稳定状态和 HMAC 工作流指纹，不记录 URL、query、分享文本、正文、token 或一次性凭证。
 
 生产构建会把 Worker 及其工作区依赖打包为单一 Node.js 产物，运行时不依赖 `tsx`：
 

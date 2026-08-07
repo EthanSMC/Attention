@@ -1,8 +1,8 @@
 import {
   fingerprintLoginRequester,
   OAuthError,
-  oauthScopes,
   registerPublicOAuthClient,
+  resolveOAuthClientAllowedScopes,
 } from "@attention/auth";
 import type { AttentionDatabase } from "@attention/db";
 import type { NextRequest, NextResponse } from "next/server";
@@ -35,14 +35,6 @@ const bodySchema = z.object({
   token_endpoint_auth_method: z.string().min(1).max(100).optional(),
 });
 
-function validateRequestedScope(scope: string | undefined): void {
-  if (!scope) return;
-  const allowed = new Set<string>(oauthScopes);
-  if (scope.split(/\s+/u).filter(Boolean).some((value) => !allowed.has(value))) {
-    throw new OAuthError("invalid_scope");
-  }
-}
-
 export async function handleOAuthRegistrationRequest(
   request: Request,
   db: AttentionDatabase = getWebDatabase(),
@@ -51,9 +43,10 @@ export async function handleOAuthRegistrationRequest(
     const body = bodySchema.parse(
       await readJsonRequestWithinLimit(request, 16_384),
     );
-    validateRequestedScope(body.scope);
-    const clientName = body.client_name ?? body.software_id ?? "Dynamic MCP client";
+    const allowedScopes = resolveOAuthClientAllowedScopes(body.scope);
+    const clientName = body.client_name ?? body.software_id ?? "Dynamic OAuth client";
     const client = await registerPublicOAuthClient(db, {
+      allowedScopes,
       name: clientName,
       requesterFingerprint: fingerprintLoginRequester(trustedClientSource(request)),
       redirectUris: body.redirect_uris,
@@ -66,7 +59,7 @@ export async function handleOAuthRegistrationRequest(
       redirect_uris: body.redirect_uris,
       response_types: ["code"],
       ...(body.application_type ? { application_type: body.application_type } : {}),
-      ...(body.scope ? { scope: body.scope } : {}),
+      scope: client.allowedScopes.join(" "),
       token_endpoint_auth_method: "none",
     }, { status: 201 });
   } catch (error) {

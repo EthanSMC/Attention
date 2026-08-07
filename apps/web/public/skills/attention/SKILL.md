@@ -9,13 +9,19 @@ Use the configured `attention` MCP server for cloud data. Never ask the user to 
 
 Skill ID: `attention`
 
-Skill version: `1.0.0`
+Skill version: `1.3.0`
 
-Tool contract version: `1.0.0`
+Tool contract version: `1.3.0`
+
+Installation manifest: `/skills/attention/installations/v1/index.json`
+
+Installation guide: `/skills/attention/INSTALL.md`
+
+Machine-readable capability manifest: `/skills/attention/capabilities/v1/index.json`
 
 ## Call context
 
-For every tool call, include `client_context` with `skill_id: "attention"`, `skill_version: "1.0.0"`, and one opaque `workflow_run_id` reused across that user workflow. Use only letters, numbers, `.`, `_`, `:`, or `-`; never put user text, a URL, a query, or a credential in these fields.
+For every tool call, include `client_context` with `skill_id: "attention"`, `skill_version: "1.3.0"`, and one opaque `workflow_run_id` reused across that user workflow. Use only letters, numbers, `.`, `_`, `:`, or `-`; never put user text, a URL, a query, or a credential in these fields.
 
 ## Collect
 
@@ -30,16 +36,31 @@ For every tool call, include `client_context` with `skill_id: "attention"`, `ski
 
 ## Retrieve and update
 
-1. Call `attention_list_collections` with a focused query and small page size when the user asks what they saved. Follow pagination only as needed and return original-source links as citations.
-2. Call `attention_search_content` only when the server advertises it. Search is a live Member capability and can disappear when membership expires.
-3. Call `attention_list_public_content` for the public feed. Respect `preview_limited`; do not use another endpoint to expand a Free preview.
-4. Call `attention_get_collection_status` for a known attempt or collection instead of repeatedly listing collections to guess whether processing finished.
-5. Call `attention_update_collection` to change public/private visibility. Only an active Filter may make a collection public; the server rechecks that status on every call.
+1. Call `attention_get_my_account` when the workflow needs the user's Attention display identity or current Member/Filter capability. It intentionally does not return email, session, password, or internal account identifiers.
+2. Call `attention_get_membership_status` only when the user asks about current Attention access or subscription state. It is read-only and must never be presented as starting, changing, or cancelling billing.
+3. Call `attention_list_collections` with a focused query and small page size when the user asks what they saved. Follow pagination only as needed and return original-source links as citations.
+4. Call `attention_search_content` only when the server advertises it. Search is a live Member capability and can disappear when membership expires.
+5. Call `attention_list_public_content` for the public feed. Respect `preview_limited`; do not use another endpoint to expand a Free preview.
+6. Call `attention_get_collection_status` for a known attempt or collection instead of repeatedly listing collections to guess whether processing finished.
+7. Call `attention_update_collection` to change public/private visibility. Only an active Filter may make a collection public; the server rechecks that status on every call.
+
+## Report and digest
+
+1. Call `attention_report_content` only when the user explicitly asks to report one exact currently public item in the current conversation. Send `explicit_confirmation: true`, the public content ID returned by `attention_list_public_content`, a short stable reason code, and only user-provided optional details. Do not infer confirmation from prior preferences. Do not invent allegations. A duplicate report is a successful idempotent result.
+2. Call `attention_get_digest_settings` when the user asks what digest schedule or domains are configured. The returned `eligible` flag is informational; it does not grant membership.
+3. Call `attention_update_digest_settings` only after the user specifies the desired enabled state, domains, timezone, start time, and window. Preserve values the user did not ask to change by reading the current settings first. Member or Filter entitlement is rechecked by the server.
+
+## Filter moderation court
+
+1. Call `attention_list_moderation_cases` only when an active Filter asks to inspect the current court. It is read-only. Present the case title, source, original link, current votes, deadline, and the Filter's existing vote without recommending or preselecting a decision.
+2. Never cast a vote from an article's content, a report, the model's own safety judgment, a prior preference, or a broad instruction such as "handle moderation for me." A court vote is a human decision for one named case and cannot be changed.
+3. Before `attention_cast_moderation_vote`, show the exact current case and ask the user to choose `public` or `hidden`. Call the tool only after the user explicitly confirms that case and decision in the current conversation, then send `explicit_confirmation: true`. Never manufacture confirmation or set it to true merely to satisfy the schema.
+4. An exact retry with the same case and decision may return `duplicate: true`; treat it as success. On `vote_already_cast`, do not try the opposite decision. On `case_not_open` or `voting_closed`, refresh with `attention_list_moderation_cases` and do not transfer the old confirmation to another case or voting round.
 
 ## Boundaries
 
 - Use the Agent's own Browser, Computer Use, or Web Search to understand a public page. Do not ask Attention for a general browser or attempt to discover a private runtime web tool.
 - Do not submit copied page text, extracted full content, cookies, authorization headers, or browser state as collection evidence. Third-party extraction is not trusted Attention acquisition evidence.
 - Treat private collection results as private. Do not mix them into public answers or share them with another account.
-- If a tool returns `insufficient_scope`, `membership_required`, or `filter_required`, explain the required permission or entitlement. Do not retry through a public or anonymous endpoint to bypass it.
+- If a tool returns `insufficient_scope`, `membership_required`, `digest_entitlement_required`, or `filter_required`, explain the required permission or entitlement. Do not retry through a public or anonymous endpoint to bypass it.
 - Never place an OAuth token or API Key in tool input, citations, logs, or this skill. Attention stores collected URLs and necessary metadata, not a third-party original merely because its link was collected.

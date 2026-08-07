@@ -1,0 +1,121 @@
+import { describe, expect, it } from "vitest";
+
+import { ATTENTION_WORKBUDDY_SKILL_BUNDLE_PUBLIC_PATH } from "@attention/contracts";
+
+import { runAttentionCli } from "./main";
+
+function captureOutput(): {
+  readonly errors: string[];
+  readonly logs: string[];
+  readonly output: { error: (value: string) => void; log: (value: string) => void };
+} {
+  const errors: string[] = [];
+  const logs: string[] = [];
+  return {
+    errors,
+    logs,
+    output: {
+      error: (value) => errors.push(value),
+      log: (value) => logs.push(value),
+    },
+  };
+}
+
+describe("Attention CLI", () => {
+  it("lists all integrations from the manifest", async () => {
+    const capture = captureOutput();
+    expect(
+      await runAttentionCli(["integrations", "list"], {
+        output: capture.output,
+      }),
+    ).toBe(0);
+    expect(capture.logs.join("\n")).toMatch(/openclaw/);
+    expect(capture.logs.join("\n")).toMatch(/workbuddy/);
+    expect(capture.logs.join("\n")).toMatch(/cannot identify a real WeChat/);
+  });
+
+  it("prints a dry-run configuration and never starts OAuth", async () => {
+    const capture = captureOutput();
+    expect(
+      await runAttentionCli(
+        [
+          "configure",
+          "hermes",
+          "--origin",
+          "https://attention.example",
+        ],
+        { output: capture.output },
+      ),
+    ).toBe(0);
+    const output = capture.logs.join("\n");
+    expect(output).toContain(
+      "hermes mcp add attention --url https://attention.example/mcp --auth oauth",
+    );
+    expect(output).toContain("Nothing was changed");
+  });
+
+  it("requires explicit apply before login", async () => {
+    const capture = captureOutput();
+    expect(
+      await runAttentionCli(
+        [
+          "configure",
+          "codex",
+          "--origin",
+          "https://attention.example",
+          "--login",
+        ],
+        { output: capture.output },
+      ),
+    ).toBe(2);
+    expect(capture.errors.join("\n")).toMatch(/--apply/);
+  });
+
+  it("shows WorkBuddy's downloadable bundle without claiming it was imported", async () => {
+    const capture = captureOutput();
+    expect(
+      await runAttentionCli(
+        [
+          "configure",
+          "workbuddy",
+          "--origin",
+          "https://attention.example",
+        ],
+        { output: capture.output },
+      ),
+    ).toBe(0);
+    const output = capture.logs.join("\n");
+    expect(output).toContain(ATTENTION_WORKBUDDY_SKILL_BUNDLE_PUBLIC_PATH);
+    expect(output).toContain("import in the host UI");
+    expect(output).toContain("Nothing was changed");
+    expect(output).not.toContain("Skill imported");
+  });
+
+  it("supports a machine-readable doctor without exposing tokens", async () => {
+    const capture = captureOutput();
+    const exitCode = await runAttentionCli(
+      [
+        "doctor",
+        "codex",
+        "--origin",
+        "https://attention.example",
+        "--json",
+      ],
+      {
+        output: capture.output,
+        runDoctorChecks: async () => [
+          {
+            detail: "Available; login was not executed.",
+            id: "oauth_login",
+            status: "pass",
+            title: "OAuth login capability",
+          },
+        ],
+      },
+    );
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(capture.logs[0] ?? "[]")).toEqual([
+      expect.objectContaining({ id: "oauth_login", status: "pass" }),
+    ]);
+  });
+});

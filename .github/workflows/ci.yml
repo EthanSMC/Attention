@@ -33,6 +33,7 @@ jobs:
     env:
       ATTENTION_AUTH_SECRET: attention-ci-auth-secret-at-least-32-characters
       ATTENTION_CHANNEL_ADAPTER_SECRET: attention-ci-adapter-secret-at-least-32-chars
+      ATTENTION_CHANNEL_RUNTIME_PUBLIC_URL: https://attention.example.test/api/runtime
       ATTENTION_CHANNEL_SECRET: attention-ci-channel-secret-at-least-32-characters
       ATTENTION_DIGEST_WORKER_ENABLED: "false"
       ATTENTION_EMAIL_PROVIDER: webhook
@@ -95,6 +96,12 @@ jobs:
             --set ON_ERROR_STOP=1 \
             --command "ALTER ROLE attention_web_runtime PASSWORD 'attention_ci_web_password'" \
             --command "ALTER ROLE attention_worker_runtime PASSWORD 'attention_ci_worker_password'"
+
+      - name: Verify generated Agent installation artifacts
+        run: pnpm agent-installations:check
+
+      - name: Verify generated capability artifacts
+        run: pnpm capabilities:check
 
       - name: Typecheck
         run: pnpm typecheck

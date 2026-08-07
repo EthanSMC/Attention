@@ -8,7 +8,7 @@ fail() {
   exit 1
 }
 
-for command in "$ATTENTION_DOCKER_BIN" git python3 ss df awk curl pg_restore find flock stat; do
+for command in "$ATTENTION_DOCKER_BIN" git python3 ss df awk curl cmp pg_restore find flock stat; do
   if [[ "$command" == */* ]]; then
     [[ -x "$command" ]] || fail "$command is not executable"
   else

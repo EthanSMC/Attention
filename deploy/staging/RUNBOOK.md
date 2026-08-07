@@ -173,6 +173,10 @@ sudoedit /etc/attention-staging/compose.env
 sudo ./deploy/staging/validate-env.sh /etc/attention-staging/compose.env
 ```
 
+If this environment file predates the Local Channel Runtime, add a newly
+generated `ATTENTION_CHANNEL_PAIRING_SECRET` with `sudoedit` before validation.
+Do not copy an existing application secret into that field.
+
 Before validation, confirm operationally that:
 
 - `RESEND_API_KEY` is a newly rotated key; revoke any key previously pasted
@@ -184,6 +188,8 @@ Before validation, confirm operationally that:
   reveal whether an account exists;
 - `ATTENTION_DIGEST_WORKER_ENABLED=false` for the first deployment;
 - the obsolete `ATTENTION_AUTH_EXPOSE_OTP` setting is absent;
+- `ATTENTION_CHANNEL_PAIRING_SECRET` retains the generator's independent
+  random value and does not reuse the Auth, legacy Channel, or Adapter secret;
 - the generated domain, Compose project, loopback bind, port, and `/data` paths
   retain the fixed values in this runbook.
 

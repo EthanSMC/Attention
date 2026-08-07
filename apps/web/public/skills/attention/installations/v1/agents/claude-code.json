@@ -1,0 +1,229 @@
+{
+  "acceptance": {
+    "config_probe_is_acceptance": false,
+    "requirement": "successful_tool_result",
+    "tool_name": "attention_get_my_account"
+  },
+  "channel": {
+    "availability": "contract_only",
+    "credentials": "local_device_only",
+    "docs_url": "https://code.claude.com/docs/en/channels",
+    "hosted_by_attention": false,
+    "minimum_version": null,
+    "mode": "bridge",
+    "owner": "attention-channel",
+    "package_ref": null,
+    "setup": "attention_cli_qr",
+    "setup_command_templates": [],
+    "status_evidence": "running_cli_only"
+  },
+  "claims": {
+    "can_confirm_channel_pairing": false,
+    "can_confirm_mcp": true,
+    "can_confirm_runtime": false,
+    "can_confirm_wechat_identity": false
+  },
+  "compatibility": {
+    "command_checks": [],
+    "minimum_version": "2.1.186",
+    "policy": "pinned"
+  },
+  "desktop": {
+    "inbound": "unsupported",
+    "interactive": "available",
+    "platforms": [
+      "macos",
+      "linux",
+      "windows"
+    ],
+    "shared_skill_mcp": true,
+    "visible_session": "not_applicable"
+  },
+  "display_name": "Claude Code",
+  "id": "claude-code",
+  "inbound": {
+    "availability": "experimental",
+    "docs_url": "https://code.claude.com/docs/en/channels-reference",
+    "engine": "claude_channel_preview",
+    "minimum_version": "2.1.80",
+    "requires_byo_api_key": false,
+    "requires_running_cli": true,
+    "stable_alternative": {
+      "availability": "contract_only",
+      "engine": "claude_agent_sdk_byo_key",
+      "requires_byo_api_key": true
+    }
+  },
+  "install_steps": [
+    {
+      "availability": "available",
+      "credential_target": "none",
+      "executor": "attention_installer",
+      "id": "detect_host",
+      "requires_browser": false
+    },
+    {
+      "availability": "available",
+      "credential_target": "none",
+      "executor": "attention_installer",
+      "id": "install_skill",
+      "requires_browser": false
+    },
+    {
+      "availability": "available",
+      "credential_target": "none",
+      "executor": "attention_installer",
+      "id": "configure_mcp",
+      "requires_browser": false
+    },
+    {
+      "availability": "available",
+      "credential_target": "mcp_oauth",
+      "executor": "user",
+      "id": "authorize_mcp",
+      "requires_browser": true
+    },
+    {
+      "availability": "contract_only",
+      "credential_target": "none",
+      "executor": "attention_installer",
+      "id": "configure_restricted_profile",
+      "requires_browser": false
+    },
+    {
+      "availability": "contract_only",
+      "credential_target": "runtime_oauth",
+      "executor": "user",
+      "id": "authorize_runtime",
+      "requires_browser": true
+    },
+    {
+      "availability": "contract_only",
+      "credential_target": "runtime_oauth",
+      "executor": "attention_installer",
+      "id": "register_runtime",
+      "requires_browser": false
+    },
+    {
+      "availability": "contract_only",
+      "credential_target": "local_channel",
+      "executor": "user",
+      "id": "connect_channel",
+      "requires_browser": false
+    },
+    {
+      "availability": "experimental",
+      "credential_target": "local_channel",
+      "executor": "attention_installer",
+      "id": "start_inbound",
+      "requires_browser": false
+    },
+    {
+      "availability": "contract_only",
+      "credential_target": "none",
+      "executor": "host",
+      "id": "verify_pairing",
+      "requires_browser": false
+    }
+  ],
+  "interactive": {
+    "availability": "available"
+  },
+  "mcp": {
+    "add_command_template": {
+      "args": [
+        "mcp",
+        "add",
+        "--transport",
+        "http",
+        "--scope",
+        "user",
+        "attention",
+        "{mcp_url}"
+      ],
+      "executable": "claude"
+    },
+    "auth": "oauth",
+    "docs_url": "https://code.claude.com/docs/en/mcp",
+    "login_command_template": {
+      "args": [
+        "mcp",
+        "login",
+        "attention"
+      ],
+      "executable": "claude"
+    },
+    "oauth_client": "dedicated_mcp_client",
+    "probe_evidence": "config_only",
+    "probe_command_template": {
+      "args": [
+        "mcp",
+        "get",
+        "attention"
+      ],
+      "executable": "claude"
+    },
+    "server_name": "attention",
+    "setup_mode": "noninteractive_then_login",
+    "transport": "streamable_http",
+    "url_template": "{attention_origin}/mcp"
+  },
+  "platforms": [
+    "macos",
+    "linux",
+    "windows"
+  ],
+  "release_stage": "infrastructure_only",
+  "restricted_profile": {
+    "allowed_mcp_servers": [
+      "attention"
+    ],
+    "denied_capabilities": [
+      "arbitrary_mcp",
+      "browser_automation",
+      "code_execution",
+      "filesystem_write",
+      "shell"
+    ],
+    "required": true,
+    "template_path": "/skills/attention/installations/v1/templates/restricted-profile.json"
+  },
+  "runtime_reporting": {
+    "availability": "contract_only",
+    "heartbeat": "runtime",
+    "mode": "attention_runtime_oauth",
+    "oauth_client_boundary": "separate_from_mcp",
+    "pairing_reports": true,
+    "resource_url_template": "{attention_origin}/api/runtime",
+    "scopes": [
+      "runtime:register",
+      "runtime:heartbeat",
+      "channel:bind:report",
+      "channel:disconnect:report"
+    ]
+  },
+  "skill": {
+    "availability": "available",
+    "bundle_path": null,
+    "bundle_sha256": null,
+    "bundle_skill_path": null,
+    "delivery": "host_user_directory",
+    "docs_url": "https://code.claude.com/docs/en/skills",
+    "document_sha256": "b0a0b73436d1172633932d72e1a1f20baa32dfbc88732400037ca0b075c829ee",
+    "format": "skill_md",
+    "id": "attention",
+    "install": "filesystem_directory",
+    "install_command_template": null,
+    "local_path": {
+      "entrypoint": "SKILL.md",
+      "posix_directory": "~/.claude/skills/attention",
+      "purpose": "install_target",
+      "windows_directory": "%USERPROFILE%\\.claude\\skills\\attention"
+    },
+    "package_ref": null,
+    "source_kind": "local_directory",
+    "source_path": "/skills/attention/SKILL.md",
+    "tool_contract_version": "1.3.0",
+    "version": "1.3.0"
+  }
+}

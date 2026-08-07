@@ -15,22 +15,39 @@ import {
   sql,
   type AttentionDatabase,
 } from "@attention/db";
+import {
+  CHANNEL_RUNTIME_RESOURCE,
+  CHANNEL_RUNTIME_SCOPES,
+} from "@attention/contracts";
 
 import { resolveAccountCapabilities } from "./sessions";
 import { createOpaqueToken, hashOpaqueToken } from "./tokens";
 
-export const oauthAudiences = ["attention-mcp", "attention-sync"] as const;
+export const oauthAudiences = [
+  "attention-mcp",
+  "attention-sync",
+  CHANNEL_RUNTIME_RESOURCE,
+] as const;
 export type OAuthAudience = (typeof oauthAudiences)[number];
-export const oauthScopes = [
+export const oauthDefaultClientScopes = [
   "profile:read",
   "collection:read",
   "collection:write",
+  "digest:read",
+  "digest:write",
+  "moderation:write",
+  "moderation:court:read",
+  "moderation:court:vote",
   "sync:read",
   "sync:write",
   "public:read",
   "public:full",
   "ai:search",
   "subscription:read",
+] as const;
+export const oauthScopes = [
+  ...oauthDefaultClientScopes,
+  ...CHANNEL_RUNTIME_SCOPES,
 ] as const;
 export type OAuthScope = (typeof oauthScopes)[number];
 
@@ -39,17 +56,43 @@ export const oauthScopesByAudience = {
     "profile:read",
     "collection:read",
     "collection:write",
+    "digest:read",
+    "digest:write",
+    "moderation:write",
+    "moderation:court:read",
+    "moderation:court:vote",
     "public:read",
     "public:full",
     "ai:search",
     "subscription:read",
   ],
   "attention-sync": ["sync:read", "sync:write"],
+  [CHANNEL_RUNTIME_RESOURCE]: CHANNEL_RUNTIME_SCOPES,
+} as const satisfies Record<OAuthAudience, readonly OAuthScope[]>;
+
+export const oauthDefaultScopesByAudience = {
+  "attention-mcp": [
+    "profile:read",
+    "collection:read",
+    "collection:write",
+    "digest:read",
+    "digest:write",
+    "moderation:write",
+    "moderation:court:read",
+    "moderation:court:vote",
+    "public:read",
+    "public:full",
+    "ai:search",
+    "subscription:read",
+  ],
+  "attention-sync": ["sync:read", "sync:write"],
+  [CHANNEL_RUNTIME_RESOURCE]: CHANNEL_RUNTIME_SCOPES,
 } as const satisfies Record<OAuthAudience, readonly OAuthScope[]>;
 
 export type OAuthResourceMap = Readonly<Record<OAuthAudience, string>>;
 
 const scopeSet = new Set<string>(oauthScopes);
+const runtimeScopeSet = new Set<string>(CHANNEL_RUNTIME_SCOPES);
 const codeTtlMs = 10 * 60 * 1_000;
 const accessTtlMs = 60 * 60 * 1_000;
 const refreshTtlMs = 30 * 24 * 60 * 60 * 1_000;
@@ -122,6 +165,20 @@ function normalizeScopes(value: string): OAuthScope[] {
   return scopes as OAuthScope[];
 }
 
+export function resolveOAuthClientAllowedScopes(value?: string): OAuthScope[] {
+  if (value === undefined) return [...oauthDefaultClientScopes];
+  const scopes = normalizeScopes(value);
+  const runtimeScopes = scopes.filter((scope) => runtimeScopeSet.has(scope));
+  if (
+    runtimeScopes.length > 0 &&
+    (runtimeScopes.length !== CHANNEL_RUNTIME_SCOPES.length ||
+      scopes.length !== CHANNEL_RUNTIME_SCOPES.length)
+  ) {
+    throw new OAuthError("invalid_scope");
+  }
+  return scopes;
+}
+
 function validPkceChallenge(value: string): boolean {
   return /^[A-Za-z0-9_-]{43,128}$/u.test(value);
 }
@@ -155,11 +212,11 @@ export async function validateAuthorizationRequest(
     .limit(1);
   if (!client) throw new OAuthError("invalid_client");
   if (!client.redirectUris.includes(input.redirectUri)) throw new OAuthError("invalid_request");
-  const scopes = normalizeScopes(input.scope);
+  const requestedScopes = normalizeScopes(input.scope);
   const audienceScopes = new Set<string>(oauthScopesByAudience[resolvedResource.audience]);
   if (
-    scopes.some((scope) => !client.allowedScopes.includes(scope)) ||
-    scopes.some((scope) => !audienceScopes.has(scope))
+    requestedScopes.some((scope) => !audienceScopes.has(scope)) ||
+    requestedScopes.some((scope) => !client.allowedScopes.includes(scope))
   ) {
     throw new OAuthError("invalid_scope");
   }
@@ -170,7 +227,7 @@ export async function validateAuthorizationRequest(
     codeChallenge: input.codeChallenge,
     redirectUri: input.redirectUri,
     resource: resolvedResource.resource,
-    scopes,
+    scopes: requestedScopes,
     state: input.state?.slice(0, 512) ?? null,
   };
 }
@@ -350,7 +407,7 @@ export async function rotateRefreshToken(
 
 export interface OAuthPrincipal {
   accountId: string;
-  audience: string;
+  audience: OAuthAudience;
   clientId: string;
   isFilter: boolean;
   isMember: boolean;
@@ -361,7 +418,7 @@ export interface OAuthPrincipal {
 export async function resolveOAuthAccessToken(
   db: AttentionDatabase,
   rawToken: string,
-  options: { audience?: string; now?: Date } = {},
+  options: { audience: OAuthAudience; now?: Date },
 ): Promise<OAuthPrincipal | null> {
   const now = options.now ?? new Date();
   let tokenHash: string;
@@ -388,10 +445,15 @@ export async function resolveOAuthAccessToken(
       ),
     )
     .limit(1);
-  if (!token || (options.audience && token.audience !== options.audience)) return null;
+  if (!token || token.audience !== options.audience) return null;
   const capabilities = await resolveAccountCapabilities(db, token.accountId, now);
   await db.update(oauthAccessTokens).set({ lastUsedAt: now }).where(eq(oauthAccessTokens.id, token.id));
-  return { ...token, ...capabilities, tokenId: token.id };
+  return {
+    ...token,
+    ...capabilities,
+    audience: options.audience,
+    tokenId: token.id,
+  };
 }
 
 export async function revokeOAuthToken(
@@ -450,10 +512,18 @@ function validRedirectUri(value: string): boolean {
 
 export async function registerPublicOAuthClient(
   db: AttentionDatabase,
-  input: { name: string; redirectUris: string[]; requesterFingerprint: string },
-): Promise<{ clientId: string }> {
+  input: {
+    allowedScopes?: readonly OAuthScope[];
+    name: string;
+    redirectUris: string[];
+    requesterFingerprint: string;
+  },
+): Promise<{ allowedScopes: OAuthScope[]; clientId: string }> {
   const name = input.name.normalize("NFKC").trim().slice(0, 100);
   const redirectUris = [...new Set(input.redirectUris)].slice(0, 8);
+  const allowedScopes = input.allowedScopes === undefined
+    ? [...oauthDefaultClientScopes]
+    : resolveOAuthClientAllowedScopes(input.allowedScopes.join(" "));
   if (!name || redirectUris.length === 0 || redirectUris.some((uri) => !validRedirectUri(uri))) {
     throw new OAuthError("invalid_request");
   }
@@ -505,12 +575,12 @@ export async function registerPublicOAuthClient(
     }
     const clientId = `att_${randomUUID()}`;
     await tx.insert(oauthClients).values({
-      allowedScopes: [...oauthScopes],
+      allowedScopes,
       clientId,
       name,
       registrationFingerprint: input.requesterFingerprint,
       redirectUris,
     });
-    return { clientId };
+    return { allowedScopes, clientId };
   });
 }

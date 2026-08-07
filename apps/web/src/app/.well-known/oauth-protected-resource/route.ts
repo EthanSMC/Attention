@@ -1,3 +1,4 @@
+import { oauthScopesByAudience } from "@attention/auth";
 import type { NextRequest, NextResponse } from "next/server";
 
 import { noStoreJson } from "../../../server/api-guard";
@@ -13,14 +14,7 @@ export function handleMcpProtectedResourceMetadataRequest(
     authorization_servers: [origin],
     bearer_methods_supported: ["header"],
     resource: oauthResourceMap(request)["attention-mcp"],
-    scopes_supported: [
-      "profile:read",
-      "collection:read",
-      "collection:write",
-      "public:read",
-      "public:full",
-      "ai:search",
-    ],
+    scopes_supported: oauthScopesByAudience["attention-mcp"],
   });
 }
 

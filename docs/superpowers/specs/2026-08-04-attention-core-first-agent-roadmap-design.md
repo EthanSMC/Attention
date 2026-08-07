@@ -124,6 +124,8 @@ Tool Context 至少包含：
 - 每次工具调用重新检查当前权益；授权不冻结会员或 Filter 状态。
 - 第一批 Filter 使用受邀账号连接 Hosted MCP。
 
+Web 与 MCP 的能力等价、明确安全例外和防漂移验收以 [`docs/handoffs/mcp-web-capability-parity.md`](../../handoffs/mcp-web-capability-parity.md) 为准。新增适合 Agent 执行的 Web 业务能力时，必须同步登记并实现 MCP adapter，不能只更新网页入口。
+
 ### 4.4 第一阶段明确不做
 
 - 企业微信客服主入口；

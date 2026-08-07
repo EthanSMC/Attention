@@ -1,0 +1,50 @@
+{
+  "boundaries": {
+    "hosted_agent": false,
+    "hosted_channel_ui": false,
+    "local_channel_credentials_uploaded": false
+  },
+  "command_placeholders": [
+    "{attention_origin}",
+    "{mcp_url}",
+    "{skill_url}",
+    "{skill_bundle_url}",
+    "{attention_skill_directory}"
+  ],
+  "docs_path": "/skills/attention/INSTALL.md",
+  "integrations": [
+    {
+      "id": "openclaw",
+      "manifest_path": "/skills/attention/installations/v1/agents/openclaw.json"
+    },
+    {
+      "id": "hermes",
+      "manifest_path": "/skills/attention/installations/v1/agents/hermes.json"
+    },
+    {
+      "id": "codex",
+      "manifest_path": "/skills/attention/installations/v1/agents/codex.json"
+    },
+    {
+      "id": "claude-code",
+      "manifest_path": "/skills/attention/installations/v1/agents/claude-code.json"
+    },
+    {
+      "id": "workbuddy",
+      "manifest_path": "/skills/attention/installations/v1/agents/workbuddy.json"
+    }
+  ],
+  "migration": {
+    "from_schema": "2.1.0",
+    "guide_anchor": "#schema-22-migration"
+  },
+  "release_stage": "infrastructure_only",
+  "schema_version": "2.2.0",
+  "skill": {
+    "id": "attention",
+    "document_sha256": "b0a0b73436d1172633932d72e1a1f20baa32dfbc88732400037ca0b075c829ee",
+    "source_path": "/skills/attention/SKILL.md",
+    "tool_contract_version": "1.3.0",
+    "version": "1.3.0"
+  }
+}
