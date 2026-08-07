@@ -1,10 +1,10 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
-ilink-bot —— 腾讯官方 iLink 接口的微信单人私聊收发最小实现
+ilink-bot —— 腾讯官方 iLink 接口的微信个人助手最小实现
 协议逻辑提取自 AstrBot v4.27.2 的 weixin_oc 适配器，只保留：
   1. 扫码登录（终端二维码 + qrcode.png）
-  2. 长轮询接收消息：只处理单人私聊，群聊消息一律忽略
-  3. 文本回复（大脑可切换 echo / openai / codex），每个好友独立对话历史
+  2. 长轮询接收消息（微信龙虾只与扫码者本人对话，单会话）
+  3. 文本回复（大脑可切换 echo / openai / codex），维护一份对话历史
 
 用法: python ilink_bot.py
 登录态保存在 state.json，重启通常不用重新扫码。
@@ -118,25 +118,6 @@ def api_ok(payload: dict) -> bool:
 
 
 # ---------------------------------------------------------------- 消息解析
-
-GROUP_TYPE_KEYS = ("chat_type", "conversation_type", "session_type", "msg_chat_type")
-GROUP_ID_KEYS = ("group_id", "chatroom_id", "room_id", "group_chat_id")
-
-
-def is_group_message(msg: dict) -> bool:
-    """尽力识别群聊消息。iLink 官方 bot 通常只收私聊，这里是防御性过滤。"""
-    for key in GROUP_TYPE_KEYS:
-        value = msg.get(key)
-        if value is None:
-            continue
-        text = str(value).strip().lower()
-        if text in ("2", "group", "chatroom", "room") or "group" in text:
-            return True
-    for key in GROUP_ID_KEYS:
-        if str(msg.get(key) or "").strip():
-            return True
-    return False
-
 
 def extract_text(item_list) -> str:
     if not isinstance(item_list, list):
@@ -366,14 +347,7 @@ async def run() -> None:
         client.base_url = str(state["base_url"]).rstrip("/")
     sync_buf = str(state.get("sync_buf", ""))
     context_tokens: dict[str, str] = dict(state.get("context_tokens", {}))
-    history_len = int(brain_cfg.get("history_len", 20))
-    histories: dict[str, deque] = {}
-    seen_key_sets: set[frozenset] = set()
-
-    def get_history(user_id: str) -> deque:
-        if user_id not in histories:
-            histories[user_id] = deque(maxlen=history_len)
-        return histories[user_id]
+    history: deque = deque(maxlen=int(brain_cfg.get("history_len", 20)))
 
     def persist() -> None:
         save_json(STATE_PATH, {
@@ -384,7 +358,7 @@ async def run() -> None:
             "context_tokens": context_tokens,
         })
 
-    log(f"ilink-bot 启动 brain={brain_cfg.get('mode', 'echo')} 只接收单人私聊消息，群聊消息将被忽略")
+    log(f"ilink-bot 启动 brain={brain_cfg.get('mode', 'echo')}（个人助手，单会话）")
 
     try:
         while True:
@@ -428,20 +402,9 @@ async def run() -> None:
                 sync_buf = str(data["get_updates_buf"])
                 persist()
 
-            msgs = data.get("msgs") or []
-            for msg in msgs:
+            for msg in data.get("msgs") or []:
                 if not isinstance(msg, dict):
                     continue
-
-                key_set = frozenset(msg.keys())
-                if key_set not in seen_key_sets:
-                    seen_key_sets.add(key_set)
-                    log(f"消息结构(字段): {sorted(msg.keys())}")
-
-                if is_group_message(msg):
-                    log("收到群聊消息，按配置忽略")
-                    continue
-
                 from_uid = str(msg.get("from_user_id", "")).strip()
                 if not from_uid:
                     continue
@@ -450,15 +413,14 @@ async def run() -> None:
                     context_tokens[from_uid] = ct
 
                 text = extract_text(msg.get("item_list", []))
-                log(f"收到 [{from_uid}]: {text!r}")
+                log(f"收到: {text!r}")
 
                 if not text:
                     reply = str(brain_cfg.get("non_text_reply", ""))
                 elif text.strip() == "/reset":
-                    get_history(from_uid).clear()
+                    history.clear()
                     reply = "已重置对话历史。"
                 else:
-                    history = get_history(from_uid)
                     try:
                         reply = await brain_reply(brain_cfg, list(history), text)
                     except Exception as e:
@@ -468,7 +430,7 @@ async def run() -> None:
 
                 if reply:
                     ok = await send_text(client, from_uid, context_tokens.get(from_uid, ct), reply)
-                    log(f"回复 [{from_uid}] {'成功' if ok else '失败'}: {reply[:80]!r}")
+                    log(f"回复{'成功' if ok else '失败'}: {reply[:80]!r}")
                 persist()
     finally:
         await client.close()
