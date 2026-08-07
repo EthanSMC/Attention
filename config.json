@@ -1,0 +1,20 @@
+{
+  "base_url": "https://ilinkai.weixin.qq.com",
+  "bot_type": "3",
+  "long_poll_timeout_ms": 35000,
+  "api_timeout_ms": 120000,
+  "brain": {
+    "mode": "codex",
+    "history_len": 20,
+    "non_text_reply": "收到的是非文本消息，这个最小机器人暂时只处理文字哦。",
+    "openai": {
+      "api_base": "https://api.openai.com/v1",
+      "api_key": "",
+      "model": "gpt-5-codex"
+    },
+    "codex": {
+      "exe": "C:\\Users\\yimin\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe",
+      "timeout_sec": 300
+    }
+  }
+}
