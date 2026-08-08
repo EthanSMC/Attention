@@ -32,7 +32,8 @@ RUN pnpm --filter @attention/web build \
     && find apps/web/.next/standalone -type f -name '*.map' -delete
 
 FROM source AS service-build
-RUN pnpm --filter @attention/worker build \
+RUN pnpm --filter @attention/auth build \
+    && pnpm --filter @attention/worker build \
     && pnpm --filter @attention/fetcher build \
     && pnpm --filter @attention/wechat-adapter build \
     && pnpm --filter @attention/db build
@@ -84,5 +85,6 @@ CMD ["node", "index.js"]
 FROM runtime AS migrate
 COPY --from=service-build --chown=node:node /workspace/packages/db/dist ./dist
 COPY --from=service-build --chown=node:node /workspace/packages/db/drizzle ./drizzle
+COPY --from=service-build --chown=node:node /workspace/packages/auth/dist/seed-demo-filter.js ./seed-demo-filter.js
 USER node
 CMD ["node", "dist/migrate.js"]
