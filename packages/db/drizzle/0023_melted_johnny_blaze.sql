@@ -1,1 +1,2 @@
-ALTER TYPE "public"."entitlement_source" ADD VALUE 'signup' BEFORE 'invite';
+-- The signup enum value is added before Drizzle's migration transaction.
+-- Keeping this journal entry preserves the policy migration sequence.

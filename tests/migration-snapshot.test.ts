@@ -47,6 +47,10 @@ describe("Drizzle migration snapshot", () => {
 
   it("commits the new enum before backfilling registration Member entitlements", () => {
     const root = resolve(import.meta.dirname, "..");
+    const initialMigration = readFileSync(
+      resolve(root, "packages/db/drizzle/0000_attention_web_core.sql"),
+      "utf8",
+    );
     const enumMigration = readFileSync(
       resolve(root, "packages/db/drizzle/0023_melted_johnny_blaze.sql"),
       "utf8",
@@ -55,7 +59,10 @@ describe("Drizzle migration snapshot", () => {
       resolve(root, "packages/db/drizzle/0024_signup_entitlement_backfill.sql"),
       "utf8",
     );
-    expect(enumMigration).toContain("ADD VALUE 'signup'");
+    expect(initialMigration).toContain(
+      'CREATE TYPE "public"."entitlement_source" AS ENUM(\'signup\', \'invite\'',
+    );
+    expect(enumMigration).not.toContain("ADD VALUE 'signup'");
     expect(enumMigration).not.toContain("INSERT INTO");
     expect(backfillMigration).toContain("WHERE \"accounts\".\"status\" = 'active'");
     expect(backfillMigration).toContain(

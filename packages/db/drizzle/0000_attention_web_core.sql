@@ -5,7 +5,7 @@ CREATE TYPE "public"."collection_visibility" AS ENUM('public', 'private');--> st
 CREATE TYPE "public"."content_identity_kind" AS ENUM('normalized', 'canonical');--> statement-breakpoint
 CREATE TYPE "public"."content_status" AS ENUM('active', 'merged');--> statement-breakpoint
 CREATE TYPE "public"."enrichment_status" AS ENUM('pending', 'processing', 'partial', 'complete', 'failed');--> statement-breakpoint
-CREATE TYPE "public"."entitlement_source" AS ENUM('invite', 'admin_grant', 'filter_grant');--> statement-breakpoint
+CREATE TYPE "public"."entitlement_source" AS ENUM('signup', 'invite', 'admin_grant', 'filter_grant');--> statement-breakpoint
 CREATE TYPE "public"."event_scope" AS ENUM('public', 'private', 'system');--> statement-breakpoint
 CREATE TYPE "public"."input_attempt_status" AS ENUM('processing', 'accepted', 'already_collected', 'merged_with_existing_content', 'ambiguous', 'resolution_pending', 'invalid', 'unsafe', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."input_channel" AS ENUM('web', 'wechat');--> statement-breakpoint
