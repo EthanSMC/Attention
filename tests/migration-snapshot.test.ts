@@ -45,14 +45,21 @@ describe("Drizzle migration snapshot", () => {
     }
   });
 
-  it("backfills the registration Member entitlement in the policy migration", () => {
+  it("commits the new enum before backfilling registration Member entitlements", () => {
     const root = resolve(import.meta.dirname, "..");
-    const migration = readFileSync(
+    const enumMigration = readFileSync(
       resolve(root, "packages/db/drizzle/0023_melted_johnny_blaze.sql"),
       "utf8",
     );
-    expect(migration).toContain("ADD VALUE 'signup'");
-    expect(migration).toContain("WHERE \"accounts\".\"status\" = 'active'");
-    expect(migration).toContain("ON CONFLICT (\"account_id\", \"source\") DO NOTHING");
+    const backfillMigration = readFileSync(
+      resolve(root, "packages/db/drizzle/0024_signup_entitlement_backfill.sql"),
+      "utf8",
+    );
+    expect(enumMigration).toContain("ADD VALUE 'signup'");
+    expect(enumMigration).not.toContain("INSERT INTO");
+    expect(backfillMigration).toContain("WHERE \"accounts\".\"status\" = 'active'");
+    expect(backfillMigration).toContain(
+      "ON CONFLICT (\"account_id\", \"source\") DO NOTHING",
+    );
   });
 });

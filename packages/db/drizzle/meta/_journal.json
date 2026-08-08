@@ -169,6 +169,13 @@
       "when": 1786166111105,
       "tag": "0023_melted_johnny_blaze",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1786173800000,
+      "tag": "0024_signup_entitlement_backfill",
+      "breakpoints": true
     }
   ]
 }
