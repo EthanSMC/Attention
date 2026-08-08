@@ -87,6 +87,16 @@ describe("douyin adapter", () => {
 });
 
 describe("xiaohongshu adapter", () => {
+  it("recognizes xhslink.cn share URLs as Xiaohongshu shortlinks", () => {
+    const shareUrl = "http://xhslink.cn/o/9R82Ellq0MK";
+    const wwwShareUrl = "https://www.xhslink.cn/o/9R82Ellq0MK";
+
+    expect(detectSourceAdapter(shareUrl)?.id).toBe("xiaohongshu");
+    expect(classifyXiaohongshu(shareUrl).kind).toBe("shortlink");
+    expect(normalizeXiaohongshu(shareUrl)).toBe(shareUrl);
+    expect(detectSourceAdapter(wwwShareUrl)?.id).toBe("xiaohongshu");
+  });
+
   it("normalizes explore and discovery paths to the same note identity", () => {
     const explore =
       "https://www.xiaohongshu.com/explore/64abcdef1234?xsec_token=sensitive";

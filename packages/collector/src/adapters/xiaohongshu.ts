@@ -8,7 +8,12 @@ import {
 } from "./types";
 
 const ADAPTER_VERSION = "v1";
-const SHORTLINK_HOSTS = new Set(["xhslink.com", "www.xhslink.com"]);
+const SHORTLINK_HOSTS = new Set([
+  "xhslink.com",
+  "www.xhslink.com",
+  "xhslink.cn",
+  "www.xhslink.cn"
+]);
 const CONTENT_HOSTS = new Set(["xiaohongshu.com", "www.xiaohongshu.com"]);
 const ALL_HOSTS = new Set([...SHORTLINK_HOSTS, ...CONTENT_HOSTS]);
 const CONTENT_PATH =
