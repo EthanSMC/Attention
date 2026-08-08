@@ -2,23 +2,23 @@
 
 更新时间：2026-08-07
 
-权威产品规格：[`2026-08-04-attention-identity-membership-growth-design.md`](../superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md)
+权威产品规格：[`第一版范围`](../first-release-scope.md)；账号与增长细节见 [`2026-08-04-attention-identity-membership-growth-design.md`](../superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md)
 
 ## 1. 已实现范围
 
-- Guest、Free、Member、Filter 的实时服务端能力解析。
+- Guest、注册 Member、历史/显式撤销后的兼容 Free、Filter 的实时服务端能力解析。
 - 邮箱验证码统一注册/登录；可选密码登录与验证码重设；协议/隐私版本记录。
 - 不可预测且唯一的 `user-#########` handle 和可修改的“用户#########”显示名。
 - 可撤销 opaque Browser Session 与安全 Cookie。
-- Guest/Free 的可配置公开流前 N 张限制，以及原文跳转的二次服务端检查。
-- Free 私人收藏；Filter 公开收藏；Guest 登录前不接收 URL。
+- Guest 的可配置公开流前 N 张限制，以及原文跳转的二次服务端检查。
+- 注册 Member 私人收藏；Filter 公开收藏；Guest 登录前不接收 URL。
 - 首订三个月体验的预览、明确扣费确认和 billing adapter。
 - OAuth Authorization Code + PKCE、refresh rotation、RFC 8707 resource audience 与动态 public client 注册。
 - 单一类型的命名 API Key，一次显示明文、独立撤销；Key 不分级，实际能力随账号实时权益变化。
-- SDK 实现的 Streamable HTTP Hosted MCP、公开 Skill 和 Free/Member 动态工具集。
+- SDK 实现的 Streamable HTTP Hosted MCP、公开 Skill 和实时 Member/Filter 动态工具集；历史兼容 Free 账号仍按实时权益收窄。
 - 云同步 Pull cursor 与 Push mutation；历史首次导入强制私密。
-- 历史 Channel Identity、pending 与 BindIntent 底层实现仍保留；第一期产品 HTTP 入口已禁用，不生成绑定链接。
-- 网页 Agent 页面与 Member 服务端权限门。
+- Local Channel Runtime 所需的 Channel Identity、pending 与 BindIntent 底层实现仍保留；第一期产品 HTTP 入口已禁用，不生成 Hosted Channel 绑定链接。
+- 公开 `/doc` Agent 接入文档；Web Agent 页面不属于第一期主入口。
 - Consumer 新邮箱 OTP 邀请注册、双方三个月顺延 grant，以及 referral 账号永久排除 direct trial。
 - Filter 每 UTC 自然年累计五张单次年卡、注册后兑换与十二个月顺延 grant。
 - provider-neutral 首订/现金续费/退款/拒付事件，账号级 direct trial exactly-once，以及同币种 15% 积分、预留、消费、释放和冲正账本。
@@ -31,14 +31,15 @@
 | 场景 | 路由 | 行为 |
 | --- | --- | --- |
 | 站内登录 | `/login` intercepted modal | 保留底层 Domain、视图和滚动状态；用 `return_to` 恢复收藏等 intent |
-| 站外认证 | `/auth` | OAuth、CLI 和 Channel 绑定使用完整页面 |
+| 站外认证 | `/auth` | OAuth、CLI 和 Local Channel Runtime 授权使用完整页面 |
 | 收藏 | `/collect` | Guest 只看到登录门；验证前 DOM 中没有 URL 输入框 |
-| 我的账号 | `/account` | 显示 handle、Free/Member 状态和设置入口 |
+| 我的账号 | `/account` | 显示 handle、Member/Filter 状态和设置入口 |
 | 安全设置 | `/account/settings` | 修改显示名、设置密码、继续保留验证码登录 |
-| 连接管理 | `/account/connections` | 本地 Agent 的 MCP/Skill 安装信息、OAuth 与 API Key；不展示 Channel 连接状态 |
-| 会员 | `/membership`、`/membership/checkout` | 展示 Free/Member 价值并在创建订阅前明确确认扣费信息 |
+| Agent 接入文档 | `/doc`、`/doc/:agent` | 公开、无需登录；每个 Agent 使用独立文档展示 Skill、MCP、OAuth 与验收步骤 |
+| 连接管理 | `/account/connections` | 一键复制给 AI 的接入提示词、OAuth 与 API Key 状态；不铺安装命令，不展示 Channel 连接状态 |
+| 会员 | `/membership`、`/membership/checkout` | 展示 Member 订阅和历史兼容权益，并在创建订阅前明确确认扣费信息 |
 | 增长权益 | `/account/rewards`、`/join/:token` | 创建新用户邀请、签发/兑换 Filter 年卡、查看积分；邀请注册页不泄露 inviter |
-| Agent | `/agent` | Member 才能执行检索；Free 看到升级说明 |
+| Agent 接入 | `/doc`、`/doc/:agent` | 无需登录的宿主文档；用户自己的 Agent 通过 Skill/MCP 使用能力 |
 
 ## 3. 凭据边界
 
@@ -46,8 +47,8 @@
 
 1. Browser Session 只用于网站；Cookie 不携带会员权益，权益在每次请求实时解析。
 2. OAuth token 用于第三方客户端、Hosted MCP 与 Sync API；access/refresh 可按 client 吊销。
-3. API Key 是 OAuth 不可用时的备用；所有 Key 类型相同，只保存哈希和前缀，可逐个吊销。Key 不选择产品权限，服务端每次调用按账号当前 Free/Member/Filter 权益决定能力。
-4. Channel Identity 是保留给未来本地 Runtime/Adapter 的底层映射，不是网站登录凭据；第一期没有可用的 Hosted Channel 产品入口。
+3. API Key 是 OAuth 不可用时的备用；所有 Key 类型相同，只保存哈希和前缀，可逐个吊销。Key 不选择产品权限，服务端每次调用按账号当前 Member/Filter（以及历史兼容 Free）权益决定能力。
+4. Channel Identity 是保留给本地 Runtime/Adapter 的底层映射，不是网站登录凭据；第一期没有可用的 Hosted Channel 产品入口。
 
 吊销其中一种不会退出其他 Browser Session、撤销其他 API Key/OAuth client 或解除其他 Channel。
 

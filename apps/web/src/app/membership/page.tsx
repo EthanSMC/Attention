@@ -22,7 +22,7 @@ export default async function MembershipPage({
   return (
     <div className="page-shell membership-page">
       <PageIntro
-        description={<p>Free 建立自己的收藏库；Member 解锁完整的高质量内容网络与托管能力。</p>}
+        description={<p>注册即获得 Member 基础权益；订阅用于确认完整的高质量内容网络与后续会员服务。</p>}
         eyebrow="Attention 会员"
         title={<>Pay Attention <span className="membership-page__title-mark">!</span></>}
       />

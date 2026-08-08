@@ -1,11 +1,14 @@
 # Attention CLI
 
+第一期范围以 [`docs/first-release-scope.md`](../../docs/first-release-scope.md) 为准。本 CLI 只配置用户自己的 Agent 与 Attention 基础设施，不启动 Attention Hosted Agent 或 Hosted Channel。
+
 `@attention/cli` configures the public Attention Skill and hosted MCP endpoint
 for user-owned Agents. It also performs read-only diagnostics without reading
 or printing OAuth tokens.
 
 This is an infrastructure installer, **not** a hosted Agent and not an iLink
-companion. In this release:
+companion. It configures the Attention side of a user-owned Agent; any iLink
+credential and local channel process remain on the user's device. In this release:
 
 - OpenClaw and Hermes own their local WeChat gateways through host plugins.
 - WorkBuddy owns its WeChat assistant and provides no public binding-status API
@@ -78,7 +81,7 @@ command. Override the selected directory with `--skill-dir`. Existing content
 is not replaced unless its bytes already match; use `--force-skill` together
 with `--apply` to replace a changed copy.
 
-WorkBuddy `>= 4.7.3` remains a UI handoff for Skill import, MCP, and OAuth.
+WorkBuddy `>= 4.8.2` remains a UI handoff for Skill import, MCP, and OAuth.
 Attention publishes a checksum-pinned WorkBuddy ZIP with `SKILL.md` at the
 archive root. `attention configure workbuddy --apply` downloads and verifies
 that bundle to `~/Downloads` by default; use `--skill-dir` to select another

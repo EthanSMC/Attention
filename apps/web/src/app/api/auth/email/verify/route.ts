@@ -1,4 +1,4 @@
-import { EmailAuthError, verifyLoginChallenge } from "@attention/auth";
+import { EmailAuthError, normalizeEmail, verifyLoginChallenge } from "@attention/auth";
 import type { NextRequest, NextResponse } from "next/server";
 import { z, ZodError } from "zod";
 
@@ -9,7 +9,7 @@ import {
   readJsonRequestWithinLimit,
   RequestBodyTooLargeError,
 } from "../../../../../server/request-body";
-import { setSessionCookie } from "../../../../../server/session";
+import { getRequestSession, setSessionCookie } from "../../../../../server/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +21,7 @@ const bodySchema = z
     accept_terms: z.boolean(),
     challenge_id: z.string().uuid(),
     code: z.string().regex(/^\d{6}$/u),
+    reauth: z.boolean().optional(),
   })
   .strict();
 
@@ -34,10 +35,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const body = bodySchema.parse(
       await readJsonRequestWithinLimit(request, MAX_EMAIL_VERIFY_BODY_BYTES),
     );
+    const requestSession = body.reauth ? await getRequestSession(request) : null;
+    const expectedEmail = requestSession?.principal?.primaryEmail;
+    if (body.reauth && (!requestSession?.principal || !expectedEmail)) {
+      return noStoreJson({ error: { code: "authentication_required" } }, { status: 401 });
+    }
     const verified = await verifyLoginChallenge(getWebDatabase(), {
       acceptTerms: body.accept_terms,
       challengeId: body.challenge_id,
       code: body.code,
+      ...(expectedEmail ? { expectedEmail: normalizeEmail(expectedEmail) } : {}),
     });
     const response = noStoreJson({
       account: {

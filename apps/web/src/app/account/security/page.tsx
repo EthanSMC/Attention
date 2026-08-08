@@ -10,7 +10,11 @@ import { getPagePrincipal } from "../../../server/session";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "安全" };
 
-export default async function AccountSecurityPage() {
+export default async function AccountSecurityPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ edit?: string }>;
+}) {
   const principal = await getPagePrincipal();
   if (!principal) {
     return <LoginModuleFallback returnTo="/account/security" />;
@@ -18,6 +22,7 @@ export default async function AccountSecurityPage() {
 
   const account = await loadAccountOverview(getWebDatabase(), principal.accountId);
   if (!account) return <LoginModuleFallback returnTo="/account/security" />;
+  const params = await searchParams;
 
   return (
     <AccountSettingsShell
@@ -29,6 +34,7 @@ export default async function AccountSecurityPage() {
       <AccountSecurityForm
         email={account.email}
         hasPassword={account.hasPassword}
+        startEditing={params.edit === "1"}
       />
     </AccountSettingsShell>
   );

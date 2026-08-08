@@ -44,6 +44,7 @@ export const accountStatusEnum = pgEnum("account_status", [
 ]);
 export const signupSourceEnum = pgEnum("signup_source", ["direct", "consumer_referral"]);
 export const entitlementSourceEnum = pgEnum("entitlement_source", [
+  "signup",
   "invite",
   "admin_grant",
   "filter_grant"

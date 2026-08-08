@@ -1,7 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
+
+import {
+  TransientFeedback,
+  useTransientFeedback,
+  type TransientFeedbackTone,
+} from "./transient-feedback";
 
 export interface GrowthRewardsData {
   consumerInvite: {
@@ -107,30 +113,17 @@ export function GrowthRewards({ data }: { data: GrowthRewardsData }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [consumerLink, setConsumerLink] = useState<string | null>(null);
   const [filterCode, setFilterCode] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const messageTimer = useRef<number | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (messageTimer.current !== null) window.clearTimeout(messageTimer.current);
-    };
-  }, []);
+  const { clearFeedback, feedback, showFeedback } = useTransientFeedback();
 
   function clearMessage() {
-    if (messageTimer.current !== null) {
-      window.clearTimeout(messageTimer.current);
-      messageTimer.current = null;
-    }
-    setMessage(null);
+    clearFeedback();
   }
 
-  function showMessage(nextMessage: string) {
-    if (messageTimer.current !== null) window.clearTimeout(messageTimer.current);
-    setMessage(nextMessage);
-    messageTimer.current = window.setTimeout(() => {
-      setMessage(null);
-      messageTimer.current = null;
-    }, 2_800);
+  function showMessage(
+    nextMessage: string,
+    tone: TransientFeedbackTone = "success",
+  ) {
+    showFeedback(nextMessage, tone);
   }
 
   async function createInvitation(replaceActive: boolean) {
@@ -142,7 +135,7 @@ export function GrowthRewards({ data }: { data: GrowthRewardsData }) {
       method: "POST",
     });
     if (!response.ok) {
-      showMessage(await responseError(response));
+      showMessage(await responseError(response), "error");
       setBusy(null);
       return;
     }
@@ -159,7 +152,7 @@ export function GrowthRewards({ data }: { data: GrowthRewardsData }) {
       await navigator.clipboard.writeText(consumerLink);
       showMessage("邀请链接已复制。可以直接发送给新用户。");
     } catch {
-      showMessage("复制失败，请手动保存邀请链接。");
+      showMessage("复制失败，请手动保存邀请链接。", "error");
     }
   }
 
@@ -172,7 +165,7 @@ export function GrowthRewards({ data }: { data: GrowthRewardsData }) {
       method: "POST",
     });
     if (!response.ok) {
-      showMessage(await responseError(response));
+      showMessage(await responseError(response), "error");
       setBusy(null);
       return;
     }
@@ -194,7 +187,7 @@ export function GrowthRewards({ data }: { data: GrowthRewardsData }) {
       method: "POST",
     });
     if (!response.ok) {
-      showMessage(await responseError(response));
+      showMessage(await responseError(response), "error");
       setBusy(null);
       return;
     }
@@ -206,7 +199,7 @@ export function GrowthRewards({ data }: { data: GrowthRewardsData }) {
 
   return (
     <div className="growth-rewards">
-      {message ? <div aria-live="polite" className="growth-rewards__toast" role="status">{message}</div> : null}
+      <TransientFeedback feedback={feedback} />
       <section className="settings-card growth-rewards__section">
         <p className="settings-card__eyebrow">新用户邀请</p>
         <h2>邀请新用户，双方各得 3 个月 Member</h2>

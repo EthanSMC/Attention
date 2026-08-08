@@ -2,6 +2,8 @@
 
 这份文档描述仓库当前提供的可移植部署基线，不代表 Attention 已经上线，也不代表邮件、支付、AI 或微信公众号资质已经完成生产联调。部署者仍需选择可信的托管平台、密钥管理、数据库备份、监控和外部供应商。
 
+产品第一期范围以 [`docs/first-release-scope.md`](./first-release-scope.md) 为准。部署首版只需要 Web、Worker、Fetcher、PostgreSQL、OAuth/MCP 和本地 Agent Runtime 所需的基础设施；不要把历史微信公众号 Adapter 或 Hosted Channel 当成第一期公网服务。
+
 Novelty Studio ECS 上的隔离 staging 部署使用专用的
 [`deploy/staging/RUNBOOK.md`](../deploy/staging/RUNBOOK.md)。它包含安全组硬门禁、
 固定目录与端口、备份恢复演练、Nginx/TLS、验收和应用回滚步骤；不得用本页的

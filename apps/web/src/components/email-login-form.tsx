@@ -28,6 +28,8 @@ const errorMessages: Record<string, string> = {
   invalid_code: "验证码不正确。",
   invalid_credentials: "邮箱或密码不正确。",
   invalid_email: "请输入有效的邮箱地址。",
+  authentication_required: "请先登录后再验证邮箱。",
+  reauth_email_mismatch: "只能验证当前账号绑定的邮箱。",
   referral_registration_unavailable: "邀请仅适用于尚未注册的新邮箱，或该邀请已不可使用。",
   rate_limited: "请求过于频繁，请稍后再试。",
 };
@@ -43,14 +45,18 @@ async function readApiError(response: Response): Promise<string> {
 
 export function EmailLoginForm({
   consumerInviteToken,
+  defaultEmail,
+  forceCodeOnly = false,
   returnTo,
 }: {
   consumerInviteToken?: string;
+  defaultEmail?: string;
+  forceCodeOnly?: boolean;
   returnTo: string;
 }) {
   const [method, setMethod] = useState<"code" | "password">("code");
   const [stage, setStage] = useState<"email" | "verify">("email");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(defaultEmail ?? "");
   const [challenge, setChallenge] = useState<ChallengeResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +76,7 @@ export function EmailLoginForm({
             ? { consumer_invite_token: consumerInviteToken }
             : {}),
           email,
+          ...(forceCodeOnly ? { reauth: true } : {}),
           return_to: returnTo,
         }),
         headers: { "Content-Type": "application/json" },
@@ -98,6 +105,7 @@ export function EmailLoginForm({
           accept_terms: formData.get("accept_terms") === "on",
           challenge_id: challenge.challenge_id,
           code: String(formData.get("code") ?? "").trim(),
+          ...(forceCodeOnly ? { reauth: true } : {}),
         }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
@@ -137,7 +145,7 @@ export function EmailLoginForm({
     }
   }
 
-  if (method === "password") {
+  if (method === "password" && !forceCodeOnly) {
     return (
       <form className="auth-form" onSubmit={passwordLogin}>
         <label htmlFor="password-email">邮箱</label>
@@ -199,13 +207,15 @@ export function EmailLoginForm({
           placeholder="000000"
           required
         />
-        <label className="auth-form__consent">
-          <input name="accept_terms" type="checkbox" />
-          <span>
-            如果这是首次注册，请同意<a href="/terms" target="_blank">用户协议</a>和
-            <a href="/privacy" target="_blank">隐私政策</a>
-          </span>
-        </label>
+        {!forceCodeOnly ? (
+          <label className="auth-form__consent">
+            <input name="accept_terms" type="checkbox" />
+            <span>
+              如果这是首次注册，请同意<a href="/terms" target="_blank">用户协议</a>和
+              <a href="/privacy" target="_blank">隐私政策</a>
+            </span>
+          </label>
+        ) : null}
         {error ? <p aria-live="polite" className="field-error">{error}</p> : null}
         <button className="button button--primary" disabled={busy} type="submit">
           {busy ? "正在确认…" : "确认并继续"}
@@ -227,32 +237,45 @@ export function EmailLoginForm({
 
   return (
     <form className="auth-form" onSubmit={startCode}>
-      <label htmlFor="email-value">邮箱</label>
-      <input
-        autoComplete="email"
-        autoFocus
-        id="email-value"
-        onChange={(event) => setEmail(event.target.value)}
-        placeholder="name@example.com"
-        required
-        type="email"
-        value={email}
-      />
-      <p className="auth-form__hint">新邮箱会自动创建 Free 账号，已有邮箱直接登录。</p>
+      {forceCodeOnly ? (
+        <div className="auth-form__sent">
+          <span>验证绑定邮箱</span>
+          <strong>{email}</strong>
+        </div>
+      ) : (
+        <>
+          <label htmlFor="email-value">邮箱</label>
+          <input
+            autoComplete="email"
+            autoFocus
+            id="email-value"
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="name@example.com"
+            required
+            type="email"
+            value={email}
+          />
+        </>
+      )}
+      <p className="auth-form__hint">
+        {forceCodeOnly ? "验证码仅用于确认当前账号身份，不会切换账号。" : "新邮箱会自动创建 Member 账号，已有邮箱直接登录。"}
+      </p>
       {error ? <p aria-live="polite" className="field-error">{error}</p> : null}
       <button className="button button--primary" disabled={busy} type="submit">
         {busy ? "正在发送…" : "获取验证码"}
       </button>
-      <button
-        className="text-button auth-form__secondary"
-        onClick={() => {
-          setError(null);
-          setMethod("password");
-        }}
-        type="button"
-      >
-        使用密码登录
-      </button>
+      {!forceCodeOnly ? (
+        <button
+          className="text-button auth-form__secondary"
+          onClick={() => {
+            setError(null);
+            setMethod("password");
+          }}
+          type="button"
+        >
+          使用密码登录
+        </button>
+      ) : null}
     </form>
   );
 }

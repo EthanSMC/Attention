@@ -4,9 +4,11 @@
 
 更新日期：2026-08-07
 
+第一版范围以 [`docs/first-release-scope.md`](../first-release-scope.md) 为准。本页只维护 Web 与 MCP 的业务能力等价；用户自己的 Agent / iLink 安装、心跳和绑定证明属于独立 Runtime 协议，不能被 14 个业务工具替代。
+
 ## 1. 当前产品边界
 
-第一期不提供 Hosted Agent，也不在 Web 展示托管 Channel 或本地微信连接面板。用户自己的 Agent 通过 Attention Skill + Hosted MCP 使用业务能力；本地 Agent / iLink 的安装、心跳和绑定证明属于独立的 Channel Runtime 控制面，不属于 MCP 业务工具。
+第一期不提供 Hosted Agent，也不在 Web 展示托管 Channel 或本地微信连接面板。用户自己的 Agent 通过 Attention Skill + Hosted MCP 使用业务能力；支持 iLink 的本地 Agent 在设备上承载微信消息。本地 Agent / iLink 的安装、心跳和绑定证明属于独立的 Channel Runtime 控制面，不属于 MCP 业务工具。
 
 因此，“Web 与 MCP 等价”特指：**同一账号、同一项适合由 Agent 执行的 Attention 业务动作，必须经过相同的 Core service、实时权益和可见性规则。** 它不表示浏览器 Session、OAuth 授权仪式、付款确认或凭据签发也要伪装成 MCP 工具。
 

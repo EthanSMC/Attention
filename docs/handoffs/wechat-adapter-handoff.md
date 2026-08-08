@@ -2,6 +2,8 @@
 
 账号、Free/Member、Channel 权益与绑定体验以 [`2026-08-04-attention-identity-membership-growth-design.md`](../superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md) 为准。
 
+第一版范围以 [`第一版范围`](../first-release-scope.md) 为准；本文其余内容均为已暂停的官方微信 Adapter 历史交接。
+
 更新时间：2026-08-07
 
 当前产品决策：第一期只交付本地 Agent、Skill、MCP、OAuth 与 Local Channel Runtime 基础设施，不提供官方微信/Hosted Channel 产品入口。`apps/wechat-adapter` 与底层 Auth 合同作为历史原型保留，但 Web 旧 Channel API 统一返回 `410 Gone`，绑定页面已经移除，因此 Adapter 不能形成可用产品链路，也不应部署到生产。
@@ -70,8 +72,8 @@ flowchart LR
 - 已实现统一邮箱注册/登录、opaque Browser Session 和 Free/Member 实时权益；Channel 绑定页面已移除。
 - 已实现 `channel_identities`、加密 `channel_pending_requests` 和一次性 `bind_intents`；subject ID 只以 keyed HMAC 保存，pending 原消息和处理结果使用 AES-GCM 保存。
 - 历史 `POST /api/channels/messages`、`POST /api/channels/bind`、`GET /api/channels/pending/:id` 和账号 Channel 撤销接口现在统一返回 `410 Gone`，不认证、不写库，也不生成 `/channel/bind`。
-- `/channel/bind` 页面已删除；`/account/connections` 只展示本地 Agent、OAuth 和 API Key 基础设施。
-- 已实现网页 Agent、Hosted MCP、收藏 Service、隔离 Fetcher、URL 安全策略和确定性去重。当前 Agent 检索是可演示的确定性检索，不伪装成尚未接入的模型服务。
+- `/channel/bind` 页面已删除；`/account/connections` 只展示一键 Agent 接入提示词、OAuth 和 API Key 管理，详细宿主说明迁到公开的 `/doc/:agent`。
+- 已实现 Web 收藏/发现、Hosted MCP、收藏 Service、隔离 Fetcher、URL 安全策略和确定性去重。Web Agent 页面不属于第一期主入口；AI 检索由用户自己的 Agent 通过 Skill/MCP 使用。
 - 已实现微信官方服务器回调层的代码合同：官方签名/解密、安全 XML 映射、微信 access token 管理、被动回复和客服文字消息 provider。模板消息不在第一期范围内；真实平台验证仍需要认证公众号、官方凭据和实际接口权限。
 
 历史内部接口不是面向微信公网暴露的回调地址。由于这些接口已禁用，当前也不应再把 Adapter 的 `/wechat/callback` 暴露为 Attention 第一期开口。
@@ -116,11 +118,11 @@ apps/wechat-adapter/
   tsconfig.json
 ```
 
-第一期可与其他服务部署在同一环境，但代码边界必须保持独立。不要将微信回调直接放进收藏 Service。
+未来重新启用时可与其他服务部署在同一环境，但代码边界必须保持独立。第一期不要部署该 Adapter，也不要将微信回调直接放进收藏 Service。
 
 ## 5. Message Gateway 合同
 
-Message Gateway 是必要的逻辑层，但第一期不要求独立部署。微信 Adapter 面向以下合同编程；最终字段可在双方联调前以版本化 Schema 固化。
+Message Gateway 是未来 Hosted Channel 的必要逻辑层，但第一期不要求部署。微信 Adapter 面向以下合同编程；最终字段可在未来联调前以版本化 Schema 固化。
 
 ### 5.1 入站消息
 

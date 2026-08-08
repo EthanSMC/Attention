@@ -16,6 +16,7 @@ import {
   profileNameEditorWidth,
   shouldSubmitProfileNameEnter,
 } from "./profile-name-editor-behavior";
+import { TransientFeedback, useTransientFeedback } from "./transient-feedback";
 
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const AVATAR_SIZE = 256;
@@ -124,11 +125,7 @@ export function ProfileIdentityEditor({
   const [avatarEditorOpen, setAvatarEditorOpen] = useState(false);
   const [avatarError, setAvatarError] = useState("");
   const [busy, setBusy] = useState<"avatar" | "name" | null>(null);
-  const [toast, setToast] = useState<{
-    text: string;
-    tone: "error" | "success";
-  } | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { feedback, showFeedback } = useTransientFeedback();
   const avatarButton = useRef<HTMLButtonElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const nameButton = useRef<HTMLButtonElement>(null);
@@ -142,7 +139,6 @@ export function ProfileIdentityEditor({
 
   useEffect(() => {
     return () => {
-      if (toastTimer.current) clearTimeout(toastTimer.current);
       if (avatarDraftRef.current) URL.revokeObjectURL(avatarDraftRef.current.src);
     };
   }, []);
@@ -182,12 +178,7 @@ export function ProfileIdentityEditor({
   }, [draftName, editingName]);
 
   function showToast(text: string, tone: "error" | "success" = "success") {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast({ text, tone });
-    toastTimer.current = setTimeout(() => {
-      setToast(null);
-      toastTimer.current = null;
-    }, 2800);
+    showFeedback(text, tone);
   }
 
   function replaceAvatarDraft(next: AvatarImageDraft | null) {
@@ -421,15 +412,7 @@ export function ProfileIdentityEditor({
         </div>
       </div>
 
-      {toast ? (
-        <div
-          aria-live={toast.tone === "error" ? "assertive" : "polite"}
-          className={`profile-edit-toast profile-edit-toast--${toast.tone}`}
-          role={toast.tone === "error" ? "alert" : "status"}
-        >
-          {toast.text}
-        </div>
-      ) : null}
+      <TransientFeedback feedback={feedback} />
 
       {avatarEditorOpen && avatarDraft ? (
         <ProfileAvatarModal

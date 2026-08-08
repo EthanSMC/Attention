@@ -4,6 +4,8 @@
 
 记录日期：2026-08-04
 
+第一期范围以 [`docs/first-release-scope.md`](./first-release-scope.md) 为准：用户自己的 Agent 负责需要浏览器/页面理解的深度读取，Attention Fetcher 只做隔离的确定性 URL 与元数据处理；官方 Hosted Agent、托管 Browser/Fetcher 编排和 Hosted Channel 都是后续议题。
+
 本文只记录当前实现事实、已确认的产品边界和仍需讨论的问题。本文不是实现规格，也不表示现有正则解析方案已经满足 Attention 的多平台采集要求。
 
 ## 1. 已确认的产品边界
@@ -86,11 +88,11 @@ AI Provider 是可选能力。只有内容具备 Member 权益且配置了 `ATTE
 - AI Content Processor 的输入、输出 Schema 和事实依据；
 - 多候选内容、短链接跳转和最终 canonical URL 的处理；
 - 超时、重试、缓存、幂等、成本预算和平台熔断规则；
-- 异步处理期间，Web 与企业微信客服分别如何回执和更新状态。
+- 异步处理期间，Web 与用户自己的 Agent 如何回执和更新状态；企业微信客服属于后续 Hosted Channel 议题。
 
 ### 3.3 Fetcher 的逻辑调用方与工具边界
 
-已确认的长期原则是：未来 Hosted Agent 是网页采集的逻辑规划者。Agent 根据 Hosted Capture Skill 自主决定何时读取公开网页、何时升级 Browser、何时停止或向用户澄清。
+已确认的长期原则是：Agent 是网页采集的逻辑规划者。第一期这个 Agent 是用户自己的本地 Agent；未来 Hosted Agent 上线后再由官方 Runtime 承担同一职责。Agent 根据 Skill 自主决定何时读取公开网页、何时升级 Browser、何时停止或向用户澄清。
 
 同时需要保持以下边界：
 
@@ -109,9 +111,9 @@ AI Provider 是可选能力。只有内容具备 Member 权益且配置了 `ATTE
 1. 采集输入、阶段状态和最终结果 Schema；
 2. Sufficiency Contract 及真实平台 Fixture/Golden Test 方案；
 3. Fetcher、DOM Parser、Source Recipe、Browser Worker、AI Processor 的职责边界；
-4. Hosted Agent、Collector、MCP、Worker 与采集编排器之间的调用关系；
+4. 用户 Agent（以及未来 Hosted Agent）、Collector、MCP、Worker 与采集编排器之间的调用关系；
 5. 异步回执、错误分类、重试、幂等、缓存和成本策略；
 6. SSRF、Prompt Injection、浏览器沙盒和无登录态边界；
-7. 小红书、抖音、微信公众号和普通网页的第一期验收标准。
+7. 小红书、抖音、微信公众号和普通网页的后续深度采集验收标准。
 
 在上述设计完成前，不应把当前正则解析的成功等同于“内容已完整采集”，也不应把现有 Fetcher HTTP 合同直接固化成 Agent Tool Contract。

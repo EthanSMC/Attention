@@ -1,12 +1,14 @@
 # Attention 系统架构
 
-状态：第一期基础设施架构；账号、OAuth、MCP 与 Local Channel Runtime 持续实现
+状态：第一期基础设施架构；当前范围以 `docs/first-release-scope.md` 为准
 
 更新日期：2026-08-07
 
 账号、Free/Member、OAuth、Local/Cloud、Hosted MCP 和增长权益的产品边界以 [`docs/superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md`](./superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md) 为准。
 
-当前交付顺序以 [`Local Agent Channel Runtime 设计`](./superpowers/specs/2026-08-07-local-agent-channel-runtime-design.md) 为准：第一期不建设官方 Hosted Agent，也不在 Web 展示 Hosted Channel。用户继续使用自己的 Agent；Attention 交付账号、Skill、MCP、隔离的 Runtime OAuth、安装/绑定状态协议和审计基础设施。下方 Hosted Agent 与自有 Channel 图仅表示历史长期设想，不属于第一期产品面。
+第一期的统一范围、已交付入口和明确不做的能力以 [`第一版范围`](./first-release-scope.md) 为准。
+
+当前交付顺序以 [`Local Agent Channel Runtime 设计`](./superpowers/specs/2026-08-07-local-agent-channel-runtime-design.md) 为准：第一期不建设官方 Hosted Agent，也不在 Web 展示 Hosted Channel。用户继续使用自己的 Agent（包括 Desktop 交互和本地 iLink/微信运行时）；Attention 交付账号、Skill、MCP、隔离的 Runtime OAuth、安装/绑定协议和审计基础设施。下方“官方 Agent / 自有 Channel”图只表示长期扩展方向，不属于第一期产品面。
 
 Web 与 MCP 的能力等价矩阵、安全例外和补齐顺序以 [`Web 与 MCP 能力等价交接`](./handoffs/mcp-web-capability-parity.md) 为准。
 
@@ -20,28 +22,47 @@ Web 与 MCP 的能力等价矩阵、安全例外和补齐顺序以 [`Web 与 MCP
 6. 开源 Local Core、CLI、Local MCP 与 Skill 无需账号即可运行；Free 可连接云同步和 Hosted MCP 个人收藏能力，Member 获得托管 AI、完整公开流与 Member 专属 MCP 能力。
 7. Attention 不保存原文，只保存链接、必要元数据、AI 派生信息、收藏关系和使用事件；阅读始终回到原作者和原平台。
 
-> 内容采集链路仍有一组未封口问题：当前静态 Fetcher、规则解析、未来 Browser Worker 与 AI Content Processor 如何判断“信息足够”，以及 Runtime 网页工具如何承载 Agent 的自主控制循环，尚未形成最终设计。长期方向已确认由 Hosted Agent 作为逻辑规划者，但当前 Fetcher HTTP 合同不得直接视为 Agent Tool Contract。详见 [`内容采集与 AI 预处理：待设计议题`](./content-acquisition-open-questions.md)。
+## 2. 第一期开箱架构
 
-## 2. 总体架构
+```mermaid
+flowchart LR
+    Web["Web：发现 / 收藏 / 我的"] --> Core["Attention Core"]
+    LocalAgent["用户自己的 Agent"] --> Skill["Attention Skill"]
+    Skill --> MCP["Hosted MCP"]
+    MCP --> Core
+    LocalAgent --> LocalWeChat["本地 iLink / 微信"]
+    LocalAgent --> Sync["Sync API（可选）"]
+    Sync --> Core
+    Web --> OAuth["OAuth / API Key"]
+    OAuth --> MCP
+    Core --> DB[("Postgres")]
+    Core --> Worker["Worker / Fetcher：确定性处理"]
+```
+
+第一期的业务真相只有 `Attention Core`；Web、用户自己的 Agent、同步和 MCP 都共享同一套权限、去重、可见性和审计规则。iLink 凭据与消息会话留在用户设备，Attention 不托管模型或消息通道。
+
+> 内容采集链路仍有一组未封口问题：当前静态 Fetcher、规则解析、未来 Browser Worker 与 AI Content Processor 如何判断“信息足够”，以及本地 Agent 如何自主决定读取网页，尚未形成最终设计。第一期不把 Fetcher 作为第三方 Agent 的公共工具；详见 [`内容采集与 AI 预处理：待设计议题`](./content-acquisition-open-questions.md)。
+
+## 3. 长期扩展架构（非第一期）
 
 ```mermaid
 flowchart LR
     User["用户"]
 
-    subgraph FirstPartyChannels["Attention 自有入口"]
-        WebChat["网页对话"]
-        WeChat["微信对话"]
+    subgraph FirstPartyChannels["长期自有入口（非第一期）"]
+        WebChat["未来网页对话"]
+        WeChat["未来 Hosted Channel"]
         WebUI["网页功能界面<br/>发现 / 收藏 / 我的"]
     end
 
-    subgraph ChannelLayer["Channel Adapter"]
+    subgraph ChannelLayer["后续 Channel Adapter"]
         WebAdapter["Web Adapter"]
         WeChatAdapter["WeChat Adapter"]
         IdentityBinding["渠道身份绑定"]
         MessageEnvelope["统一消息格式<br/>用户 / 会话 / 文本 / 分享卡片"]
     end
 
-    subgraph AgentLayer["独立 AI Agent 服务"]
+    subgraph AgentLayer["未来官方 Hosted Agent（非第一期）"]
         AttentionAgent["Attention Agent"]
         Conversation["会话上下文"]
         Planner["意图识别与任务规划"]
@@ -61,7 +82,7 @@ flowchart LR
         OtherClient["其他 MCP Client"]
     end
 
-    subgraph WebAccess["受控网页访问能力"]
+    subgraph WebAccess["未来受控网页访问能力"]
         WebMCP["Web / Browser MCP"]
         Fetcher["隔离 Fetcher<br/>SSRF / 跳转 / 内容类型检查"]
     end
@@ -182,7 +203,7 @@ flowchart LR
     WeChatAdapter --> WeChat
 ```
 
-### 2.1 Local、Cloud 与同步边界
+### 3.1 Local、Cloud 与同步边界
 
 ```mermaid
 flowchart LR
@@ -207,7 +228,7 @@ flowchart LR
 - Hosted MCP 对外公开并不表示匿名访问。Guest 不能连接，Free/Member 能力由服务端实时判断。
 - Guest、Free 或其他没有完整公开流权益的账号受服务端 `public_feed_preview_limit` 限制，MCP 不能绕过网页的内容边界。
 
-### 2.2 当前账号、凭据与连接实现
+### 3.2 当前账号、凭据与连接实现
 
 以下凭据彼此独立，任何一种吊销都不能静默影响其他种类：
 
@@ -216,13 +237,18 @@ flowchart LR
 | Browser Session | Attention 网页登录 | 随机 opaque token；数据库只存哈希；`HttpOnly`、`SameSite=Lax` Cookie；权益每次从服务端实时解析 |
 | OAuth access/refresh token | CLI、Sync API、Hosted MCP | Authorization Code + PKCE S256；一次性 code；refresh rotation；精确 redirect URI 和 audience |
 | API Key | 不支持浏览器 OAuth 的备用 | 单一类型；原文只显示一次；数据库保存哈希、前缀、名称、到期时间和状态；能力随账号实时变化 |
-| Channel Identity | 微信、企业微信等 Hosted Channel | `provider + app_id + subject HMAC -> account_id`；明确确认绑定；可单独解绑 |
+| Local Channel Runtime | 用户设备上的 iLink / 微信运行时 | 独立 Runtime OAuth；只保存安装与运行元数据，不接收 iLink token |
+| Hosted Channel Identity | 企业微信、公众号等官方渠道 | 长期方向；第一期不提供入口、不展示绑定状态 |
 
-统一邮箱入口位于 `/login` 和站外 continuation 使用的 `/auth`。新邮箱在验证码验证成功后创建 Free 账号；验证码成功前不创建账号、不接收收藏 URL。站内导航使用 intercepted modal 保留原页面，OAuth、CLI 和 Channel 绑定使用完整 `/auth` 页面。
+统一邮箱入口位于 `/login` 和站外 continuation 使用的 `/auth`。新邮箱在验证码验证成功后创建 Free 账号；验证码成功前不创建账号、不接收收藏 URL。站内导航使用 intercepted modal 保留原页面，OAuth、CLI 和 Local Runtime 授权使用完整 `/auth` 页面；第一期没有 Hosted Channel 绑定流程。
 
-连接入口位于 `/account/connections`：公开 Skill 不携带 token；OAuth 为默认路径，API Key 是备用。Hosted MCP 暴露在 `/mcp`，Sync API 暴露在 `/api/sync`，两者都只接受 OAuth/API Key Bearer credential，不接受 Browser Session 代替。
+Agent 详细接入文档位于公开的 `/doc`，并按宿主拆分为独立 `/doc/:agent` 页面；
+`/account/connections` 只保留一键复制接入提示词、OAuth 授权状态与 API Key 管理。
+公开 Skill 不携带 token；OAuth 为默认路径，API Key 是备用。Hosted MCP 暴露在
+`/mcp`，Sync API 暴露在 `/api/sync`，两者都只接受 OAuth/API Key Bearer
+credential，不接受 Browser Session 代替。
 
-### 2.3 Sync v1 合并规则
+### 3.3 Sync v1 合并规则
 
 - Pull cursor 是服务端生成的 opaque 值，内部按 `(occurred_at, event_id)` 单调读取 Collection 事件；客户端不得解析或构造 cursor。
 - Push 每批最多 50 个 mutation，并按数组顺序串行应用；服务端实际落库结果是权威状态。设备离线期间的冲突在重连后按服务端接收并成功应用的顺序解决，随后客户端用 Pull 事件收敛。
@@ -231,14 +257,14 @@ flowchart LR
 - 私密收藏同步到云端表示服务端会看见并保存原始 URL 和必要元数据。它不会进入公开流、公共检索、日报或其他账号的结果。
 - 当前协议不合并原文或富文本正文；Attention 只同步链接、Collection 状态与服务端派生元数据。
 
-### 2.4 Domain 日报
+### 3.4 Domain 日报
 
 - `account_digest_preferences` 保存账号 IANA 时区和同日发送窗口；`domain_digest_subscriptions` 独立保存各 Domain 的启停状态。V1 只有 AI，但调度和投递键都包含 `domain_id`。
 - `digest_email_deliveries` 是耐久邮件 outbox，唯一键为 `account_id + domain_id + local_date`；provider 请求使用 delivery UUID 作为幂等键。`digest_email_delivery_items` 保存 Content 与调度时的 `visibility_version`，并以 `account_id + content_id` 防止合并或重新公开后重复投递。
 - 发送前再次解析实时 Member/Filter 权益，检查账号当前邮箱、偏好与订阅，再通过 `public_contents_current` 和 Domain 内有效公开 Collection 复验资格。版本变化、摘要隐藏、危险阻断、下架、Filter 撤销或退订都会使条目退出本次邮件。
 - 邮件条目只包含元数据、AI 摘要或“暂时无法生成摘要”，并始终给出作者字段、来源和受 Attention 当前公开资格保护的“查看原文”链接；不嵌入原站全文。
 
-### 2.5 社区举报与 Filter 小法庭
+### 3.5 社区举报与 Filter 小法庭
 
 - Content 的社区状态为 `clear / pending_review / hidden`；Collection 仍只使用 `private / public`。同账号同内容只能生成一条 `content_reports` 审计记录，两个不同 Consumer 举报或一个当前有效 Filter 举报会在内容行锁内原子开案，活动案件唯一索引保证并发阈值只开一个 `moderation_cases`。
 - 开案立即把 Content 置为 `pending_review` 并递增 `visibility_version`。`public_contents_current` 是 Feed、公共搜索、日报、Agent、Hosted MCP 与公开跳转的共同资格入口；归属视图再基于它连接，避免各出口复制并漂移安全条件。普通社区隐藏不影响 owner 私密查看，hard safety、legal 与 takedown 会同时阻断 owner 原文跳转。
@@ -246,7 +272,7 @@ flowchart LR
 - Worker 只在窗口结束后裁决。至少 3 个当前有效 Filter、至少 3 张当前有效票且非平票时按简单多数公开或隐藏；否则案件进入 `requires_admin` 并继续隐藏。hard safety、legal 与 takedown 优先于任何公开票决。
 - 每次社区可见性转移都递增 `visibility_version`；公开裁决不修改 `first_public_at`，日报的账号/内容唯一投递记录也会阻止内容被重复发送。
 
-## 3. 网页与微信的统一数据流
+## 4. 长期网页与 Hosted Channel 数据流（非第一期）
 
 ```mermaid
 sequenceDiagram
@@ -297,9 +323,9 @@ sequenceDiagram
     end
 ```
 
-入口不得自行解析链接或实现收藏规则。Adapter 只负责渠道协议、身份绑定、Channel 权益前置检查、消息幂等和回复格式；只有已经绑定且具备 Member/Filter Channel 权益的微信请求才进入与 Web 共用的 Agent 与 MCP 业务路径。
+这段流程是未来 Hosted Channel 的设计草图，不是第一期实现承诺。第一期不提供企业微信/公众号客服入口；本地 iLink 消息由用户自己的 Agent 接收并通过 Attention Skill + MCP 调用 Core。
 
-## 4. 外部 Agent 调用数据流
+## 5. 外部 Agent 调用数据流
 
 ```mermaid
 sequenceDiagram
@@ -334,7 +360,7 @@ sequenceDiagram
 
 外部客户端不能提交或覆盖 `user_id`。MCP 鉴权层必须从 OAuth token 或 API Key 推导账号，并将认证后的账号上下文传给业务服务。对于不支持浏览器 OAuth 的客户端，用户可以创建命名 API Key；Key 不选择权限，备用路径仍执行相同的实时账号权益、限流和审计规则。
 
-## 5. MCP 能力边界
+## 6. MCP 能力边界
 
 第一组 MCP 工具：
 
@@ -352,7 +378,7 @@ Free 不能通过 MCP 触发新私人内容的托管 AI，也不能读取网页�
 
 AI 检索计数不是允许客户端主动上报的 MCP 工具。MCP Server 在内容实际进入有效检索结果时内部产生 `mcp_retrieval` 事件，避免客户端伪造贡献数字。
 
-## 6. OAuth 与 API Key 安全规则
+## 7. OAuth 与 API Key 安全规则
 
 - Hosted MCP 与 Sync API 优先使用 OAuth Authorization Code + PKCE；HTTP MCP token 必须绑定明确的 resource/audience。
 - 授权页展示客户端、请求 Scope 和将要访问的账号；Skill 本身不携带 token。
@@ -368,7 +394,7 @@ AI 检索计数不是允许客户端主动上报的 MCP 工具。MCP Server 在�
 - 私人收藏的查询、缓存和索引继续按账号隔离。
 - 客户端重试使用请求 ID 做幂等，不能因重试重复收藏或重复增加 AI 检索计数。
 
-## 7. 数据保存边界
+## 8. 数据保存边界
 
 Attention 长期保存：
 

@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 
 import { safeReturnTo } from "@attention/auth";
 
-import { LoginModuleFallback } from "../../components/login-module";
+import { LoginModule, LoginModuleFallback } from "../../components/login-module";
 import { getPagePrincipal } from "../../server/session";
 
 export const dynamic = "force-dynamic";
@@ -16,12 +16,25 @@ export const metadata: Metadata = {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ return_to?: string }>;
+  searchParams: Promise<{ reauth?: string; return_to?: string }>;
 }) {
   const params = await searchParams;
   const returnTo = safeReturnTo(params.return_to);
   const principal = await getPagePrincipal();
-  if (principal) redirect(returnTo);
+  const forceReauth = params.reauth === "1";
+  if (principal && !forceReauth) redirect(returnTo);
 
-  return <LoginModuleFallback returnTo={returnTo} />;
+  return forceReauth && principal ? (
+    <div className="page-shell page-shell--form">
+      <section aria-label="验证 Attention 邮箱" className="login-panel">
+        <LoginModule
+          {...(principal.primaryEmail ? { defaultEmail: principal.primaryEmail } : {})}
+          forceCodeOnly
+          returnTo={returnTo}
+        />
+      </section>
+    </div>
+  ) : (
+    <LoginModuleFallback returnTo={returnTo} />
+  );
 }

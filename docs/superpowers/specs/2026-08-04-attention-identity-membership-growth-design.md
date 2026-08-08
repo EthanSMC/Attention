@@ -8,11 +8,13 @@
 
 本设计补充并在冲突处取代 [`2026-07-31-attention-v1-design.md`](./2026-07-31-attention-v1-design.md) 中关于身份、会员、MCP 接入和支付边界的旧结论。收藏、Content、Collection、公开资格、去重与内容安全仍以原设计为准。
 
+> 第一版范围已在 [`docs/first-release-scope.md`](../../first-release-scope.md) 统一。本文中的 Hosted Channel、公众号/企业微信绑定和官方 Agent 段落是后续能力；第一期只交付用户自己的 Agent、Skill/MCP、OAuth/API Key，以及本地 iLink Runtime 所需的基础设施，Web 不展示 Hosted Channel。
+
 ## 1. 产品原则
 
 1. Attention 的公开发现流本身就是产品展示页，不额外设置阻挡体验的传统营销首页。
 2. 账号身份、会员权益、Filter 资格和渠道身份是相互独立的维度，不能压缩成一个角色枚举。
-3. 开源本地工具必须可以在没有 Attention 账号时独立工作；云端同步是 Free 能力，托管 AI、完整内容网络与 Channel 是 Member 能力。
+3. 开源本地工具必须可以在没有 Attention 账号时独立工作；云端同步是 Free 能力，托管 AI、完整内容网络和会员级检索/订阅是 Member 能力。第一期不提供 Attention 托管 Channel。
 4. Hosted MCP 的协议和端点对外开放，实际工具能力由账号权益决定；开放连接不等于所有托管能力免费。
 5. 登录、OAuth、API Key 和微信 `openid` 是不同凭据，不复用 token、表或生命周期。
 6. 裂变权益使用可审计的 grant、referral 和 points 账本，不通过覆盖一个 `member_enabled` 布尔值实现。
@@ -46,7 +48,7 @@
 | Local only（使用模式） | 可选 | 仅本地 | 开源 Core、CLI、Local MCP、Skill、本地处理与检索 |
 | Guest | 否 | 无私人云端数据 | 浏览公开流前 `N` 张、打开可见卡片原文 |
 | Free | 是 | 本地与个人云端收藏 | 不限量收藏、云端同步、Hosted MCP 个人收藏能力 |
-| Member | 是 | 本地 + Attention Cloud | 完整公开流、托管 AI、筛选订阅、Member 专属 MCP 能力、Channel |
+| Member | 是 | 本地 + Attention Cloud | 完整公开流、托管 AI、筛选订阅、Member 专属 MCP 能力 |
 
 Local only 不是与 Guest/Free/Member 互斥的套餐，而是一种运行模式：未注册者可以只在本地使用，Free 或 Member 也可以继续运行本地工具。一个没有连接云端的本地实例从平台视角没有可识别账号，也不受平台账号生命周期约束。
 
@@ -73,7 +75,7 @@ Local only 不是与 Guest/Free/Member 互斥的套餐，而是一种运行模�
 | 托管/云端搜索、筛选与订阅 | 否 | 否 | 是 | 是 |
 | Hosted MCP 个人收藏工具 | 否 | 是 | 是 | 是 |
 | Hosted MCP 托管 AI/完整公共网络能力 | 否 | 否 | 是 | 是 |
-| 企业微信、公众号等 Hosted Channel | 否 | 否 | 是 | 是 |
+| 企业微信、公众号等 Hosted Channel | 后续 | 后续 | 后续 | 后续 |
 | 向公共瀑布流供给 | 否 | 否 | 否 | 是 |
 
 Free 新收藏默认私密，也不会因为本地同步而批量公开。Filter 第一次把本地历史收藏同步到云端时同样全部默认私密；同步完成后的新单条收藏再遵循 Filter 默认公开规则。
@@ -102,7 +104,7 @@ Free 新收藏默认私密，也不会因为本地同步而批量公开。Filter
 ### 4.2 站内与站外承载
 
 - 从瀑布流收藏、升级或顶部登录进入时，桌面端使用居中浮层，移动端可使用全屏 sheet，保持当前页面上下文。
-- 微信绑定链接、CLI 登录、Hosted MCP OAuth 等站外入口使用独立 `/auth` 页面。
+- Local Channel Runtime 授权/配对链接、CLI 登录、Hosted MCP OAuth 等站外入口使用独立 `/auth` 页面。
 - 两种承载复用同一个认证组件和账号规则。
 - 登录 intent 使用服务端 continuation，至少记录 `intent_type`、安全校验后的 `return_to`、发起时间、过期时间和一次性消费状态。
 - 登录完成后继续原来的收藏、升级、授权或绑定动作。
@@ -127,7 +129,7 @@ Free 新收藏默认私密，也不会因为本地同步而批量公开。Filter
 - Skill。
 - Source Adapter SDK 与本地模型/BYOK 接口。
 
-官方托管服务包括云端同步、公开 canonical 图谱、Filter 网络、完整发现、托管 AI、筛选订阅、Hosted MCP、Channel、治理和下架。
+官方托管服务包括云端同步、公开 canonical 图谱、Filter 网络、完整发现、托管 AI、筛选订阅、Hosted MCP、治理和下架。Hosted Channel 和官方 Agent 不属于第一版。
 
 ### 5.2 同步与 MCP 分工
 
@@ -196,9 +198,11 @@ Hosted MCP 是公开可发现、可配置的远程 MCP 服务，但必须认证�
 - 完成页分别显示“Skill 已安装”“Hosted MCP 已连接”“同步正常”。
 - 不支持 OAuth 的客户端可以在连接设置中创建同一种 API Key。
 
-## 8. Channel 与微信绑定
+## 8. 后续 Hosted Channel 与微信绑定
 
-Hosted Channel 是 Member 能力。Free 可以注册、收藏、同步和使用账号允许的 Hosted MCP 个人收藏能力，但平台不为 Free 托管企业微信、公众号等消息入口。
+本节不是第一版交付范围。第一期的微信路径是用户自己的 Agent / iLink 在本地接收消息，再通过 Attention Skill + MCP 调用 Core；Attention 不托管模型、消息会话或 iLink 凭据。Local Channel Runtime 的安装、授权和运行时审计边界见 [`本地 Agent 与微信 Channel 一期设计`](./2026-08-07-local-agent-channel-runtime-design.md)。
+
+在未来启用 Hosted Channel 时，它才会作为 Member 能力；Free 可以注册、收藏、同步和使用账号允许的 Hosted MCP 个人收藏能力，但第一期平台不为任何账号托管企业微信、公众号等消息入口。
 
 微信首次发送消息时：
 
@@ -219,7 +223,7 @@ Hosted Channel 是 Member 能力。Free 可以注册、收藏、同步和使用�
 - 目标账号必须在确认时由当前已认证 Web Session 推导。
 - Pending request 建议保留约 10 分钟并只消费一次；超时后提示用户重新发送。
 - 已经绑定其他账号时不能静默换绑。
-- 普通网站注册不主动要求绑定微信；主动绑定入口位于“我的 -> 连接与授权”。
+- 普通网站注册不主动要求绑定微信；未来 Local Channel Runtime 若需要显式绑定，再从独立 Runtime 控制面进入，不把微信绑定塞进注册流程。
 
 ## 9. 订阅与增长机制
 
@@ -418,6 +422,8 @@ Consumer 季卡按注册即时生效。若邀请者当前是 Free，则立即进
 - API Key 吊销不影响网站 Session、微信绑定或其他 OAuth 客户端。
 
 ### 12.3 Channel
+
+以下规则属于未来 Hosted Channel，不是第一期 Web 或 Local iLink 的用户入口。
 
 - 未绑定微信消息只创建 pending request，不执行私人收藏。
 - 登录与开通 Member 后，用户明确确认绑定并自动继续原消息。

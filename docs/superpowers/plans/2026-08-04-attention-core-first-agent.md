@@ -4,6 +4,8 @@
 
 状态：已完成
 
+> 当前第一版范围以 [`docs/first-release-scope.md`](../../first-release-scope.md) 为准。本计划已完成 Core/MCP/Skill 抽取；它不包含官方 Hosted Agent、Hosted Channel 或 Attention 托管 Browser。第一期的 Agent 指用户自己的 Agent，接入入口与五类宿主文档见 `/doc`。
+
 ## 目标
 
 将现有 Hosted MCP 从 Route 内联工具重构为可供未来 Hosted Agent 复用的 Canonical Attention Tool Registry，补齐第一阶段 Filter/第三方 Agent 所需的状态查询和可见性修改，完善公开 Skill，并建立不保存原文的最小工具遥测。

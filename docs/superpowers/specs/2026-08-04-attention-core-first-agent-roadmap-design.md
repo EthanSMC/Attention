@@ -4,9 +4,11 @@
 
 确认日期：2026-08-04
 
+第一阶段范围现统一记录在 [`docs/first-release-scope.md`](../../first-release-scope.md)。本文只负责说明 Core-first 的 Agent 顺序；关于用户自己的 Agent、Desktop 和本地 iLink Runtime，以 [`2026-08-07-local-agent-channel-runtime-design.md`](./2026-08-07-local-agent-channel-runtime-design.md) 为准。
+
 ## 1. 目的
 
-Attention 第一阶段先向 Filter 和项目方自己的 AI 开放可用、稳定的 Core/MCP/Skill，而不是先构建官方 Hosted Agent。真实 Agent 的调用行为、链接样本和失败记录用于完善 Core Tool Contract 与公开 Skill；官方 Hosted Agent 和企业微信客服在后续阶段基于这些数据建设。
+Attention 第一阶段先向 Filter、项目方自己的 AI 和用户自己的 Agent 开放可用、稳定的 Core/MCP/Skill，而不是先构建官方 Hosted Agent。真实 Agent 的调用行为、链接样本和失败记录用于完善 Core Tool Contract 与公开 Skill；官方 Hosted Agent 和企业微信客服在后续阶段基于这些数据建设。第一期同时交付 OAuth/API Key、公开接入文档和本地 iLink Runtime 基础设施，但不托管模型或消息渠道。
 
 本设计调整开发顺序，不取消 Hosted Agent、企业微信客服或未来的公开网页读取能力。
 
@@ -21,6 +23,7 @@ Attention 第一阶段先向 Filter 和项目方自己的 AI 开放可用、稳�
 7. 未来官方 Agent 收到 Filter 的含链接消息时，默认解析并创建收藏；只有用户明确要求“不要收藏”时才只读取不保存。
 8. 网页读取失败不能导致链接丢失。系统仍以原始 URL 创建收藏，并标记为部分处理或“暂时无法生成摘要”。
 9. 官方 Agent 的网页工具实现选择后移：先积累真实链接与工作流数据，再以相同评测集比较开源方案、自研方案和混合方案。
+10. Codex、Claude Code 的 Desktop 只支持交互式 Skill/MCP；微信入站由用户自己的本地 Agent / iLink 宿主负责，不把 Desktop 配置显示成 Hosted Channel 已连接。
 
 ## 3. 分层架构
 
@@ -128,13 +131,13 @@ Web 与 MCP 的能力等价、明确安全例外和防漂移验收以 [`docs/han
 
 ### 4.4 第一阶段明确不做
 
-- 企业微信客服主入口；
 - 官方 Hosted Agent Runtime；
 - Hermes 或其他 Agent Runtime 的生产选型；
 - Attention 托管的通用 Browser/Computer Use；
 - 登录态网页访问、Cookie Vault 或有副作用的浏览器操作；
 - 让第三方 Agent 直接控制 Attention Fetcher/Browser；
 - 因第三方 Agent 提交正文而将其升级为服务端可信原文证据。
+- Attention 托管的企业微信客服、公众号和其他 Hosted Channel 主入口。
 
 ## 5. Skill 迭代与数据闭环
 

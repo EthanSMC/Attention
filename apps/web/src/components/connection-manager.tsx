@@ -10,12 +10,12 @@ import {
 } from "react";
 
 import { ApiKeyCreateModal } from "./api-key-create-modal";
+import { TransientFeedback, useTransientFeedback } from "./transient-feedback";
 import {
   apiKeyManagerReducer,
   type ApiKeyRow,
   createApiKeyManagerState,
 } from "./api-key-manager-state";
-import type { AgentConnectionProjection } from "../server/agent-connection-projection";
 
 interface OAuthConnection {
   clientId: string;
@@ -31,15 +31,13 @@ function formatAccountDate(value: string): string {
 }
 
 export function ConnectionManager({
-  agentConnections,
-  capabilityManifestUrl,
-  capabilityToolCount,
+  agentConnectionPrompt,
+  agentDocumentationUrl,
   oauthConnections,
   pats,
 }: {
-  agentConnections: readonly AgentConnectionProjection[];
-  capabilityManifestUrl: string;
-  capabilityToolCount: number;
+  agentConnectionPrompt: string;
+  agentDocumentationUrl: string;
   oauthConnections: OAuthConnection[];
   pats: PatConnection[];
 }) {
@@ -48,10 +46,7 @@ export function ConnectionManager({
     pats,
     createApiKeyManagerState,
   );
-  const [message, setMessage] = useState<string | null>(null);
-  const [selectedAgentId, setSelectedAgentId] = useState(
-    agentConnections[0]?.id ?? "openclaw",
-  );
+  const { clearFeedback, feedback, showFeedback } = useTransientFeedback();
   const [revokingPatId, setRevokingPatId] = useState<string | null>(null);
   const createRequestInFlight = useRef(false);
   const revokeRequestInFlight = useRef(false);
@@ -63,14 +58,15 @@ export function ConnectionManager({
       return true;
     });
   }, [oauthConnections]);
-  const selectedAgent =
-    agentConnections.find((agent) => agent.id === selectedAgentId) ??
-    agentConnections[0];
   const activePats = apiKeys.rows.filter((item) => item.status === "active");
 
   async function copy(value: string, label = "内容") {
-    await navigator.clipboard.writeText(value);
-    setMessage(`${label}已复制。`);
+    try {
+      await navigator.clipboard.writeText(value);
+      showFeedback(`${label}已复制。`);
+    } catch {
+      showFeedback("复制失败，请重试。", "error");
+    }
   }
 
   const closeApiKeyModal = useCallback(() => {
@@ -147,7 +143,7 @@ export function ConnectionManager({
     if (revokeRequestInFlight.current) return;
     revokeRequestInFlight.current = true;
     setRevokingPatId(id);
-    setMessage(null);
+    clearFeedback();
     try {
       const response = await fetch(`/api/account/pats/${encodeURIComponent(id)}`, {
         method: "DELETE",
@@ -155,12 +151,12 @@ export function ConnectionManager({
       const result = (await response.json().catch(() => ({}))) as { revoked?: boolean };
       if (response.ok && result.revoked) {
         dispatchApiKey({ id, type: "revoke_succeeded" });
-        setMessage("API Key 已撤销。");
+        showFeedback("API Key 已撤销。");
       } else {
-        setMessage("撤销没有完成，请重试。");
+        showFeedback("撤销没有完成，请重试。", "error");
       }
     } catch {
-      setMessage("网络连接失败，撤销没有完成。请重试。");
+      showFeedback("网络连接失败，撤销没有完成。请重试。", "error");
     } finally {
       revokeRequestInFlight.current = false;
       setRevokingPatId(null);
@@ -170,274 +166,36 @@ export function ConnectionManager({
   async function revokeOAuth(clientId: string) {
     const response = await fetch(`/api/account/oauth/${encodeURIComponent(clientId)}`, { method: "DELETE" });
     if (response.ok) window.location.reload();
-    else setMessage("撤销没有完成，请重试。");
+    else showFeedback("撤销没有完成，请重试。", "error");
   }
 
   return (
     <div className="connection-stack">
-      <section className="connection-card connection-card--agents">
-        <div className="agent-setup-intro">
-          <div>
-            <p className="settings-card__eyebrow">本地 Agent</p>
-            <h2>选择你正在使用的 Agent</h2>
-          </div>
+      <section className="connection-card connection-card--agent-entry">
+        <div>
+          <p className="settings-card__eyebrow">本地 Agent</p>
+          <h2>让你的 AI 完成接入</h2>
           <p>
-            Skill 负责告诉 Agent 怎样使用 Attention，MCP 负责登录与执行操作。配置由你的 Agent 宿主管理。
+            复制一段提示词给你正在使用的 AI。它会识别宿主，打开对应文档，并完成 Skill、MCP
+            和 OAuth 配置。
           </p>
         </div>
-
-        <div className="agent-setup-layout">
-          <div
-            aria-label="选择 Agent"
-            className="agent-setup-picker"
-            role="group"
+        <div className="agent-entry-actions">
+          <button
+            className="button button--primary"
+            onClick={() => copy(agentConnectionPrompt, "接入提示词")}
+            type="button"
           >
-            {agentConnections.map((agent) => (
-              <button
-                aria-controls={`agent-setup-${agent.id}`}
-                aria-pressed={agent.id === selectedAgent?.id}
-                className="agent-setup-picker__item"
-                id={`agent-selector-${agent.id}`}
-                key={agent.id}
-                onClick={() => setSelectedAgentId(agent.id)}
-                type="button"
-              >
-                <span className="agent-setup-picker__mark" aria-hidden="true">
-                  {agent.displayName.slice(0, 1)}
-                </span>
-                <span className="agent-setup-picker__copy">
-                  <strong>{agent.displayName}</strong>
-                  <small>{agent.status.label}</small>
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {selectedAgent ? (
-            <div
-              aria-labelledby={`agent-selector-${selectedAgent.id}`}
-              className="agent-setup-detail"
-              id={`agent-setup-${selectedAgent.id}`}
-              role="region"
-            >
-              <div className="agent-setup-detail__heading">
-                <div>
-                  <p className="agent-setup-detail__kicker">当前配置</p>
-                  <h3>{selectedAgent.displayName}</h3>
-                </div>
-                <div className="agent-status-group">
-                  <span
-                    className={`agent-status-badge agent-status-badge--${selectedAgent.status.tone}`}
-                  >
-                    {selectedAgent.status.label}
-                  </span>
-                  {selectedAgent.minimumVersion ? (
-                    <span className="agent-minimum-version">
-                      最低版本 {selectedAgent.minimumVersion}
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-              <p className="agent-setup-detail__summary">
-                {selectedAgent.status.detail}
-              </p>
-
-              <div aria-label="连接路径" className="agent-setup-path">
-                <span>{selectedAgent.displayName}</span>
-                <span aria-hidden="true">→</span>
-                <span>Attention MCP</span>
-              </div>
-
-              <div className="agent-resource-list">
-                {selectedAgent.skillUrl ? (
-                  <div className="agent-resource-row">
-                    <div>
-                      <span>{selectedAgent.skillLabel}</span>
-                      <code>{selectedAgent.skillUrl}</code>
-                    </div>
-                    <div className="agent-resource-actions">
-                      {selectedAgent.skillDownloadFilename ? (
-                        <a
-                          download={selectedAgent.skillDownloadFilename}
-                          href={selectedAgent.skillUrl}
-                        >
-                          下载
-                        </a>
-                      ) : null}
-                      <button
-                        onClick={() => copy(selectedAgent.skillUrl!, selectedAgent.skillLabel)}
-                        type="button"
-                      >
-                        复制地址
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="agent-resource-row agent-resource-row--unavailable">
-                    <div>
-                      <span>{selectedAgent.skillLabel}</span>
-                      <strong>尚未发布</strong>
-                    </div>
-                  </div>
-                )}
-                {selectedAgent.skillPathLabel && selectedAgent.skillPaths.length ? (
-                  <div className="agent-resource-row agent-resource-row--paths">
-                    <div>
-                      <span>{selectedAgent.skillPathLabel}</span>
-                      {selectedAgent.skillPaths.map((path) => (
-                        <code key={`${path.label}-${path.value}`}>
-                          <b>{path.label}</b>
-                          {path.value}
-                        </code>
-                      ))}
-                    </div>
-                    <div className="agent-resource-actions">
-                      {selectedAgent.skillPaths.map((path) => (
-                        <button
-                          key={path.label}
-                          onClick={() => copy(path.value, `${path.label} 路径`)}
-                          type="button"
-                        >
-                          复制{path.label === "所有平台" ? "路径" : path.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                {selectedAgent.skillSha256 ? (
-                  <div className="agent-resource-row agent-resource-row--digest">
-                    <div>
-                      <span>SHA-256</span>
-                      <code>{selectedAgent.skillSha256}</code>
-                    </div>
-                    <button
-                      onClick={() => copy(selectedAgent.skillSha256!, "SHA-256")}
-                      type="button"
-                    >
-                      复制
-                    </button>
-                  </div>
-                ) : null}
-                <div className="agent-resource-row">
-                  <div>
-                    <span>MCP 地址</span>
-                    <code>{selectedAgent.mcpUrl}</code>
-                  </div>
-                  <button
-                    onClick={() => copy(selectedAgent.mcpUrl, "MCP 地址")}
-                    type="button"
-                  >
-                    复制
-                  </button>
-                </div>
-                <div className="agent-resource-row">
-                  <div>
-                    <span>能力范围</span>
-                    <code>{capabilityToolCount} 个业务工具 · 权限随账号权益实时变化</code>
-                  </div>
-                  <div className="agent-resource-actions">
-                    <a
-                      href={capabilityManifestUrl}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      查看机器清单
-                    </a>
-                    <button
-                      onClick={() => copy(capabilityManifestUrl, "能力清单地址")}
-                      type="button"
-                    >
-                      复制地址
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {selectedAgent.manualChecklist.length ? (
-                <div className="agent-manual-checklist">
-                  <div className="agent-section-heading">
-                    <h4>WorkBuddy 安装步骤</h4>
-                    <span>按顺序完成</span>
-                  </div>
-                  <ol>
-                    {selectedAgent.manualChecklist.map((step) => (
-                      <li key={step.title}>
-                        <div>
-                          <strong>{step.title}</strong>
-                          <p>{step.detail}</p>
-                          {step.value ? <code>{step.value}</code> : null}
-                        </div>
-                        {step.value ? (
-                          <button
-                            onClick={() => copy(step.value!, step.title)}
-                            type="button"
-                          >
-                            复制
-                          </button>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-              ) : null}
-
-              {selectedAgent.commands.length ? (
-                <div className="agent-command-list">
-                  <div className="agent-section-heading">
-                    <h4>下载与宿主配置</h4>
-                    <span>在本机终端运行；不会执行远端脚本</span>
-                  </div>
-                  {selectedAgent.commands.map((command) => (
-                    <div className="agent-command-row" key={`${selectedAgent.id}-${command.label}`}>
-                      <div>
-                        <span>{command.label}</span>
-                        <code>{command.value}</code>
-                        {command.kind === "configuration_probe" ? (
-                          <small>仅查看或检查宿主配置，不代表 Attention 工具已经可用。</small>
-                        ) : null}
-                      </div>
-                      <button
-                        onClick={() => copy(command.value, command.label)}
-                        type="button"
-                      >
-                        复制
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="agent-manual-setup-note">
-                  该宿主暂不提供可验证的命令行配置，请复制上方地址并在宿主设置中手动添加。
-                </p>
-              )}
-
-              <div className="agent-acceptance-step">
-                <div>
-                  <span>最终验收</span>
-                  <strong>在 Agent 中调用</strong>
-                  <code>{selectedAgent.acceptance.toolName}</code>
-                </div>
-                <p>{selectedAgent.acceptance.detail}</p>
-              </div>
-
-              <div className="agent-source-links">
-                <span>官方资料</span>
-                <div>
-                  {selectedAgent.sources.map((source) => (
-                    <a
-                      href={source.url}
-                      key={source.url}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      {source.label}
-                      <span aria-hidden="true">↗</span>
-                    </a>
-                  ))}
-                </div>
-              </div>
-            </div>
-          ) : null}
+            复制给 AI
+          </button>
+          <a
+            className="button button--secondary"
+            href={agentDocumentationUrl}
+            rel="noreferrer"
+            target="_blank"
+          >
+            查看接入文档 <span aria-hidden="true">↗</span>
+          </a>
         </div>
       </section>
 
@@ -515,7 +273,7 @@ export function ConnectionManager({
         ) : null}
       </section>
 
-      {message ? <p aria-live="polite" className="connection-toast">{message}</p> : null}
+      <TransientFeedback feedback={feedback} />
       {apiKeys.modal !== "closed" ? (
         <ApiKeyCreateModal
           busy={apiKeys.busy}

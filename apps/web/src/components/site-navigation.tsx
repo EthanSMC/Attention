@@ -28,6 +28,10 @@ function isSettingsPath(pathname: string): boolean {
   );
 }
 
+function isStandaloneDocumentationPath(pathname: string): boolean {
+  return pathname.startsWith("/doc");
+}
+
 export interface NavigationIdentity {
   isFilter: boolean;
   isMember: boolean;
@@ -102,6 +106,8 @@ export function SiteHeader({ identity }: { identity: NavigationIdentity | null }
   const settingsActive = isSettingsPath(pathname);
   const closeCollect = useCallback(() => setCollectOpen(false), []);
 
+  if (isStandaloneDocumentationPath(pathname)) return null;
+
   return (
     <>
       <header
@@ -152,6 +158,9 @@ export function SiteHeader({ identity }: { identity: NavigationIdentity | null }
 }
 
 export function MobileNavigation() {
+  const pathname = usePathname();
+  if (isStandaloneDocumentationPath(pathname)) return null;
+
   return (
     <nav aria-label="移动端主导航" className="mobile-nav">
       <NavigationLinks mobile />

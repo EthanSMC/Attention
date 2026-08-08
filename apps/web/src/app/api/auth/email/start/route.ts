@@ -3,6 +3,7 @@ import {
   createLoginChallenge,
   EmailAuthError,
   fingerprintLoginRequester,
+  normalizeEmail,
 } from "@attention/auth";
 import type { NextRequest, NextResponse } from "next/server";
 import { z, ZodError } from "zod";
@@ -19,6 +20,7 @@ import {
   trustedClientSource,
   TrustedClientSourceError,
 } from "../../../../../server/trusted-client-source";
+import { getRequestSession } from "../../../../../server/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,6 +31,7 @@ const bodySchema = z
   .object({
     consumer_invite_token: z.string().min(32).max(256).optional(),
     email: z.string().max(320),
+    reauth: z.boolean().optional(),
     return_to: z.string().max(2048).optional(),
   })
   .strict();
@@ -47,8 +50,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const body = bodySchema.parse(
       await readJsonRequestWithinLimit(request, MAX_EMAIL_START_BODY_BYTES),
     );
+    let email = body.email;
+    if (body.reauth) {
+      const requestSession = await getRequestSession(request);
+      const currentEmail = requestSession.principal?.primaryEmail;
+      if (!requestSession.principal || !currentEmail) {
+        return noStoreJson({ error: { code: "authentication_required" } }, { status: 401 });
+      }
+      const normalizedCurrentEmail = normalizeEmail(currentEmail);
+      if (normalizeEmail(body.email) !== normalizedCurrentEmail) {
+        return noStoreJson({ error: { code: "reauth_email_mismatch" } }, { status: 400 });
+      }
+      email = normalizedCurrentEmail;
+    }
     const challenge = await createLoginChallenge(getWebDatabase(), {
-      email: body.email,
+      email,
       requesterFingerprint: requesterFingerprint(request),
       ...(body.consumer_invite_token
         ? { consumerInviteToken: body.consumer_invite_token }

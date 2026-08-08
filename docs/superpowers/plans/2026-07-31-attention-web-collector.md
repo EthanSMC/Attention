@@ -1,10 +1,12 @@
 # Attention Web 收藏入口实现计划
 
-状态：执行中
+状态：已完成（历史 Web 收藏切片）
 
 日期：2026-07-31
 
 对应产品规格：`docs/superpowers/specs/2026-07-31-attention-v1-design.md`
+
+> 当前第一版范围以 [`docs/first-release-scope.md`](../../first-release-scope.md) 为准。本计划只记录最早的 Web 收藏纵向切片；其中“本轮不实现 Email、MCP、支付”等是当时的切片边界，不是当前第一版的产品清单。当前账号、会员、OAuth、MCP、公开接入文档和本地 Agent/iLink 基础设施见统一范围文档及相关交接。
 
 ## 1. 本轮交付
 

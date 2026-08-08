@@ -4,6 +4,7 @@ import {
   accounts,
   and,
   desc,
+  entitlements,
   eq,
   gte,
   isNull,
@@ -162,7 +163,18 @@ async function createAccount(
         displayName: accounts.displayName,
         id: accounts.id,
       });
-    if (account) return account;
+    if (account) {
+      await db.insert(entitlements).values({
+        accountId: account.id,
+        createdAt: now,
+        endsAt: null,
+        memberEnabled: true,
+        source: "signup",
+        startsAt: now,
+        updatedAt: now,
+      });
+      return account;
+    }
   }
   throw new Error("Unable to allocate a unique account handle");
 }
@@ -285,6 +297,7 @@ export async function verifyLoginChallenge(
     acceptTerms: boolean;
     challengeId: string;
     code: string;
+    expectedEmail?: string;
     now?: Date;
     sessionTtlSeconds?: number;
   },
@@ -300,6 +313,9 @@ export async function verifyLoginChallenge(
       .for("update")
       .limit(1);
     if (!challenge) return { error: "invalid_challenge" as const };
+    if (input.expectedEmail && challenge.email !== input.expectedEmail) {
+      return { error: "invalid_challenge" as const };
+    }
     if (challenge.consumedAt) return { error: "challenge_consumed" as const };
     if (challenge.expiresAt <= now) return { error: "challenge_expired" as const };
     if (challenge.failedAttempts >= challenge.maxAttempts) {

@@ -1,8 +1,8 @@
 # Attention
 
-Attention 是一个“人筛选，AI 整理”的收藏与公开信息层。当前仓库已经形成账号体系首版：Guest 公开预览、邮箱验证码注册/登录、Free 私人收藏、Member 权益门、OAuth + PKCE、API Key、Hosted MCP、云同步、Consumer 裂变、Filter 年卡兑换和续费积分账本都执行真实的服务端身份与权限判断。第一期不提供官方 Hosted Agent 或 Hosted Channel；用户使用自己的 Agent，Attention 只建设 Skill、MCP、OAuth 与 Local Channel Runtime 基础设施。
+Attention 是一个“人筛选，AI 整理”的收藏与公开信息层。当前仓库已经形成账号体系首版：Guest 公开预览、邮箱验证码注册/登录、注册即 Member、Filter 公开供给、OAuth + PKCE、API Key、Hosted MCP、云同步、Consumer 裂变、Filter 年卡兑换和续费积分账本都执行真实的服务端身份与权限判断。第一期不提供官方 Hosted Agent 或 Hosted Channel；用户使用自己的 Agent，Attention 交付 Skill、MCP、OAuth 与 Local Channel Runtime 基础设施。
 
-系统架构与 Attention MCP 见 [`docs/architecture.md`](docs/architecture.md)；第一期本地 Agent、Desktop Companion 与 iLink Runtime 边界见 [`Local Agent Channel Runtime 设计`](docs/superpowers/specs/2026-08-07-local-agent-channel-runtime-design.md)。当前账号、Free/Member、OAuth、云同步和增长机制的产品决策见 [`账号与会员设计`](docs/superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md)。Web 视觉 token、组件和交互规则见 [`docs/design-system.md`](docs/design-system.md)；机器可读设计基线见 [`DESIGN.md`](DESIGN.md)，产品上下文见 [`PRODUCT.md`](PRODUCT.md)，设置页审查见 [`docs/settings-design-audit.md`](docs/settings-design-audit.md)。
+第一期范围以 [`docs/first-release-scope.md`](docs/first-release-scope.md) 为唯一口径。系统架构与 Attention MCP 见 [`docs/architecture.md`](docs/architecture.md)；本地 Agent、Desktop 交互与 iLink Runtime 边界见 [`Local Agent Channel Runtime 设计`](docs/superpowers/specs/2026-08-07-local-agent-channel-runtime-design.md)。当前账号、注册 Member、OAuth、云同步和增长机制的产品决策见 [`账号与会员设计`](docs/superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md)。Web 视觉 token、组件和交互规则见 [`docs/design-system.md`](docs/design-system.md)；机器可读设计基线见 [`DESIGN.md`](DESIGN.md)，产品上下文见 [`PRODUCT.md`](PRODUCT.md)，设置页审查见 [`docs/settings-design-audit.md`](docs/settings-design-audit.md)。
 
 通用容器、Compose、数据库角色、HTTPS 反代、环境变量和 CI 基线见 [`docs/deployment.md`](docs/deployment.md)。这些文件是可移植部署起点，不表示仓库或外部供应商已经上线。
 
@@ -13,8 +13,8 @@ Attention 是一个“人筛选，AI 整理”的收藏与公开信息层。当�
 - 所有候选链接都先交给隔离 Fetcher 做 DNS/IP、凭证参数和跳转校验；主 Web 服务不直接访问外部 URL。
 - 多个不同内容链接先返回候选，用户选择前不会创建 Content 或公开收藏。
 - Guest 不建立匿名账号，只能浏览可配置的前 N 张公开卡片；收藏入口在验证码成功前不会显示或接收 URL。
-- 新邮箱验证码验证成功后自动创建 Free，生成不可预测的唯一 handle 和“用户+编号”显示名；密码是可选登录方式。
-- Free 可不限量私密收藏和云同步；Filter 默认公开收藏。公开可见性仍只能由 Filter 产生。
+- 新邮箱验证码验证成功后自动创建 Member，生成不可预测的唯一 handle 和“用户+编号”显示名；密码是可选登录方式。
+- Member 可不限量私密收藏和云同步；Filter 默认公开收藏。公开可见性仍只能由 Filter 产生。
 - 同一用户重复收藏不会制造重复记录，也不会偷偷改变原可见性。
 - 收藏后立即可在“我的收藏”查看；公开内容按首次公开时间出现在 AI 公开流。
 - Member 解锁完整公开流、日报、托管 AI 检索和 Member 专属 MCP 能力；Web 与 MCP 使用相同服务端权益边界。
@@ -87,7 +87,10 @@ Member 与 Filter 可在 `/account/digests` 订阅 Domain 并设置 IANA 时区�
 
 ## Agent、MCP 与同步
 
-登录后打开 `/account/connections`。支持浏览器 OAuth 的客户端应直接连接 Hosted MCP：
+公开接入文档位于 `/doc`，并为 OpenClaw、Hermes、Codex、Claude Code 和
+WorkBuddy 提供独立 URL。登录后的 `/account/connections` 只提供一键复制给 AI
+的接入提示词、OAuth 授权状态和 API Key 管理，不再铺开安装命令。支持浏览器
+OAuth 的客户端应直接连接 Hosted MCP：
 
 ```bash
 codex mcp add attention --url http://127.0.0.1:3000/mcp

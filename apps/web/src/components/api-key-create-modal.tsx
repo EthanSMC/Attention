@@ -1,6 +1,8 @@
 "use client";
 
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef } from "react";
+
+import { TransientFeedback, useTransientFeedback } from "./transient-feedback";
 
 export function ApiKeyCreateModal({
   busy,
@@ -31,7 +33,7 @@ export function ApiKeyCreateModal({
   const revealWarningRef = useRef<HTMLParagraphElement>(null);
   const dismissibleRef = useRef(stage === "naming" && !busy);
   const onCancelRef = useRef(onCancel);
-  const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const { feedback, showFeedback } = useTransientFeedback();
 
   useEffect(() => {
     dismissibleRef.current = stage === "naming" && !busy;
@@ -98,9 +100,9 @@ export function ApiKeyCreateModal({
     if (!secret) return;
     try {
       await navigator.clipboard.writeText(secret);
-      setCopyStatus("密钥已复制。请把它保存到你的 Agent 或密码管理器中。");
+      showFeedback("密钥已复制。请把它保存到你的 Agent 或密码管理器中。");
     } catch {
-      setCopyStatus("复制失败，请手动选择并复制密钥。");
+      showFeedback("复制失败，请手动选择并复制密钥。", "error");
     }
   }
 
@@ -194,7 +196,6 @@ export function ApiKeyCreateModal({
               <span>完整密钥</span>
               <code>{secret}</code>
             </div>
-            <p aria-live="polite" className="api-key-modal__copy-status">{copyStatus}</p>
             <div className="api-key-modal__actions">
               <button
                 className="button button--primary"
@@ -211,6 +212,7 @@ export function ApiKeyCreateModal({
           </div>
         )}
       </section>
+      <TransientFeedback feedback={feedback} />
     </div>
   );
 }

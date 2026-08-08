@@ -1,12 +1,12 @@
 # Attention V1 产品设计
 
-状态：收藏与内容部分已确认；身份、会员、MCP 鉴权、Channel 绑定与增长部分已被 2026-08-04 设计取代
+状态：历史收藏切片；身份、会员、MCP 鉴权、Channel 绑定、增长和第一版范围均已被后续文档取代
 
 日期：2026-07-31
 
-首个交付切片：多来源收藏工具
+历史首个交付切片：多来源收藏工具
 
-> 2026-08-04 更新：账号注册登录、Guest/Free/Member 权限、公开流预览限制、Local/Cloud、OAuth、Hosted MCP、Channel、订阅体验与裂变机制，现以 [`2026-08-04-attention-identity-membership-growth-design.md`](./2026-08-04-attention-identity-membership-growth-design.md) 为准。本文件中与其冲突的角色表、游客访问范围、API Key-only 接入和“支付不在 V1”描述仅保留为首个收藏切片的历史上下文。
+> 2026-08-07 更新：第一版范围统一以 [`docs/first-release-scope.md`](../../first-release-scope.md) 为准；账号、Guest/Free/Member、公开流预览限制、Local/Cloud、OAuth、Hosted MCP、订阅体验与裂变机制以 [`2026-08-04-attention-identity-membership-growth-design.md`](./2026-08-04-attention-identity-membership-growth-design.md) 为准。本文件中关于官方 Hosted Agent、企业微信/公众号 Hosted Channel、网页对话和托管采集编排的段落均为历史/长期设计，不代表第一版产品面。
 
 ## 1. 一句话定义
 
@@ -23,7 +23,7 @@ Attention 不与微信收藏、文件传输助手或浏览器书签比“保存�
 3. 收藏者不需要补写“为什么值得看”，系统自行完成来源识别、摘要、标签与归类。
 4. 内容仍然归原站承载，Attention 只保存链接和必要的派生信息。
 
-V1 只做 AI 一个 Domain，先证明下面这条闭环：
+本历史切片只做 AI 一个 Domain，先证明下面这条闭环；当前第一版的完整范围见 [`docs/first-release-scope.md`](../../first-release-scope.md)：
 
 `发送链接或平台分享文案 → 自动识别真实内容 → 收藏成功 → 生成卡片 → 进入公开瀑布流或私人收藏 → Email/MCP 再发现`
 
@@ -38,9 +38,9 @@ V1 只做 AI 一个 Domain，先证明下面这条闭环：
 - 让会员通过搜索、筛选、Email 和 MCP 找回有用内容。
 - 为每条公开内容分别记录过滤后的原文跳转量与 AI 检索返回量。
 
-### 3.2 首个交付切片目标
+### 3.2 历史收藏切片目标
 
-第一阶段交付一个可实际使用的收藏纵向切片，不等待 Email 和 MCP 上线：
+这组目标用于解释早期收藏实现，不再代表当前第一版完整交付范围；当前第一版另外包含账号、Email 登录、OAuth/MCP、本地 Agent 接入和会员权益：
 
 1. Web 入口可接收原始链接和整段平台分享文案。
 2. 正确识别输入中的目标链接和来源。
@@ -63,7 +63,7 @@ V1 不做：
 - 评论、关注、私信等社交能力。
 - 全文阅读器、原文缓存、付费墙绕过或原站图片搬运。
 - 基于全文的完整问答。
-- 在线支付、真实分账与提现。
+- 真实支付商、真实分账与提现；当前第一版只保留订阅/权益边界和可替换 billing adapter。
 - 以 AI 相似度自动合并两条内容。
 
 ## 4. 核心概念
@@ -78,7 +78,7 @@ Collection 是“某个用户收藏了某条 Content”的关系，包含公开�
 
 ### 4.3 Filter
 
-Filter 是受邀的公开供给者。其收藏默认公开，但可在微信回执或 Web 中切换为私密。稳定网名即可，不要求实名。
+Filter 是受邀的公开供给者。其收藏默认公开，但可在 Web 中切换为私密；早期微信回执属于历史 Channel 草图，不是第一期入口。稳定网名即可，不要求实名。
 
 ### 4.4 Domain
 

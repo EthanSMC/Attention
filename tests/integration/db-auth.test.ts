@@ -73,7 +73,6 @@ import {
   loadDigestSettings,
   updateDigestSettings,
 } from "../../apps/web/src/server/digest-settings";
-import type { DigestSettingsError } from "../../apps/web/src/server/digest-settings";
 import {
   updateAccountProfile,
   updateAttentionId,
@@ -326,7 +325,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     return { collection, content };
   }
 
-  it("creates a Free account only after email verification and allows private collection", async () => {
+  it("creates a Member account only after email verification and allows private collection", async () => {
     const challenge = await createLoginChallenge(handle.db, {
       email: "  NEW.User@Example.com ",
       requesterFingerprint: "a".repeat(64),
@@ -354,7 +353,20 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     expect(storedAccount?.stableHandle).toMatch(/^user-\d{9}$/u);
 
     const principal = await resolveSession(handle.db, verified.session.token, { touch: false });
-    expect(principal).toMatchObject({ isFilter: false, isMember: false });
+    expect(principal).toMatchObject({ isFilter: false, isMember: true });
+    const [signupEntitlement] = await handle.db
+      .select({
+        endsAt: entitlements.endsAt,
+        memberEnabled: entitlements.memberEnabled,
+        source: entitlements.source,
+      })
+      .from(entitlements)
+      .where(eq(entitlements.accountId, verified.accountId));
+    expect(signupEntitlement).toMatchObject({
+      endsAt: null,
+      memberEnabled: true,
+      source: "signup",
+    });
     const returningNow = new Date(Date.now() + 61_000);
     const returningChallenge = await createLoginChallenge(handle.db, {
       email: "new.user@example.com",
@@ -832,7 +844,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       resources: oauthResources,
     })).rejects.toMatchObject({ code: "invalid_grant" });
     const oauthPrincipal = await resolveOAuthAccessToken(handle.db, pair.accessToken, { audience: "attention-mcp" });
-    expect(oauthPrincipal).toMatchObject({ accountId: verified.accountId, isMember: false });
+    expect(oauthPrincipal).toMatchObject({ accountId: verified.accountId, isMember: true });
     await revokeOAuthClientConnection(handle.db, verified.accountId, client.clientId);
     expect(await resolveOAuthAccessToken(handle.db, pair.accessToken, { audience: "attention-mcp" })).toBeNull();
     expect(await resolveSession(handle.db, verified.session.token, { touch: false })).not.toBeNull();
@@ -1916,7 +1928,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
   });
 
-  it("does not backfill Free historical collections after a later membership upgrade", async () => {
+  it("does not backfill historical collections after a later membership upgrade", async () => {
     const challenge = await createLoginChallenge(handle.db, {
       email: "free-enrichment@example.com",
     });
@@ -1925,8 +1937,19 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       challengeId: challenge.challengeId,
       code: challenge.code,
     });
+    // This fixture represents a legacy account that has explicitly lost its
+    // baseline signup entitlement; new registrations are Members by default.
+    await handle.db
+      .update(entitlements)
+      .set({ memberEnabled: false })
+      .where(
+        and(
+          eq(entitlements.accountId, verified.accountId),
+          eq(entitlements.source, "signup"),
+        ),
+      );
     const principal = await resolveSession(handle.db, verified.session.token, { touch: false });
-    if (!principal) throw new Error("Expected a Free principal");
+    if (!principal || principal.isMember) throw new Error("Expected a non-member legacy fixture");
     const response = await collectFromWeb(handle.db, principal, {
       idempotency_key: "free-enrichment-history",
       raw_input: "https://example.org/free-enrichment-history",
@@ -3568,25 +3591,24 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       await runtimeHandle.close();
     }
 
-    const freeChallenge = await createLoginChallenge(handle.db, {
-      email: "digest-free@example.com",
+    const memberChallenge = await createLoginChallenge(handle.db, {
+      email: "digest-member@example.com",
     });
-    const free = await verifyLoginChallenge(handle.db, {
+    const member = await verifyLoginChallenge(handle.db, {
       acceptTerms: true,
-      challengeId: freeChallenge.challengeId,
-      code: freeChallenge.code,
+      challengeId: memberChallenge.challengeId,
+      code: memberChallenge.code,
     });
-    await expect(
-      updateDigestSettings(handle.db, free.accountId, {
+    await expect(updateDigestSettings(handle.db, member.accountId, {
         domainSlugs: ["ai"],
         enabled: true,
         timezone: "Asia/Shanghai",
         windowMinutes: 60,
         windowStart: "08:00",
-      }),
-    ).rejects.toMatchObject<Partial<DigestSettingsError>>({
-      code: "digest_entitlement_required",
-    });
+      })).resolves.toMatchObject({
+        enabled: true,
+        domains: [{ active: true, slug: "ai" }],
+      });
   });
 
   it("collects and replays idempotently through the non-owner Web runtime role", async () => {

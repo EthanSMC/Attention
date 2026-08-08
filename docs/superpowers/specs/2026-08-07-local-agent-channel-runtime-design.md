@@ -4,9 +4,11 @@
 
 确认日期：2026-08-07
 
+本页服从 [`第一版范围`](../../first-release-scope.md)。这里的“支持微信 / iLink”指支持用户自己的 Agent 在本地承载渠道；不表示 Attention 提供 Hosted Agent、企业微信客服或公众号消息入口。
+
 ## 1. 目标
 
-Attention 第一期不建设官方 Hosted Agent。用户继续使用自己的 Agent，Attention 先提供统一的 Skill、Hosted MCP、账号授权与 Local Channel Runtime 基础设施。
+Attention 第一期不建设官方 Hosted Agent。用户继续使用自己的 Agent，Attention 提供统一的 Skill、Hosted MCP、账号授权与 Local Channel Runtime 基础设施，使支持 iLink 的本地 Agent 可以把微信消息交给自己的 Agent 处理。
 
 一期必须覆盖：
 
@@ -17,7 +19,7 @@ Attention 第一期不建设官方 Hosted Agent。用户继续使用自己的 Ag
 - WorkBuddy；
 - 后续遵循同一 Adapter Contract 的本地 Agent。
 
-一期可验收结果是：五类 Agent 都能按其真实宿主能力加载或配置 Attention Skill/MCP，并完成账号授权与业务调用。微信入站能力按“外部宿主可用 / 实验性宿主能力 / Attention Adapter 仅有协议 / 宿主管理但不可验证”分别标注，不能把基础协议写成已经交付的 Channel。
+一期可验收结果是：五类 Agent 都能按其真实宿主能力加载或配置 Attention Skill/MCP，并完成账号授权与业务调用；支持 iLink 的本地 Agent 可以按宿主文档完成本地渠道配置。微信入站能力按“外部宿主可用 / 实验性宿主能力 / Attention Adapter 仅有协议 / 宿主管理但不可验证”分别标注，不能把基础协议写成 Attention 已托管的 Channel。
 
 第一期 Web 不展示“托管 Channel”或本地微信连接状态；只展示 Agent 配置入口、真实命令、文档链接和授权凭证。只有本地 Reporter/Adapter 实际发布并完成端到端验证后，后续版本才可以展示连接状态。
 
@@ -106,13 +108,13 @@ iLink long-poll
 → 回复 iLink
 ```
 
-该 Companion 目前是 `contract_only`，尚未交付，不能声称关闭 Codex 后仍能接收消息。
+该 Companion 仍是 `contract_only`，Attention 不把它写成已经交付的后台服务；本期 Codex Desktop/CLI 的 Skill/MCP 交互接入是支持范围，关闭客户端后的微信唤醒只有在用户自行运行一个兼容的本地 bridge 时才成立。
 
 Claude Code `>= 2.1.80` 另有实验性的 MCP Channels：自定义 stdio Channel 只能向一个正在运行的 CLI 会话推送消息。它不是 Desktop 唤醒机制。稳定的常驻 Claude Agent SDK 方案需要用户自带 Anthropic API Key（或受支持云平台凭证），不能复用 claude.ai Pro/Max OAuth 或额度；这一方案也尚未交付。
 
 ### 4.3 Desktop 支持边界
 
-- Codex Desktop 与 CLI 可交互使用 Attention Skill/MCP；未来 Companion 只使用官方 Codex SDK，不依赖实验性的 app-server 作为稳定产品接口。
+- Codex Desktop 与 CLI 可交互使用 Attention Skill/MCP；本地 iLink bridge 只由用户设备运行，未来实现只使用官方 Codex SDK，不依赖实验性的 app-server 作为稳定产品接口。
 - Claude Code 的交互式 Skill/MCP 与 Desktop 入站是两回事。Claude Channels 只作用于正在运行的 CLI；Desktop 入站不支持。
 - Desktop 不是 Channel Owner。iLink token 仍由 native host 或 `attention-channel` 持有，并且不得进入 Desktop、模型上下文或 Attention 服务端。
 - Web 和安装器必须区分“Desktop 已配置”和“微信 Runtime 正在运行”，不能把前者显示成后者。

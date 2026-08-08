@@ -15,6 +15,10 @@ Attention 是一个“人筛选，AI 整理”的收藏与公开信息层：用�
 
 设置页面的目标是让用户快速理解自己的账号状态，并完成低风险、可逆的管理动作：修改公开身份、维护登录安全、查看订阅状态、管理日报和连接授权。页面不应把支付、授权或复杂配置隐藏在模糊的入口中。
 
+## First-release boundary
+
+第一版范围以 [`docs/first-release-scope.md`](docs/first-release-scope.md) 为准：Web 提供公开发现、登录注册、注册即 Member 的私密收藏、Filter 公开供给和内容管理；用户自己的 Agent 通过公开 Skill、Hosted MCP、OAuth/API Key 和本地 iLink Runtime 接入。Attention 第一版不托管 Agent、模型、企业微信客服或公众号 Channel，Web 也不展示 Hosted Channel 状态。
+
 ## Brand Personality
 
 安静、可靠、克制。
