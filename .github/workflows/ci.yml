@@ -100,6 +100,9 @@ jobs:
       - name: Verify generated Agent installation artifacts
         run: pnpm agent-installations:check
 
+      - name: Verify generated standalone CLI artifact
+        run: pnpm cli-artifact:check
+
       - name: Verify generated capability artifacts
         run: pnpm capabilities:check
 
