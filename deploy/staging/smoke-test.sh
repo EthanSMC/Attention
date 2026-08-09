@@ -23,7 +23,7 @@ check_health() {
 }
 
 check_installation_assets() {
-  local origin=$1 label=$2 bundle_path relative expected actual
+  local origin=$1 label=$2 bundle_path cli_artifact_path relative expected actual
   bundle_path=$(python3 - "$ATTENTION_REPO_ROOT/apps/web/public/skills/attention/installations/v1/agents/workbuddy.json" <<'PY'
 import json
 import sys
@@ -36,8 +36,22 @@ if not isinstance(path, str) or not path.startswith("/skills/attention/bundles/"
 print(path)
 PY
   )
+  cli_artifact_path=$(python3 - "$ATTENTION_REPO_ROOT/apps/web/public/cli/manifest.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    manifest = json.load(source)
+path = manifest["artifact_path"]
+if not isinstance(path, str) or not path.startswith("/cli/attention-") or not path.endswith(".mjs"):
+    raise SystemExit("invalid Attention CLI artifact path")
+print(path)
+PY
+  )
 
   for relative in \
+    "/cli/manifest.json" \
+    "$cli_artifact_path" \
     "/skills/attention/SKILL.md" \
     "/skills/attention/INSTALL.md" \
     "/skills/attention/capabilities/v1/index.json" \
@@ -58,7 +72,7 @@ PY
       return 1
     }
   done
-  echo "ok: $label Agent installation assets"
+  echo "ok: $label Agent and CLI installation assets"
 }
 
 check_health "http://127.0.0.1:9199/api/health"
