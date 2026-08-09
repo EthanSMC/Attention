@@ -130,7 +130,7 @@ describe("public Agent installation artifacts", () => {
     expect(agentInstallationCatalog.skill.document_sha256).toBe(
       ATTENTION_SKILL_DOCUMENT_SHA256,
     );
-    expect(ATTENTION_SKILL_PACKAGE_VERSION).toBe("1.3.0");
+    expect(ATTENTION_SKILL_PACKAGE_VERSION).toBe("1.4.0");
     expect(ATTENTION_SKILL_TOOL_CONTRACT_VERSION).toBe("1.3.0");
     expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe(
       ATTENTION_SKILL_TOOL_CONTRACT_VERSION,
@@ -159,7 +159,7 @@ describe("public Agent installation artifacts", () => {
     expect(guide).toMatch(/WorkBuddy[\s\S]*no supported channel-binding status API/u);
     expect(guide).toMatch(/~\/\.agents\/skills\/attention\/SKILL\.md/u);
     expect(guide).toMatch(/~\/\.claude\/skills\/attention\/SKILL\.md/u);
-    expect(guide).toMatch(/schema:\s*`2\.2\.0`[\s\S]*six separate/u);
+    expect(guide).toMatch(/schema:\s*`2\.3\.0`[\s\S]*six separate/u);
     expect(guide).toMatch(/## Schema 2\.2 migration[\s\S]*mcp\.setup_mode/u);
     expect(guide).toMatch(/iLink token[\s\S]*remain\s+local/u);
   });

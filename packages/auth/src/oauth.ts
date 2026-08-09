@@ -115,6 +115,22 @@ export class OAuthError extends Error {
   }
 }
 
+/**
+ * A public OAuth client registration quota was exhausted.
+ *
+ * This is deliberately separate from OAuthError: the submitted client
+ * metadata is valid and callers should retry later instead of changing it.
+ */
+export class OAuthRegistrationRateLimitError extends Error {
+  readonly retryAfterSeconds: number;
+
+  constructor(retryAfterSeconds = 60 * 60) {
+    super("oauth_registration_rate_limited");
+    this.name = "OAuthRegistrationRateLimitError";
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
 function normalizeResourceUri(value: string): string {
   let url: URL;
   try {
@@ -571,7 +587,7 @@ export async function registerPublicOAuthClient(
       Number(recent?.value ?? 0) >= globalHourlyLimit ||
       Number(recentForSource?.value ?? 0) >= sourceHourlyLimit
     ) {
-      throw new OAuthError("invalid_request");
+      throw new OAuthRegistrationRateLimitError();
     }
     const clientId = `att_${randomUUID()}`;
     await tx.insert(oauthClients).values({

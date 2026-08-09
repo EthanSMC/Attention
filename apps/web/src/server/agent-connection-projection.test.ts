@@ -137,16 +137,43 @@ describe("Agent connection public projection", () => {
         ]),
       ),
     ).toMatchObject({
-      "claude-code": "2.1.186",
+      "claude-code": "2.1.226",
       openclaw: "2026.5.12",
       workbuddy: "4.8.2",
     });
   });
 
-  it("does not expose a remote channel or claim a WeChat connection state", () => {
+  it("exposes channel setup without hosted-channel or connection-state claims", () => {
     const publicCopy = JSON.stringify(connections);
+    // Local bridge setup copy is allowed; hosted-channel framing and any
+    // connection-state claim remain forbidden.
     expect(publicCopy).not.toMatch(
-      /Hosted Channel|托管 Channel|微信|Channel|channels|inbound/u,
+      /Hosted Channel|托管 Channel|微信已连接|渠道已连接|已绑定|绑定成功|已验证|连接成功|最后在线|connection state/u,
     );
+
+    for (const id of ["codex", "claude-code"] as const) {
+      const setup = connections.find((connection) => connection.id === id)
+        ?.channelSetup;
+      expect(setup).not.toBeNull();
+      expect(setup?.command).toBe(
+        `attention channel start ${id} --origin https://attention.example --background`,
+      );
+      expect(setup?.command).not.toMatch(/\{attention_origin\}/u);
+      expect(setup?.prerequisites.length ?? 0).toBeGreaterThan(0);
+    }
+
+    for (const id of ["openclaw", "hermes"] as const) {
+      const setup = connections.find((connection) => connection.id === id)
+        ?.channelSetup;
+      expect(setup).not.toBeNull();
+      expect(setup?.command).toBeNull();
+    }
+
+    const workbuddySetup = connections.find(
+      (connection) => connection.id === "workbuddy",
+    )?.channelSetup;
+    expect(workbuddySetup).not.toBeNull();
+    expect(workbuddySetup?.command).toBeNull();
+    expect(workbuddySetup?.detail).toMatch(/无法验证/u);
   });
 });

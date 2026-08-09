@@ -14,18 +14,18 @@ import { CHANNEL_RUNTIME_SCOPES } from "./channel-runtime";
  * observable-claim capabilities. The public `/v1/` path is the first product
  * release catalog, not the JSON schema major version.
  */
-export const AGENT_INSTALLATION_MANIFEST_SCHEMA_VERSION = "2.2.0" as const;
-export const ATTENTION_SKILL_PACKAGE_VERSION = "1.3.0" as const;
+export const AGENT_INSTALLATION_MANIFEST_SCHEMA_VERSION = "2.3.0" as const;
+export const ATTENTION_SKILL_PACKAGE_VERSION = "1.4.0" as const;
 export const ATTENTION_SKILL_TOOL_CONTRACT_VERSION = "1.3.0" as const;
 
 export const ATTENTION_SKILL_PUBLIC_PATH =
   "/skills/attention/SKILL.md" as const;
 export const ATTENTION_SKILL_DOCUMENT_SHA256 =
-  "b0a0b73436d1172633932d72e1a1f20baa32dfbc88732400037ca0b075c829ee" as const;
+  "b642849b94e893159db6763885b3636d1810ee74641a5dc39b8f47443d8c98eb" as const;
 export const ATTENTION_WORKBUDDY_SKILL_BUNDLE_PUBLIC_PATH =
-  "/skills/attention/bundles/attention-workbuddy-1.3.0.zip" as const;
+  "/skills/attention/bundles/attention-workbuddy-1.4.0.zip" as const;
 export const ATTENTION_WORKBUDDY_SKILL_BUNDLE_SHA256 =
-  "a9151767dc7b06106d0b6dc91024f670ccd76b9adba03d50ac45cc0c7e09fad8" as const;
+  "fdc294e8e5f4921629db2b64cc7f79fd39aa5e4f82db1836344da90088055b01" as const;
 export const ATTENTION_WORKBUDDY_SKILL_BUNDLE_SKILL_PATH =
   "SKILL.md" as const;
 export const ATTENTION_INSTALL_GUIDE_PUBLIC_PATH =
@@ -220,6 +220,7 @@ export const AgentInstallationProfileSchema = z
           "host_native",
           "codex_sdk_companion",
           "claude_channel_preview",
+          "attention_channel_bridge",
           "none",
         ]),
         minimum_version: z.string().min(1).nullable(),
@@ -647,8 +648,8 @@ export const AgentInstallationCatalogSchema = z
       .length(AGENT_INTEGRATION_IDS.length),
     migration: z
       .object({
-        from_schema: z.literal("2.1.0"),
-        guide_anchor: z.literal("#schema-22-migration"),
+        from_schema: z.literal("2.2.0"),
+        guide_anchor: z.literal("#schema-23-migration"),
       })
       .strict(),
     release_stage: z.literal("infrastructure_only"),
@@ -760,11 +761,21 @@ const baseSteps: readonly AgentInstallationStep[] = [
 
 const HOST_DETAILS = {
   "claude-code": {
-    channelDocs: "https://code.claude.com/docs/en/channels",
+    channelDocs: null,
     channelPackage: null,
-    channelSetupCommands: [] as AgentCommandTemplate[],
-    inboundDocs: "https://code.claude.com/docs/en/channels-reference",
-    compatibilityMinimumVersion: "2.1.186",
+    channelSetupCommands: [
+      command(
+        "attention",
+        "channel",
+        "start",
+        "claude-code",
+        "--origin",
+        "{attention_origin}",
+        "--background",
+      ),
+    ] as AgentCommandTemplate[],
+    inboundDocs: null,
+    compatibilityMinimumVersion: "2.1.226",
     compatibilityChecks: [] as AgentCommandTemplate[],
     mcp: {
       add: command(
@@ -805,8 +816,18 @@ const HOST_DETAILS = {
   codex: {
     channelDocs: null,
     channelPackage: null,
-    channelSetupCommands: [] as AgentCommandTemplate[],
-    inboundDocs: "https://learn.chatgpt.com/docs/codex-sdk",
+    channelSetupCommands: [
+      command(
+        "attention",
+        "channel",
+        "start",
+        "codex",
+        "--origin",
+        "{attention_origin}",
+        "--background",
+      ),
+    ] as AgentCommandTemplate[],
+    inboundDocs: null,
     compatibilityMinimumVersion: null,
     compatibilityChecks: [
       command("codex", "mcp", "add", "--help"),
@@ -1065,7 +1086,7 @@ function createInstallSteps(
 
   if (integration.channel.mode === "bridge") {
     steps.push({
-      availability: "contract_only",
+      availability: integration.channel.availability,
       credential_target: "none",
       executor: "attention_installer",
       id: "configure_restricted_profile",
@@ -1104,7 +1125,8 @@ function createInstallSteps(
 
   if (
     integration.inbound.engine === "codex_sdk_companion" ||
-    integration.inbound.engine === "claude_channel_preview"
+    integration.inbound.engine === "claude_channel_preview" ||
+    integration.inbound.engine === "attention_channel_bridge"
   ) {
     steps.push({
       availability: integration.inbound.availability,
@@ -1278,9 +1300,14 @@ export const agentInstallationCatalog: AgentInstallationCatalog =
       manifest_path: `/skills/attention/installations/v1/agents/${id}.json`,
     })),
     migration: {
-      from_schema: "2.1.0",
-      guide_anchor: "#schema-22-migration",
+      from_schema: "2.2.0",
+      guide_anchor: "#schema-23-migration",
     },
+    /**
+     * `infrastructure_only` describes Attention's hosted surface: the catalog
+     * still ships no Hosted Agent or Hosted Channel UI. The local
+     * attention-channel bridge (schema 2.3.0) runs on the user's device.
+     */
     release_stage: "infrastructure_only",
     schema_version: AGENT_INSTALLATION_MANIFEST_SCHEMA_VERSION,
     skill: {

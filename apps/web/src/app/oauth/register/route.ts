@@ -1,6 +1,7 @@
 import {
   fingerprintLoginRequester,
   OAuthError,
+  OAuthRegistrationRateLimitError,
   registerPublicOAuthClient,
   resolveOAuthClientAllowedScopes,
 } from "@attention/auth";
@@ -69,6 +70,14 @@ export async function handleOAuthRegistrationRequest(
     if (error instanceof TrustedClientSourceError) {
       console.error("trusted_client_source_unavailable", { route: "oauth_register" });
       return noStoreJson({ error: "temporarily_unavailable" }, { status: 503 });
+    }
+    if (error instanceof OAuthRegistrationRateLimitError) {
+      const response = noStoreJson(
+        { error: "temporarily_unavailable" },
+        { status: 429 },
+      );
+      response.headers.set("Retry-After", String(error.retryAfterSeconds));
+      return response;
     }
     const code =
       error instanceof InvalidRequestBodyError ||

@@ -34,10 +34,10 @@ describe("agent integration capability manifest", () => {
     }
 
     expect(getAgentIntegration("codex")).toMatchObject({
-      channel: { availability: "contract_only" },
+      channel: { availability: "available" },
       inbound: {
-        availability: "contract_only",
-        engine: "codex_sdk_companion",
+        availability: "available",
+        engine: "attention_channel_bridge",
       },
       interactive: { availability: "available", mcp: "available" },
     });
@@ -106,7 +106,7 @@ describe("agent integration capability manifest", () => {
     });
   });
 
-  it("keeps Codex Desktop interactive-only until a companion ships", () => {
+  it("keeps Codex Desktop interactive-only while the bridge owns inbound", () => {
     expect(getAgentIntegration("codex")).toMatchObject({
       desktop: {
         inbound: "unsupported",
@@ -116,13 +116,15 @@ describe("agent integration capability manifest", () => {
         visible_session: "not_applicable",
       },
       inbound: {
-        availability: "contract_only",
-        engine: "codex_sdk_companion",
+        availability: "available",
+        engine: "attention_channel_bridge",
+        requires_running_cli: true,
+        stable_alternative: null,
       },
     });
   });
 
-  it("marks Claude Channels experimental and Desktop inbound unsupported", () => {
+  it("ships the Attention channel bridge for Claude Code inbound", () => {
     expect(getAgentIntegration("claude-code")).toMatchObject({
       desktop: {
         inbound: "unsupported",
@@ -131,16 +133,34 @@ describe("agent integration capability manifest", () => {
         visible_session: "not_applicable",
       },
       inbound: {
-        availability: "experimental",
-        engine: "claude_channel_preview",
-        minimum_version: "2.1.80",
+        availability: "available",
+        engine: "attention_channel_bridge",
+        minimum_version: null,
         requires_running_cli: true,
-        stable_alternative: {
-          availability: "contract_only",
-          engine: "claude_agent_sdk_byo_key",
-          requires_byo_api_key: true,
-        },
+        stable_alternative: null,
       },
     });
+  });
+
+  it("requires the bridge engine to be available on a bridge channel", () => {
+    const valid = getAgentIntegration("codex");
+    expect(() => AgentIntegrationSchema.parse(valid)).not.toThrow();
+
+    const degraded = {
+      ...valid,
+      inbound: { ...valid.inbound, availability: "contract_only" },
+    };
+    expect(() => AgentIntegrationSchema.parse(degraded)).toThrow(
+      /Attention channel bridge is available/u,
+    );
+
+    const nativeMismatch = {
+      ...valid,
+      channel: { ...valid.channel, mode: "native", owner: "openclaw" },
+      security: { ...valid.security, restricted_profile_required: false },
+    };
+    expect(() => AgentIntegrationSchema.parse(nativeMismatch)).toThrow(
+      /Attention channel bridge is available/u,
+    );
   });
 });

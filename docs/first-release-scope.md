@@ -67,4 +67,5 @@
 - [`docs/architecture.md`](./architecture.md)：当前与长期架构边界。
 - [`docs/handoffs/mcp-web-capability-parity.md`](./handoffs/mcp-web-capability-parity.md)：Web/MCP 能力等价与安全例外。
 - [`docs/superpowers/specs/2026-08-07-local-agent-channel-runtime-design.md`](./superpowers/specs/2026-08-07-local-agent-channel-runtime-design.md)：本地 Agent、iLink 与 Runtime 基础设施。
+- [`docs/local-agent-wechat-device-acceptance.md`](./local-agent-wechat-device-acceptance.md)：Codex / Claude Code 的真机微信首版验收清单。
 - [`docs/superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md`](./superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md)：账号、权益和增长机制。

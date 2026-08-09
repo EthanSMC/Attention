@@ -56,7 +56,7 @@ describe("Agent configuration plans", () => {
     ).toBe(true);
   });
 
-  it("renders Codex MCP commands without claiming inbound delivery", () => {
+  it("renders Codex MCP commands and the shipped bridge boundary", () => {
     const plan = buildConfigurePlan({
       hostId: "codex",
       origin: "https://attention.example",
@@ -74,7 +74,22 @@ describe("Agent configuration plans", () => {
     });
     expect(plan.skillDirectory).toBe("/tmp/attention skill");
     expect(plan.stageSkill).toBe(true);
-    expect(plan.inboundBoundary).toMatch(/not shipped/);
+    expect(plan.profile.inbound.engine).toBe("attention_channel_bridge");
+    expect(plan.inboundBoundary).toMatch(/attention-channel bridge/u);
+    expect(plan.inboundBoundary).toMatch(/attention channel start codex/u);
+    expect(plan.channelCommands).toEqual([
+      {
+        args: [
+          "channel",
+          "start",
+          "codex",
+          "--origin",
+          "https://attention.example",
+          "--background",
+        ],
+        executable: "attention",
+      },
+    ]);
   });
 
   it("uses host-appropriate Skill install and staging locations", () => {
@@ -119,14 +134,15 @@ describe("Agent configuration plans", () => {
     expect(plan.inboundBoundary).toMatch(/cannot observe|not the local WeChat/);
   });
 
-  it("identifies Claude Channels as experimental and CLI-bound", () => {
+  it("identifies Claude Code inbound as the shipped attention-channel bridge", () => {
     const plan = buildConfigurePlan({
       hostId: "claude-code",
       origin: "https://attention.example",
     });
-    expect(plan.profile.inbound.availability).toBe("experimental");
-    expect(plan.inboundBoundary).toMatch(/experimental/);
-    expect(plan.inboundBoundary).toMatch(/running CLI/);
+    expect(plan.profile.inbound.availability).toBe("available");
+    expect(plan.profile.inbound.engine).toBe("attention_channel_bridge");
+    expect(plan.inboundBoundary).toMatch(/attention-channel bridge/u);
+    expect(plan.inboundBoundary).toMatch(/attention channel start claude-code/u);
   });
 
   it("keeps Hermes discovery-first OAuth setup in the user's interactive terminal", async () => {
@@ -194,10 +210,10 @@ describe("Skill staging and apply", () => {
   it.each([
     {
       document: validSkillDocument.replace(
-        "Skill version: `1.3.0`",
+        "Skill version: `1.4.0`",
         "Skill version: `1.2.0`",
       ),
-      expectedError: /Skill version mismatch.*expected 1\.3\.0.*received 1\.2\.0/i,
+      expectedError: /Skill version mismatch.*expected 1\.4\.0.*received 1\.2\.0/i,
       name: "Skill package version",
     },
     {

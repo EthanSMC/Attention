@@ -73,6 +73,12 @@ describe("public Agent installation guide", () => {
     expect(prompt).toContain("识别你当前运行的 Agent 宿主");
     expect(prompt).toContain("只进入对应宿主的独立文档");
     expect(prompt).toContain("attention_get_my_account");
+    expect(prompt).toContain("微信接入");
+    expect(prompt).toContain("attention channel start");
+    expect(prompt).toContain("--background");
+    expect(prompt).toContain("扫码");
+    expect(prompt).toContain("发送一条真实链接");
+    expect(prompt).toContain("我的收藏");
     expect(prompt).not.toMatch(/API Key：|token：/u);
   });
 });

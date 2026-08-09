@@ -148,8 +148,49 @@ export function AgentInstallDocument({
           )}
         </section>
 
+        {connection.channelSetup ? (
+          <section className="agent-doc-section" id="channel">
+            <p className="agent-doc-section__eyebrow">
+              {connection.channelSetup.command ? "步骤 3" : "微信接入"}
+            </p>
+            <h2>微信接入</h2>
+            <p>{connection.channelSetup.detail}</p>
+            {connection.channelSetup.command ? (
+              <div className="agent-resource-list">
+                <div className="agent-resource-row">
+                  <div>
+                    <span>启动本机桥</span>
+                    <code>{connection.channelSetup.command}</code>
+                  </div>
+                  <button
+                    onClick={() =>
+                      copy(connection.channelSetup?.command ?? "", "启动桥命令")
+                    }
+                    type="button"
+                  >
+                    复制
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {connection.channelSetup.prerequisites.length ? (
+              <ul className="agent-doc-prerequisites">
+                {connection.channelSetup.prerequisites.map((prerequisite) => (
+                  <li key={prerequisite}>{prerequisite}</li>
+                ))}
+              </ul>
+            ) : null}
+            <p className="agent-manual-setup-note">
+              首次启动会显示二维码，用手机微信扫码一次即可；凭据只保存在本机，Attention
+              不显示也不验证微信连接状态。
+            </p>
+          </section>
+        ) : null}
+
         <section className="agent-doc-section" id="verify">
-          <p className="agent-doc-section__eyebrow">步骤 3</p>
+          <p className="agent-doc-section__eyebrow">
+            {connection.channelSetup ? "步骤 4" : "步骤 3"}
+          </p>
           <h2>用真实工具调用验收</h2>
           <div className="agent-acceptance-step">
             <div><span>在 Agent 中调用</span><code>{connection.acceptance.toolName}</code></div>

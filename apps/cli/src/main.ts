@@ -5,6 +5,11 @@ import {
 } from "@attention/contracts";
 
 import {
+  channelLogout,
+  channelStart,
+  channelStatus,
+} from "./channel/channel-command";
+import {
   type ApplyConfigureOptions,
   type ApplyResult,
   applyConfigurePlan,
@@ -34,6 +39,14 @@ export interface AttentionCliDependencies {
   ) => Promise<readonly ApplyResult[]>;
   readonly environment?: NodeJS.ProcessEnv;
   readonly output?: OutputWriter;
+  readonly runChannel?: (input: {
+    readonly action: "logout" | "start" | "status";
+    readonly background: boolean;
+    readonly hostId: string | null;
+    readonly json: boolean;
+    readonly origin?: string;
+    readonly service: boolean;
+  }) => Promise<number>;
   readonly runDoctorChecks?: (
     input: DoctorInput,
   ) => Promise<readonly DiagnosticCheck[]>;
@@ -41,12 +54,14 @@ export interface AttentionCliDependencies {
 
 interface ParsedOptions {
   readonly apply: boolean;
+  readonly background: boolean;
   readonly forceSkill: boolean;
   readonly json: boolean;
   readonly login: boolean;
   readonly origin: string | undefined;
   readonly positionals: readonly string[];
   readonly probe: boolean;
+  readonly service: boolean;
   readonly skillDirectory: string | undefined;
 }
 
@@ -57,17 +72,31 @@ Usage:
   attention configure <host> --origin <https-origin> [--skill-dir <path>]
                       [--apply] [--login] [--force-skill] [--json]
   attention doctor <host> --origin <https-origin> [--probe] [--json]
+  attention channel start <codex|claude-code> --origin <https-origin>
+                          [--background]
+  attention channel status [--json]
+  attention channel logout
 
 Hosts:
   openclaw  hermes  codex  claude-code  workbuddy
+
+Channel:
+  attention channel start runs the local attention-channel bridge: after a
+  one-time QR scan it polls WeChat through the official iLink API and
+  invokes the selected host Agent in a restricted profile (Attention MCP
+  only; shell, code execution, filesystem write, and other MCP denied).
+  Sending a link or share text into that WeChat conversation collects it.
+  OpenClaw, Hermes, and WorkBuddy use their host-managed WeChat channels
+  instead; see attention configure <host> output and /doc/<host>.
 
 Safety:
   configure is a dry run by default. --apply installs, stages, or downloads
   the public Skill according to the host manifest and runs declared MCP
   commands without a shell. WorkBuddy import remains an explicit UI step.
   OAuth is started only when --apply --login is explicit. Local iLink tokens
-  are never requested, uploaded, or printed. This release does not ship an
-  Attention iLink companion for Codex or Claude.
+  are never requested, uploaded, or printed: the channel bridge stores them
+  under ~/.attention/channel/ on this device and does not report to the
+  Attention service.
 
 Origin:
   Pass --origin or set ATTENTION_ORIGIN. Non-loopback origins must use HTTPS.
@@ -76,21 +105,25 @@ Origin:
 function parseOptions(args: readonly string[]): ParsedOptions {
   const positionals: string[] = [];
   let apply = false;
+  let background = false;
   let forceSkill = false;
   let json = false;
   let login = false;
   let origin: string | undefined;
   let probe = false;
+  let service = false;
   let skillDirectory: string | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (!argument) continue;
     if (argument === "--apply") apply = true;
+    else if (argument === "--background") background = true;
     else if (argument === "--force-skill") forceSkill = true;
     else if (argument === "--json") json = true;
     else if (argument === "--login") login = true;
     else if (argument === "--probe") probe = true;
+    else if (argument === "--service") service = true;
     else if (argument === "--origin" || argument === "--skill-dir") {
       const value = args[index + 1];
       if (!value || value.startsWith("--")) {
@@ -115,12 +148,14 @@ function parseOptions(args: readonly string[]): ParsedOptions {
 
   return {
     apply,
+    background,
     forceSkill,
     json,
     login,
     origin,
     positionals,
     probe,
+    service,
     skillDirectory,
   };
 }
@@ -141,12 +176,14 @@ function rejectConfigureOnlyOptions(
 ): void {
   if (
     options.apply ||
+    options.background ||
     options.forceSkill ||
     options.login ||
+    options.service ||
     options.skillDirectory
   ) {
     throw new Error(
-      `${command} does not accept --apply, --login, --force-skill, or --skill-dir.`,
+      `${command} does not accept channel or configure-only options.`,
     );
   }
 }
@@ -286,7 +323,9 @@ function formatConfigurePlan(
   );
   if (plan.channelCommands.length > 0) {
     lines.push(
-      "  Host-owned channel handoff (shown for reference; configure never executes these):",
+      plan.profile.channel.mode === "bridge"
+        ? "  WeChat inbound via the local attention-channel bridge (run after configure --apply --login):"
+        : "  Host-owned channel handoff (shown for reference; configure never executes these):",
       ...plan.channelCommands.map((command) => `    ${formatInvocation(command)}`),
     );
   } else {
@@ -368,8 +407,10 @@ export async function runAttentionCli(
     }
 
     if (command === "configure") {
-      if (options.probe) {
-        throw new Error("configure does not accept --probe; use attention doctor.");
+      if (options.probe || options.background || options.service) {
+        throw new Error(
+          "configure does not accept --probe, --background, or --service; use attention doctor or channel start.",
+        );
       }
       if (options.positionals.length !== 1) {
         throw new Error("Usage: attention configure <host> --origin <https-origin>");
@@ -418,8 +459,11 @@ export async function runAttentionCli(
         plan.skillInstallCommand?.executable ??
         null;
       const checks = await doctor({
-        hostId,
+        ...(plan.profile.inbound.engine === "attention_channel_bridge"
+          ? { bridgePreflight: { hostId } }
+          : {}),
         compatibilityInvocations: plan.compatibilityCheckCommands,
+        hostId,
         loginInvocation: plan.loginCommand,
         mcpUrl: plan.mcpUrl,
         minimumVersion:
@@ -437,10 +481,103 @@ export async function runAttentionCli(
       return doctorExitCode(checks);
     }
 
+    if (command === "channel") {
+      if (
+        options.apply ||
+        options.forceSkill ||
+        options.login ||
+        options.probe ||
+        options.skillDirectory
+      ) {
+        throw new Error(
+          "channel does not accept --apply, --login, --probe, --force-skill, or --skill-dir.",
+        );
+      }
+      const action = options.positionals[0];
+      const runChannel = dependencies.runChannel ?? defaultRunChannel;
+      if (action === "start") {
+        const hostId = options.positionals[1];
+        if (!hostId || options.positionals.length > 2) {
+          throw new Error(
+            "Usage: attention channel start <codex|claude-code>",
+          );
+        }
+        const origin = requireAttentionOrigin(
+          options.origin,
+          dependencies.environment ?? process.env,
+        );
+        return await runChannel({
+          action: "start",
+          background: options.background,
+          hostId,
+          json: options.json,
+          origin,
+          service: options.service,
+        });
+      }
+      if (action === "status") {
+        if (
+          options.positionals.length > 1 ||
+          options.background ||
+          options.service
+        ) {
+          throw new Error("Usage: attention channel status [--json]");
+        }
+        return await runChannel({
+          action: "status",
+          background: false,
+          hostId: null,
+          json: options.json,
+          service: false,
+        });
+      }
+      if (action === "logout") {
+        if (
+          options.positionals.length > 1 ||
+          options.json ||
+          options.background ||
+          options.service
+        ) {
+          throw new Error("Usage: attention channel logout");
+        }
+        return await runChannel({
+          action: "logout",
+          background: false,
+          hostId: null,
+          json: false,
+          service: false,
+        });
+      }
+      throw new Error(
+        "Usage: attention channel <start <codex|claude-code>|status|logout>",
+      );
+    }
+
     throw new Error(`Unknown command: ${String(command)}.`);
   } catch (error) {
     output.error(error instanceof Error ? error.message : "Attention CLI failed.");
     output.error("Run attention --help for usage.");
     return 2;
   }
+}
+
+async function defaultRunChannel(input: {
+  readonly action: "logout" | "start" | "status";
+  readonly background: boolean;
+  readonly hostId: string | null;
+  readonly json: boolean;
+  readonly origin?: string;
+  readonly service: boolean;
+}): Promise<number> {
+  if (input.action === "start" && input.hostId) {
+    return await channelStart(input.hostId, {
+      background: input.background,
+      ...(input.origin ? { origin: input.origin } : {}),
+      service: input.service,
+    });
+  }
+  if (input.action === "status") {
+    return await channelStatus({ json: input.json });
+  }
+  return await channelLogout();
 }

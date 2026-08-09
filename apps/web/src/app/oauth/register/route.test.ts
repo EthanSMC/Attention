@@ -23,7 +23,93 @@ function registrationDatabase(inserted: Array<Record<string, unknown>>): Attenti
   } as unknown as AttentionDatabase;
 }
 
+function rateLimitedRegistrationDatabase(): AttentionDatabase {
+  let selection = 0;
+  const transaction = {
+    execute: async () => undefined,
+    insert: () => ({ values: async () => undefined }),
+    select: () => ({
+      from: () => ({
+        where: async () => {
+          selection += 1;
+          return [{ value: selection === 1 ? 0 : 10 }];
+        },
+      }),
+    }),
+  };
+  return {
+    transaction: async <T>(callback: (tx: typeof transaction) => Promise<T>) =>
+      callback(transaction),
+  } as unknown as AttentionDatabase;
+}
+
 describe("OAuth dynamic registration request limits", () => {
+  it("accepts the exact metadata emitted by Codex CLI", async () => {
+    vi.stubEnv(
+      "ATTENTION_HMAC_SECRET",
+      "attention-registration-test-secret-at-least-32-characters",
+    );
+    const inserted: Array<Record<string, unknown>> = [];
+    try {
+      const response = await handleOAuthRegistrationRequest(
+        new Request("https://attention.example/oauth/register", {
+          body: JSON.stringify({
+            application_type: "native",
+            client_name: "Codex",
+            grant_types: ["authorization_code", "refresh_token"],
+            redirect_uris: [
+              "http://127.0.0.1:56046/callback/Ui-hkzeEt_FU",
+            ],
+            response_types: ["code"],
+            scope:
+              "profile:read collection:read collection:write digest:read digest:write moderation:write moderation:court:read moderation:court:vote public:read public:full ai:search subscription:read",
+            token_endpoint_auth_method: "none",
+          }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        }),
+        registrationDatabase(inserted),
+      );
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toMatchObject({
+        application_type: "native",
+        client_name: "Codex",
+        token_endpoint_auth_method: "none",
+      });
+      expect(inserted).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("reports registration quota exhaustion as retryable instead of invalid metadata", async () => {
+    vi.stubEnv(
+      "ATTENTION_HMAC_SECRET",
+      "attention-registration-test-secret-at-least-32-characters",
+    );
+    vi.stubEnv("ATTENTION_OAUTH_REGISTRATION_SOURCE_HOURLY_LIMIT", "10");
+    try {
+      const response = await handleOAuthRegistrationRequest(
+        new Request("https://attention.example/oauth/register", {
+          body: JSON.stringify({
+            client_name: "Codex",
+            redirect_uris: ["http://127.0.0.1:56046/callback/random"],
+          }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        }),
+        rateLimitedRegistrationDatabase(),
+      );
+      expect(response.status).toBe(429);
+      expect(response.headers.get("retry-after")).toBe("3600");
+      await expect(response.json()).resolves.toEqual({
+        error: "temporarily_unavailable",
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("fails closed in production when ingress source identity is not configured", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER", "");

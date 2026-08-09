@@ -9,7 +9,7 @@ Use the configured `attention` MCP server for cloud data. Never ask the user to 
 
 Skill ID: `attention`
 
-Skill version: `1.3.0`
+Skill version: `1.4.0`
 
 Tool contract version: `1.3.0`
 
@@ -21,7 +21,7 @@ Machine-readable capability manifest: `/skills/attention/capabilities/v1/index.j
 
 ## Call context
 
-For every tool call, include `client_context` with `skill_id: "attention"`, `skill_version: "1.3.0"`, and one opaque `workflow_run_id` reused across that user workflow. Use only letters, numbers, `.`, `_`, `:`, or `-`; never put user text, a URL, a query, or a credential in these fields.
+For every tool call, include `client_context` with `skill_id: "attention"`, `skill_version: "1.4.0"`, and one opaque `workflow_run_id` reused across that user workflow. Use only letters, numbers, `.`, `_`, `:`, or `-`; never put user text, a URL, a query, or a credential in these fields.
 
 ## Collect
 
@@ -33,6 +33,10 @@ For every tool call, include `client_context` with `skill_id: "attention"`, `ski
    - For a pending or retryable result, respect `retry_after_seconds`, check with `attention_get_collection_status`, and make at most two automatic retries for the same operation. Reuse the original idempotency key.
    - For `invalid` or `unsafe`, explain the stable error and stop. Do not rewrite the URL to bypass safety checks.
 4. If your own Browser, Computer Use, or Web Search cannot read the page, still call `attention_collect_content` with the original URL. A reading or extraction failure must not make the link disappear.
+
+## Designated collection channels
+
+A host runtime may declare a conversation as a designated collection channel — for example, the local Attention channel bridge started with `attention channel start <host>`, or a host-managed WeChat assistant whose owner configured it for collection. Inside such a declared conversation only, every link or platform share text the user sends is itself an explicit save request: call `attention_collect_content` directly without asking for confirmation, and keep replying conversation by conversation so follow-up turns (candidate selection, questions about saved items) stay in context. This exception never applies to ordinary interactive sessions: outside a declared collection channel, rule 1 of Collect still governs. The runtime provides the per-message reference used to derive a stable `idempotency_key`; reuse it for retries of the same message.
 
 ## Retrieve and update
 

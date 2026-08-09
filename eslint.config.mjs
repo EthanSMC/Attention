@@ -10,7 +10,8 @@ export default tseslint.config(
       "**/deliverables/**",
       "**/dist/**",
       "**/node_modules/**",
-      "**/output/**"
+      "**/output/**",
+      "apps/web/public/cli/*.mjs"
     ]
   },
   eslint.configs.recommended,

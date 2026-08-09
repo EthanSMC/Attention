@@ -135,6 +135,9 @@ export function renderCommandTemplate(
 }
 
 function describeInboundBoundary(profile: AgentInstallationProfile): string {
+  if (profile.inbound.engine === "attention_channel_bridge") {
+    return `${profile.display_name} Skill/MCP is available for interactive use. Inbound WeChat is provided by the local attention-channel bridge: run \`attention channel start ${profile.id} --background\` after \`attention configure ${profile.id} --apply --login\`. The bridge keeps the iLink credential on this device, invokes ${profile.display_name} in a restricted Attention-only profile, and does not report channel state to Attention.`;
+  }
   if (profile.inbound.engine === "codex_sdk_companion") {
     return `${profile.display_name} Skill/MCP is available for interactive use. Inbound WeChat requires the planned Codex SDK companion (${profile.inbound.availability}), which is not shipped in this release.`;
   }

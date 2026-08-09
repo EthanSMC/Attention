@@ -1,7 +1,7 @@
 # Install Attention in a user-owned Agent
 
 Status: first-release infrastructure contract
-Catalog schema: `2.2.0`
+Catalog schema: `2.3.0`
 
 Attention does **not** provide a Hosted Agent or a Hosted Channel UI in this
 release. The Agent and every WeChat/iLink credential remain on the user's
@@ -73,8 +73,8 @@ placeholders.
 |---|---|---|---|---|
 | OpenClaw | available | external Tencent `openclaw-weixin` plugin | host-native, OpenClaw `>= 2026.5.12` for the current plugin | MCP only; Runtime reporter is contract-only |
 | Hermes Agent | available | native Hermes Gateway | host-native gateway | MCP only; Runtime reporter is contract-only |
-| Codex | available in CLI/Desktop | planned local `attention-channel` | Codex SDK companion is contract-only | MCP only |
-| Claude Code | available in Code/Desktop surfaces | unshipped local adapter | CLI Channels are experimental and require a running CLI | MCP only |
+| Codex | available in CLI/Desktop | local `attention-channel` bridge shipped with the Attention CLI | the bridge polls iLink and invokes Codex in a restricted profile; the Codex SDK companion remains a future alternative | MCP only; the bridge does not report to the Runtime in this release |
+| Claude Code | available in Code/Desktop surfaces | local `attention-channel` bridge shipped with the Attention CLI | the bridge polls iLink and invokes headless Claude Code in a restricted profile | MCP only; the bridge does not report to the Runtime in this release |
 | WorkBuddy | Skill bundle and MCP available in `>= 4.8.2` | WorkBuddy UI | host-managed | MCP only; channel state is unverifiable |
 
 No manifest claims that Attention knows a user's real WeChat identity. The
@@ -155,8 +155,8 @@ WeChat assistant and uploading a local Skill bundle through its UI. Attention
 publishes the uploadable bundle at:
 
 ```text
-{attention_origin}/skills/attention/bundles/attention-workbuddy-1.3.0.zip
-SHA-256: a9151767dc7b06106d0b6dc91024f670ccd76b9adba03d50ac45cc0c7e09fad8
+{attention_origin}/skills/attention/bundles/attention-workbuddy-1.4.0.zip
+SHA-256: fdc294e8e5f4921629db2b64cc7f79fd39aa5e4f82db1836344da90088055b01
 ```
 
 The archive contains `SKILL.md` directly at its root, as required by Tencent's
@@ -181,6 +181,38 @@ Runtime OAuth client, no MCP-event workaround, and no Attention-side “WeChat
 connected” claim for WorkBuddy. The WorkBuddy UI is the only channel-status
 surface in this release.
 
+## Install the Attention CLI
+
+Codex and Claude Code use the local Attention CLI for verified setup and the
+WeChat/iLink bridge. The CLI is published as a single executable ESM bundle on
+the same HTTPS origin as this document. The current version, required Node.js
+version, artifact path, and SHA-256 digest are machine-readable at:
+
+```text
+{attention_origin}/cli/manifest.json
+```
+
+An Agent installing it must perform these steps in order:
+
+1. Confirm the installed Node.js version satisfies the manifest's `node`
+   requirement (`>= 22.16.0` for the first release).
+2. Download the manifest and the exact `artifact_path` over HTTPS into
+   temporary files. Do not pipe downloaded bytes into a shell or interpreter.
+3. Compute SHA-256 locally and compare it with `manifest.sha256`. Abort without
+   replacing an existing installation if it differs.
+4. Install the verified `.mjs` under a user-owned data directory and create a
+   user-owned `attention` launcher that invokes it with Node.js.
+5. Run `attention --help`, then continue with the selected host's configure,
+   OAuth, acceptance, and WeChat steps below.
+
+For macOS / Linux, use `shasum -a 256` or `sha256sum` and install the launcher
+under `~/.local/bin` (or another existing user-owned PATH directory). For
+Windows PowerShell, use `Get-FileHash -Algorithm SHA256`, keep the `.mjs` under
+`$env:LOCALAPPDATA\Attention`, and create an `attention.cmd` launcher in a
+user-owned PATH directory. Never request administrator access merely to install
+Attention, and never overwrite a verified working version before the new
+artifact passes SHA-256 validation.
+
 ## Codex CLI and Desktop
 
 Codex CLI and Desktop can use the same local Skill/MCP configuration. The
@@ -200,11 +232,21 @@ Windows:       %USERPROFILE%\.agents\skills\attention\SKILL.md
 Codex Desktop is available on macOS and Windows; this Desktop platform list
 is separate from the broader Codex CLI platform list.
 
-A Skill does not create a persistent message listener. The proposed local
-`attention-channel` process would own iLink polling and invoke Codex through
-the official Codex SDK in an isolated profile. That companion is
-`contract_only`: it is not shipped, and an inbound message is not guaranteed
-to appear as a visible Desktop conversation.
+A Skill does not create a persistent message listener. WeChat inbound is
+provided by the local `attention-channel` bridge shipped with the Attention
+CLI:
+
+```text
+attention channel start codex --origin {attention_origin} --background
+```
+
+The bridge runs on the user's machine, owns iLink polling after a one-time
+QR scan, and invokes `codex exec` in a restricted profile that allows only
+the Attention MCP. It is a local process, not an Attention-hosted service:
+`--background` installs a current-user service after the explicit first QR
+scan, so closing the terminal does not stop inbound delivery. An inbound
+message is not guaranteed to appear as a visible Desktop conversation. A future Codex SDK
+companion remains a separate `contract_only` design alternative.
 
 The restricted profile template is published at:
 
@@ -224,12 +266,21 @@ sessions. The ordinary Claude Desktop Chat MCP configuration in
 `claude_desktop_config.json` is separate and must not be described as the same
 connection. The Code tab is available on macOS, Windows, and Linux beta.
 
-The interactive Attention MCP path requires Claude Code `>= 2.1.186` for the
-documented `claude mcp login attention` command. Claude Code Channels
-(`>= 2.1.80`) are a separate research-preview CLI feature: a custom stdio
-Channel can push messages only while a compatible CLI session is already
-running. It is not a supported Desktop wake-up mechanism, and the Attention
-iLink Channel adapter has not shipped.
+The restricted bridge path requires Claude Code `>= 2.1.226` for the
+documented OAuth command plus `--safe-mode` and strict per-invocation MCP
+configuration. WeChat inbound is provided
+by the local `attention-channel` bridge shipped with the Attention CLI:
+
+```text
+attention channel start claude-code --origin {attention_origin} --background
+```
+
+The bridge owns iLink polling after a one-time QR scan and invokes headless
+Claude Code (`claude -p`) in a restricted tool set that allows only the
+Attention MCP. Claude Code Channels (`>= 2.1.80`) remain a separate
+research-preview host feature: a custom stdio Channel can push messages only
+while a compatible CLI session is already running, and it is not a supported
+Desktop wake-up mechanism.
 
 Save the downloaded Skill at Claude Code's personal Skill scope:
 
@@ -247,6 +298,52 @@ An always-on Claude Agent SDK companion is a separate stable design option,
 but third-party use requires the user's own Anthropic API credential (or an
 approved cloud provider credential). It cannot reuse claude.ai Pro/Max OAuth
 or credits. This alternative remains `contract_only`.
+
+## WeChat inbound via the Attention channel bridge
+
+For Codex and Claude Code, the `attention-channel` bridge is the supported
+path from WeChat into the user's own Agent. The bridge ships inside the
+Attention CLI and never runs on Attention servers.
+
+Prerequisites:
+
+- A phone with WeChat iOS `>= 8.0.70` or Android `>= 8.0.69` and the
+  ClawBot (龙虾) plugin enabled.
+- A completed interactive installation: `attention configure <host> --apply
+  --login` (Skill installed, MCP configured, OAuth authorized).
+- The host CLI (`codex` or `claude`) reachable on PATH.
+
+Start:
+
+```text
+attention channel start <host> --origin {attention_origin} --background
+```
+
+The first run renders a QR code. Scan it with the phone that has ClawBot
+enabled; the login state is stored locally so later runs do not need a new
+scan. Once the login is persisted, `--background` installs a current-user
+LaunchAgent, systemd user unit, or Windows logon task. It never installs a
+root service. The bridge then listens only for the account that scanned the code.
+Sending a link or platform share text into that WeChat conversation is an
+explicit save request: the bridge invokes the host Agent in a restricted
+profile, the Agent calls `attention_collect_content`, and the reply appears
+in the same conversation. Multi-turn exchanges (candidate selection,
+questions about saved items) continue in the same host session.
+`attention channel status` prints local facts only; `attention channel
+logout` stops/removes the background service and deletes the local iLink
+state. If iLink expires, the service exits without opening an unattended QR
+prompt; rerun the same `--background` command in a terminal.
+
+Privacy boundary for the bridge:
+
+- The iLink token, sync cursor, and context tokens stay in
+  `~/.attention/channel/` on the user's device with restrictive permissions;
+  they are never uploaded to Attention.
+- The iLink bot identifier is not an Attention identity and is never used
+  for login, entitlements, or global identity.
+- Bridge logs omit tokens and full message bodies.
+- The bridge does not register with the Local Channel Runtime in this
+  release, so the Attention service and Web cannot observe bridge state.
 
 ## Final acceptance
 
@@ -353,3 +450,25 @@ public URL as proof of installation. Consumers moving from `2.1.0` should:
   installation is usable; configuration-only probes are not acceptance; and
 - treat `install_steps[].executor: "user"` as an explicit boundary, not an
   automation failure.
+
+## Schema 2.3 migration
+
+Schema `2.3.0` ships the local `attention-channel` bridge for Codex and
+Claude Code. Consumers moving from `2.2.0` should:
+
+- read `inbound.engine: "attention_channel_bridge"` as a shipped local
+  bridge that the Attention CLI starts with
+  `attention channel start <host> --background`; it is no longer a future contract for
+  these two hosts;
+- read the bridge activation command from
+  `channel.setup_command_templates`;
+- keep `claims.can_confirm_channel_pairing` false and `runtime_reporting`
+  unchanged: the bridge does not use the Runtime API in this release, so no
+  connection state is confirmable server-side;
+- note that the bridge restricted profile still denies shell, code
+  execution, filesystem write, browser automation, and arbitrary MCP, and
+  does not inherit the user's normal working directory or session history;
+- keep treating `codex_sdk_companion` and `claude_channel_preview` as
+  valid engine values for future or host-managed alternatives; and
+- read Skill `1.4.0` "Designated collection channels" for the conversation
+  semantics the bridge declares (tool contract version remains `1.3.0`).

@@ -28,6 +28,11 @@ export interface DiagnosticCheck {
 }
 
 export interface DoctorInput {
+  /** Set when the host inbound ships via the local attention-channel bridge. */
+  readonly bridgePreflight?: {
+    readonly baseDirectory?: string;
+    readonly hostId: AgentIntegrationId;
+  };
   readonly compatibilityInvocations: readonly CommandInvocation[];
   readonly fetchImpl?: typeof fetch;
   readonly hostId: AgentIntegrationId;
@@ -635,10 +640,53 @@ async function checkConfiguredMcp(
   };
 }
 
+/**
+ * Reports locally observable bridge facts only: whether an iLink login state
+ * exists on this device. It never reads or prints credentials, and it never
+ * claims a server-side "WeChat connected" state.
+ */
+async function checkChannelBridgePreflight(input: {
+  readonly baseDirectory?: string;
+  readonly hostId: AgentIntegrationId;
+}): Promise<DiagnosticCheck> {
+  const { loadChannelState } = await import("./channel/state");
+  try {
+    const state = await loadChannelState(input.baseDirectory);
+    if (state.token) {
+      return {
+        detail:
+          "An iLink login exists on this device. Start the bridge with " +
+          `\`attention channel start ${input.hostId} --background\`; the credential never leaves the device.`,
+        id: "channel_bridge_preflight",
+        status: "pass",
+        title: "Channel bridge login state",
+      };
+    }
+    return {
+      detail:
+        "No bridge login yet. Run " +
+        `\`attention channel start ${input.hostId} --background\` and scan the QR once; ` +
+        "Attention cannot observe this state server-side.",
+      id: "channel_bridge_preflight",
+      status: "warn",
+      title: "Channel bridge login state",
+    };
+  } catch (error) {
+    return {
+      detail: `Could not read local bridge state: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      id: "channel_bridge_preflight",
+      status: "warn",
+      title: "Channel bridge login state",
+    };
+  }
+}
+
 export async function runDoctor(input: DoctorInput): Promise<readonly DiagnosticCheck[]> {
   const runner = input.runner ?? runCommand;
   const fetchImpl = input.fetchImpl ?? fetch;
-  return await Promise.all([
+  const checks = await Promise.all([
     checkHostVersion(
       input.hostId,
       input.minimumVersion,
@@ -657,6 +705,10 @@ export async function runDoctor(input: DoctorInput): Promise<readonly Diagnostic
       runner,
     ),
   ]);
+  if (input.bridgePreflight) {
+    checks.push(await checkChannelBridgePreflight(input.bridgePreflight));
+  }
+  return checks;
 }
 
 export function doctorExitCode(checks: readonly DiagnosticCheck[]): number {

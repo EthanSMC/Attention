@@ -11,6 +11,8 @@
   "scripts": {
     "agent-installations:check": "pnpm --filter @attention/cli exec tsx ../../scripts/sync-agent-installation-artifacts.ts --check",
     "agent-installations:sync": "pnpm --filter @attention/cli exec tsx ../../scripts/sync-agent-installation-artifacts.ts",
+    "cli-artifact:check": "pnpm --filter @attention/cli build && pnpm --filter @attention/cli exec tsx ../../scripts/sync-attention-cli-artifact.ts --check",
+    "cli-artifact:sync": "pnpm --filter @attention/cli build && pnpm --filter @attention/cli exec tsx ../../scripts/sync-attention-cli-artifact.ts",
     "capabilities:check": "pnpm --filter @attention/cli exec tsx ../../scripts/sync-attention-capability-artifacts.ts --check",
     "capabilities:sync": "pnpm --filter @attention/cli exec tsx ../../scripts/sync-attention-capability-artifacts.ts",
     "dev": "pnpm --filter @attention/web dev",

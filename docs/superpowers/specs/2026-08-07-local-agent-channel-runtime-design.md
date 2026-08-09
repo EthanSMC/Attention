@@ -1,8 +1,8 @@
 # Attention 本地 Agent 与微信 Channel 一期设计
 
-状态：架构边界已校正；一期先交付基础设施与真实的交互式接入
+状态：一期本地桥已交付；服务端 Reporter / Binding 仍为后续基础设施
 
-确认日期：2026-08-07
+最后校正：2026-08-10
 
 本页服从 [`第一版范围`](../../first-release-scope.md)。这里的“支持微信 / iLink”指支持用户自己的 Agent 在本地承载渠道；不表示 Attention 提供 Hosted Agent、企业微信客服或公众号消息入口。
 
@@ -14,12 +14,12 @@ Attention 第一期不建设官方 Hosted Agent。用户继续使用自己的 Ag
 
 - OpenClaw；
 - Hermes Agent；
-- Codex CLI / Codex SDK；
-- Claude Code / Claude Agent SDK；
+- Codex CLI（由 Attention 本地桥受限调用）；
+- Claude Code（由 Attention 本地桥受限调用）；
 - WorkBuddy；
 - 后续遵循同一 Adapter Contract 的本地 Agent。
 
-一期可验收结果是：五类 Agent 都能按其真实宿主能力加载或配置 Attention Skill/MCP，并完成账号授权与业务调用；支持 iLink 的本地 Agent 可以按宿主文档完成本地渠道配置。微信入站能力按“外部宿主可用 / 实验性宿主能力 / Attention Adapter 仅有协议 / 宿主管理但不可验证”分别标注，不能把基础协议写成 Attention 已托管的 Channel。
+一期可验收结果是：五类 Agent 都能按其真实宿主能力加载或配置 Attention Skill/MCP，并完成账号授权与业务调用。OpenClaw、Hermes、WorkBuddy 使用宿主自己的微信能力；Codex 与 Claude Code 使用公开 Attention CLI 内的 `attention-channel` 本地桥。后者支持真实账号工具验收、一次扫码、用户级后台运行、持久化收发队列和同宿主多轮续接，但仍不能写成 Attention 托管或服务端可观测的 Channel。
 
 第一期 Web 不展示“托管 Channel”或本地微信连接状态；只展示 Agent 配置入口、真实命令、文档链接和授权凭证。只有本地 Reporter/Adapter 实际发布并完成端到端验证后，后续版本才可以展示连接状态。
 
@@ -32,7 +32,7 @@ Attention 第一期不建设官方 Hosted Agent。用户继续使用自己的 Ag
 5. iLink Bot 标识不是可信微信登录身份。不得将其用于 Attention 登录、找回账号、发放权益或全局唯一身份。
 6. 同一个 iLink token 同时只能由一个 Channel Owner 轮询。切换 Agent 时先停止旧 Owner，再启用新 Owner。
 7. WorkBuddy 使用其产品内建微信助理；除非官方后续公开协议，不假设或接管其底层 iLink 凭证。
-8. “支持 Codex/Claude Desktop”一期只表示 Desktop 可交互使用同一套 Skill/MCP。Codex Companion 尚未交付；Claude Code Channels 是需要持续运行 CLI 的实验能力，Claude Desktop 不支持入站唤醒。
+8. “支持 Codex/Claude Desktop”一期只表示 Desktop 可交互使用同一套 Skill/MCP。本地桥调用各自 CLI 的 headless 模式，不承诺微信入站会显示成一个 Desktop 会话；Claude Code Channels 仍是另一条实验能力。
 
 ## 3. 统一概念
 
@@ -45,8 +45,8 @@ Attention 第一期不建设官方 Hosted Agent。用户继续使用自己的 Ag
 | OpenClaw | OpenClaw Gateway + 腾讯微信插件 | native |
 | Hermes | Hermes Gateway + Weixin Adapter | native |
 | WorkBuddy | WorkBuddy 内建微信助理 | native |
-| Codex | 规划中的 Attention Local Channel Runtime | bridge |
-| Claude Code | 规划中的 Attention Adapter / 实验性 CLI Channel | bridge |
+| Codex | Attention CLI `attention-channel` | bridge |
+| Claude Code | Attention CLI `attention-channel` | bridge |
 
 ### 3.2 Agent Adapter
 
@@ -96,25 +96,26 @@ OpenClaw 的微信能力来自腾讯外部 `@tencent-weixin/openclaw-weixin` 插
 
 ### 4.2 Bridge 模式
 
-Codex 的规划方案是安装 `attention-channel` 本地服务：
+Codex 与 Claude Code 的已交付方案是公开 Attention CLI 内的
+`attention-channel` 本地桥：
 
 ```text
 iLink long-poll
 → 消息去重与会话映射
 → 受限 Agent Profile
-→ Codex SDK / Claude Agent SDK
+→ 受限 `codex exec` / `claude -p`
 → Attention Skill
 → Attention MCP
 → 回复 iLink
 ```
 
-该 Companion 仍是 `contract_only`，Attention 不把它写成已经交付的后台服务；本期 Codex Desktop/CLI 的 Skill/MCP 交互接入是支持范围，关闭客户端后的微信唤醒只有在用户自行运行一个兼容的本地 bridge 时才成立。
+用户首次在终端执行 `attention channel start <host> --background`：桥先通过宿主真实调用 `attention_get_my_account`，然后由用户扫码 iLink；凭据持久化后安装 macOS LaunchAgent、Linux systemd user unit 或 Windows 登录任务。它不是 root 服务，凭据不上报，登录过期时也不会在无人值守状态弹二维码。收发消息先落本地队列，进程中断后可继续；`channel logout` 同时撤销后台服务和本地 iLink 状态。
 
 Claude Code `>= 2.1.80` 另有实验性的 MCP Channels：自定义 stdio Channel 只能向一个正在运行的 CLI 会话推送消息。它不是 Desktop 唤醒机制。稳定的常驻 Claude Agent SDK 方案需要用户自带 Anthropic API Key（或受支持云平台凭证），不能复用 claude.ai Pro/Max OAuth 或额度；这一方案也尚未交付。
 
 ### 4.3 Desktop 支持边界
 
-- Codex Desktop 与 CLI 可交互使用 Attention Skill/MCP；本地 iLink bridge 只由用户设备运行，未来实现只使用官方 Codex SDK，不依赖实验性的 app-server 作为稳定产品接口。
+- Codex Desktop 与 CLI 可交互使用 Attention Skill/MCP；本地 iLink bridge 只由用户设备运行，并通过受限的 `codex exec` 调用当前已安装 CLI。它不依赖实验性的 app-server，也不承诺生成可见 Desktop 对话。
 - Claude Code 的交互式 Skill/MCP 与 Desktop 入站是两回事。Claude Channels 只作用于正在运行的 CLI；Desktop 入站不支持。
 - Desktop 不是 Channel Owner。iLink token 仍由 native host 或 `attention-channel` 持有，并且不得进入 Desktop、模型上下文或 Attention 服务端。
 - Web 和安装器必须区分“Desktop 已配置”和“微信 Runtime 正在运行”，不能把前者显示成后者。
@@ -152,19 +153,20 @@ not_installed
 
 ## 6. 用户端到端流程
 
-当前一期统一入口只配置 Skill/MCP：
+Web `/account/connections` 只给一个“复制给 AI”的提示词。Agent 阅读公开 `/doc`
+对应宿主文档后：
 
-```bash
-attention configure <agent>
-```
+1. 从公开 manifest 下载并校验 Attention CLI、Skill/Bundle，不依赖源码仓库。
+2. 检测宿主与版本，按宿主真实机制安装 Skill，配置 Hosted MCP 并由用户完成 OAuth。
+3. 必须真实调用 `attention_get_my_account`；本地配置或健康探针不是验收。
+4. Native 宿主按各自官方微信文档操作。Codex / Claude Code 运行：
 
-当前流程：
+   ```bash
+   attention channel start <codex|claude-code> --origin <Attention 地址> --background
+   ```
 
-1. 检测宿主与版本，并选择对应 manifest。
-2. 按宿主真实机制安装 Attention Skill；OpenClaw 使用 Git/本地目录而不是 raw URL，Hermes 可使用 raw URL，WorkBuddy 下载校验公开 ZIP 后由用户在宿主 UI 手动上传，不伪装成自动导入。
-3. 配置 Hosted MCP，完成 MCP OAuth，并验证配置/连接探针。
-4. 输出宿主官方微信入口和状态边界，但不代替宿主扫码、不生成虚假的 Attention 连接状态。
-5. `attention doctor <agent>` 只报告可直接观测的本机事实。
+5. 用户扫码并从微信发送真实链接；只有 MCP 成功且 Web“我的收藏”出现内容才算完成。
+6. `attention doctor`、`channel status` 只报告可直接观测的本机脱敏事实。
 
 未来某个本地 Reporter 发布后，才增加 Runtime OAuth、安装注册、配对挑战、心跳与断开流程。该流程必须使用和 MCP OAuth 分离的 client/audience/token。WorkBuddy 在没有官方状态接口前不进入这条流程，也不复用 MCP 制造“事件驱动心跳”。失败时从最后一个成功步骤继续，不要求整套重装。
 
@@ -239,7 +241,7 @@ MCP 只承担用户意图驱动的 Attention 业务操作。Channel 生命周期
 
 ## 9. 微信触发的受限 Agent Profile
 
-未来交付的 Codex/Claude Bridge 必须使用独立配置：
+当前 Codex/Claude Bridge 使用独立配置：
 
 - 只加载 Attention Skill；
 - 只连接 Attention MCP；
@@ -305,7 +307,7 @@ Local Channel 的宿主配置与本地探针由 CLI/宿主 Agent 完成。服务
 
 ## 11. Manifest 与防漂移
 
-机器可读 Agent Integration Manifest 是 CLI、Skill、Web 和测试的共同真相源。schema `2.0.0` 将能力拆为六个独立轴：
+机器可读 Agent Integration Manifest 是 CLI、Skill、Web 和测试的共同真相源。当前 schema `2.3.0` 将能力拆为六个独立轴，并为本地桥增加明确 engine 与真实工具验收：
 
 ```text
 interactive
@@ -322,7 +324,7 @@ CI 必须验证：
 - Skill 与 Web 显示的支持矩阵来自同一 Manifest；
 - Skill 声明的工具名与 Tool Registry 一致；
 - Native Agent 不被错误展示为由 Attention 托管；
-- Codex/Claude 缺少 Local Runtime 时不能显示“微信已连接”；
+- Codex/Claude 本地桥可用，但没有 Reporter 时仍不能在 Web 显示“微信已连接”；
 - WorkBuddy 不得被赋予虚构的 MCP event、heartbeat 或 identity export；
 - 命令以 `{ executable, args }` 表示，并以 `shell: false` 执行。
 
@@ -331,20 +333,20 @@ CI 必须验证：
 1. 五类 Agent 都有真实的 Skill/MCP 安装路径和清晰支持边界。
 2. OpenClaw/Hermes 给出宿主真实 Channel 命令与本地探针，但不冒充 Attention 已验证状态。
 3. WorkBuddy 只声明宿主管理且不可验证，不生成 Runtime token 或事件。
-4. Codex 交互式 Desktop/CLI 可用，但 Companion 标记为 `contract_only`。
-5. Claude Channels 标记为 `experimental`、需要运行 CLI；Desktop 入站标记为不支持；稳定 SDK 方案明确需要 BYO API Key。
+4. Codex/Claude Code 的 `attention_channel_bridge` 标记为 `available`，并通过公开 CLI 真正运行；独立 SDK Companion 仍为 `contract_only`。
+5. Claude Channels 仍标记为另一条 `experimental` 能力；本地桥不承诺生成 Desktop 可见会话，稳定 SDK 替代方案明确需要 BYO API Key。
 6. Attention Skill、OAuth、Hosted MCP 与账号实时权益在五种 Agent 上语义一致。
 7. Runtime resource、scope、数据模型和端点通过协议测试，但在 Adapter 未交付时 `claims` 保持 false。
 8. 服务端和日志中不存在 iLink token、`context_token` 或不必要聊天原文。
 9. Web 只显示真实配置能力，不显示本地微信已连接状态。
+10. Codex 与 Claude Code 分别通过 [`真机验收清单`](../../local-agent-wechat-device-acceptance.md)，包括后台重启、无损队列、真实分享格式、可见性、续接和退出。
 
 ## 13. 实施顺序
 
-1. schema `2.0.0` 六轴 Agent Manifest 与防过度承诺测试；
-2. 五宿主 Skill/MCP 安装器、doctor、文档和 Web 配置展示；
-3. Local Channel Binding 数据模型、Core service、独立 Runtime OAuth resource 和审计（基础设施）；
-4. 选择并交付第一个真实 Reporter Adapter，再开启 Attention 侧配对/健康状态；
-5. 分别评估 OpenClaw 插件、Hermes Gateway、Codex SDK Companion 与 Claude Channel/SDK；
-6. WorkBuddy 等待官方可验证接口，不制造私有协议；
+1. 已完成：schema `2.3.0` Manifest、防过度承诺测试、五宿主 Skill/MCP 安装器、doctor、公开文档和 Web 简化入口。
+2. 已完成：Codex/Claude Code 本地桥、受限宿主调用、账号验收、持久化收发队列、用户级后台服务和本地退出。
+3. 发布门槛：完成两宿主真机矩阵并保存脱敏证据。
+4. 后续：Local Channel Binding、独立 Runtime OAuth 与第一个真实 Reporter；在此之前 Web 不展示连接状态。
+5. 后续：分别评估 SDK Companion；WorkBuddy 等待官方可验证接口，不制造私有协议。
 7. Reporter 交付后执行 iLink 实机、launchd/systemd、权限与断线恢复 E2E；
 8. 有可验证数据后再实现 Web 三段连接路径。

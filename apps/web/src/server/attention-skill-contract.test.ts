@@ -44,7 +44,7 @@ describe("public Attention Skill contract", () => {
 
     expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe("1.3.0");
     expect(skill).toContain("Skill ID: `attention`");
-    expect(skill).toContain("Skill version: `1.3.0`");
+    expect(skill).toContain("Skill version: `1.4.0`");
     expect(skill).toContain(
       `Tool contract version: \`${ATTENTION_TOOL_CONTRACT_VERSION}\``,
     );

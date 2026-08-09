@@ -31,8 +31,8 @@ describe("Agent installation manifests", () => {
       },
       command_placeholders: AGENT_COMMAND_TEMPLATE_PLACEHOLDERS,
       migration: {
-        from_schema: "2.1.0",
-        guide_anchor: "#schema-22-migration",
+        from_schema: "2.2.0",
+        guide_anchor: "#schema-23-migration",
       },
       release_stage: "infrastructure_only",
       schema_version: AGENT_INSTALLATION_MANIFEST_SCHEMA_VERSION,
@@ -237,18 +237,57 @@ describe("Agent installation manifests", () => {
       shared_skill_mcp: true,
       visible_session: "not_applicable",
     });
-    expect(getAgentInstallationProfile("claude-code").inbound).toMatchObject({
-      availability: "experimental",
-      engine: "claude_channel_preview",
-      requires_running_cli: true,
-      stable_alternative: {
-        engine: "claude_agent_sdk_byo_key",
-        requires_byo_api_key: true,
-      },
-    });
+    for (const id of ["codex", "claude-code"] as const) {
+      expect(getAgentInstallationProfile(id).inbound).toMatchObject({
+        availability: "available",
+        engine: "attention_channel_bridge",
+        requires_running_cli: true,
+        stable_alternative: null,
+      });
+      expect(getAgentInstallationProfile(id).channel).toMatchObject({
+        availability: "available",
+        mode: "bridge",
+        status_evidence: "running_cli_only",
+      });
+      expect(getAgentInstallationProfile(id).install_steps).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            availability: "available",
+            executor: "attention_installer",
+            id: "configure_restricted_profile",
+          }),
+          expect.objectContaining({
+            availability: "available",
+            credential_target: "local_channel",
+            id: "start_inbound",
+          }),
+          expect.objectContaining({
+            availability: "available",
+            credential_target: "local_channel",
+            executor: "user",
+            id: "connect_channel",
+          }),
+        ]),
+      );
+      expect(
+        getAgentInstallationProfile(id).channel.setup_command_templates,
+      ).toEqual([
+        {
+          args: [
+            "channel",
+            "start",
+            id,
+            "--origin",
+            "{attention_origin}",
+            "--background",
+          ],
+          executable: "attention",
+        },
+      ]);
+    }
     expect(getAgentInstallationProfile("claude-code").compatibility).toEqual({
       command_checks: [],
-      minimum_version: "2.1.186",
+      minimum_version: "2.1.226",
       policy: "pinned",
     });
   });

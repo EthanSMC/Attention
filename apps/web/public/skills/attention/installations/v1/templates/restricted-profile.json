@@ -23,5 +23,5 @@
     "include_channel_credentials": false,
     "include_full_message_body": false
   },
-  "schema_version": "2.2.0"
+  "schema_version": "2.3.0"
 }

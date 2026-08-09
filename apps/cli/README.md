@@ -6,19 +6,19 @@
 for user-owned Agents. It also performs read-only diagnostics without reading
 or printing OAuth tokens.
 
-This is an infrastructure installer, **not** a hosted Agent and not an iLink
-companion. It configures the Attention side of a user-owned Agent; any iLink
-credential and local channel process remain on the user's device. In this release:
+This is an infrastructure installer, **not** a hosted Agent. It configures the
+Attention side of a user-owned Agent; any iLink credential and local channel
+process remain on the user's device. In this release:
 
 - OpenClaw and Hermes own their local WeChat gateways through host plugins.
 - WorkBuddy owns its WeChat assistant and provides no public binding-status API
   to Attention.
-- Codex interactive Skill/MCP works, but the planned Codex SDK inbound
-  companion is not shipped.
-- Claude Code interactive Skill/MCP works in Claude Code `>= 2.1.186` and the
-  Claude Desktop Code tab. Claude Channels are a separate experimental feature
-  (`>= 2.1.80`) that requires a running CLI; it cannot awaken an ordinary
-  Desktop Chat session.
+- Codex and Claude Code receive WeChat messages through the local
+  `attention-channel` bridge shipped with this CLI (`attention channel start
+  <host>`). The bridge polls the official iLink API after a one-time QR scan
+  and invokes the host Agent in a restricted Attention-only profile. The
+  bridge runs on the user's machine, never uploads the iLink credential, and
+  does not report channel state to Attention in this release.
 
 Attention never asks for, uploads, or prints a local iLink credential.
 
@@ -94,6 +94,37 @@ browser and then asks which tools to enable. The Attention CLI prints that
 command but never runs it with detached stdin; the user completes it in their
 own terminal.
 
+## WeChat inbound (channel bridge)
+
+For Codex and Claude Code, the bridge turns the WeChat ClawBot conversation
+into a designated Attention collection channel. Prerequisites: a completed
+`attention configure <host> --apply --login` and a phone with WeChat
+iOS `>= 8.0.70` or Android `>= 8.0.69` plus the ClawBot plugin.
+
+```bash
+attention channel start codex --origin https://attention.example.com --background
+# or: attention channel start claude-code --origin https://attention.example.com --background
+```
+
+The first run renders a QR code; scan it once. After account and iLink
+acceptance, `--background` installs a user-owned LaunchAgent, systemd user
+unit, or Windows logon task—never a root service. Sending a link or platform
+share text into the WeChat conversation then invokes the host Agent with only
+the Attention MCP available, collects the content, and replies in the same
+conversation. Follow-up turns continue in the same host session. If the local
+iLink login expires, rerun the same command in a terminal so QR login remains
+an explicit user action.
+
+```bash
+attention channel status [--json]   # local facts only, never credentials
+attention channel logout            # stop background bridge and delete iLink state
+```
+
+State lives under `~/.attention/channel/` with restrictive permissions. The
+bridge does not register with the Local Channel Runtime, so the Attention
+service and Web cannot observe bridge state. `status` reports privacy-safe
+facts from this device only.
+
 ## Diagnose
 
 ```bash
@@ -118,7 +149,9 @@ Doctor checks:
    `auth_status` and Claude Code's connection health);
 7. the declared probe evidence level: saved configuration is not accepted as
    live evidence, health checks do not claim `tools/list`, and a `live_tools`
-   probe must enumerate every tool in the current Attention contract.
+   probe must enumerate every tool in the current Attention contract;
+8. for bridge hosts, whether a local attention-channel login state exists on
+   this device (never the credential itself, never a server-side status).
 
 `--probe` exits non-zero when a host can only prove saved configuration. This
 is intentional: installing an MCP URL is not evidence that OAuth completed or

@@ -14,6 +14,17 @@ export interface AgentConnectionCommand {
   value: string;
 }
 
+/**
+ * Honest, setup-only channel guidance. The bridge runs on the user's device
+ * and does not report to Attention, so this projection must never expose a
+ * connection state — only commands, prerequisites, and boundaries.
+ */
+export interface AgentConnectionChannelSetup {
+  command: string | null;
+  detail: string;
+  prerequisites: readonly string[];
+}
+
 export interface AgentConnectionChecklistStep {
   detail: string;
   title: string;
@@ -35,6 +46,7 @@ export interface AgentConnectionProjection {
     detail: string;
     toolName: string;
   };
+  channelSetup: AgentConnectionChannelSetup | null;
   commands: readonly AgentConnectionCommand[];
   displayName: string;
   id: AgentIntegrationId;
@@ -223,6 +235,42 @@ function profileStatus(
     label: HOST_COPY[profile.id].statusLabel,
     tone: HOST_COPY[profile.id].tone,
   };
+}
+
+function profileChannelSetup(
+  profile: AgentInstallationProfile,
+  commandValues: Record<string, string>,
+): AgentConnectionChannelSetup | null {
+  if (
+    profile.channel.mode === "bridge" &&
+    profile.inbound.engine === "attention_channel_bridge"
+  ) {
+    const template = profile.channel.setup_command_templates[0];
+    return {
+      command: template ? shellCommand(template, commandValues) : null,
+      detail: `本机运行的 attention-channel 桥代替 Attention 接收微信消息，并以受限配置调用 ${profile.display_name}（仅 Attention MCP，禁用 shell、代码执行、文件写入和其他 MCP）。iLink 凭据只保存在你的设备上；桥不向 Attention 上报，此页不展示连接状态。`,
+      prerequisites: [
+        "手机微信 iOS ≥ 8.0.70 或 Android ≥ 8.0.69，并已启用 ClawBot（龙虾）插件",
+        `已完成 attention configure ${profile.id} --apply --login（Skill、MCP、OAuth）`,
+        `本机已安装 ${profile.id === "codex" ? "codex" : "claude"} CLI`,
+      ],
+    };
+  }
+  if (profile.channel.availability === "available_external") {
+    return {
+      command: null,
+      detail: `${profile.display_name} 通过宿主自己的微信渠道完成连接（见下方宿主命令与官方文档）；Attention 只提供 Skill 与 MCP，不接收渠道凭据。`,
+      prerequisites: [],
+    };
+  }
+  if (profile.channel.availability === "host_managed_unverifiable") {
+    return {
+      command: null,
+      detail: `${profile.display_name} 在宿主界面内管理微信助理；Attention 无法验证其连接状态，也不提供连接面板。`,
+      prerequisites: [],
+    };
+  }
+  return null;
 }
 
 function isPublicHttpUrl(value: string): boolean {
@@ -455,6 +503,7 @@ export function projectAgentConnections({
         detail: `在 ${profile.display_name} 中要求 Agent 调用 ${profile.acceptance.tool_name}；只有成功返回当前 Attention 账号信息，才表示 Skill、MCP 与 OAuth 均已可用。查看本地配置不算验收。`,
         toolName: profile.acceptance.tool_name,
       },
+      channelSetup: profileChannelSetup(profile, commandValues),
       commands: [...sourceFreeCommands, ...skillCommands, ...mcpCommands],
       displayName: profile.display_name,
       id,

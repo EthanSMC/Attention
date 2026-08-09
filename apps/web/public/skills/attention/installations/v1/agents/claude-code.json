@@ -5,16 +5,28 @@
     "tool_name": "attention_get_my_account"
   },
   "channel": {
-    "availability": "contract_only",
+    "availability": "available",
     "credentials": "local_device_only",
-    "docs_url": "https://code.claude.com/docs/en/channels",
+    "docs_url": null,
     "hosted_by_attention": false,
     "minimum_version": null,
     "mode": "bridge",
     "owner": "attention-channel",
     "package_ref": null,
     "setup": "attention_cli_qr",
-    "setup_command_templates": [],
+    "setup_command_templates": [
+      {
+        "args": [
+          "channel",
+          "start",
+          "claude-code",
+          "--origin",
+          "{attention_origin}",
+          "--background"
+        ],
+        "executable": "attention"
+      }
+    ],
     "status_evidence": "running_cli_only"
   },
   "claims": {
@@ -25,7 +37,7 @@
   },
   "compatibility": {
     "command_checks": [],
-    "minimum_version": "2.1.186",
+    "minimum_version": "2.1.226",
     "policy": "pinned"
   },
   "desktop": {
@@ -42,17 +54,13 @@
   "display_name": "Claude Code",
   "id": "claude-code",
   "inbound": {
-    "availability": "experimental",
-    "docs_url": "https://code.claude.com/docs/en/channels-reference",
-    "engine": "claude_channel_preview",
-    "minimum_version": "2.1.80",
+    "availability": "available",
+    "docs_url": null,
+    "engine": "attention_channel_bridge",
+    "minimum_version": null,
     "requires_byo_api_key": false,
     "requires_running_cli": true,
-    "stable_alternative": {
-      "availability": "contract_only",
-      "engine": "claude_agent_sdk_byo_key",
-      "requires_byo_api_key": true
-    }
+    "stable_alternative": null
   },
   "install_steps": [
     {
@@ -84,7 +92,7 @@
       "requires_browser": true
     },
     {
-      "availability": "contract_only",
+      "availability": "available",
       "credential_target": "none",
       "executor": "attention_installer",
       "id": "configure_restricted_profile",
@@ -105,14 +113,14 @@
       "requires_browser": false
     },
     {
-      "availability": "contract_only",
+      "availability": "available",
       "credential_target": "local_channel",
       "executor": "user",
       "id": "connect_channel",
       "requires_browser": false
     },
     {
-      "availability": "experimental",
+      "availability": "available",
       "credential_target": "local_channel",
       "executor": "attention_installer",
       "id": "start_inbound",
@@ -209,7 +217,7 @@
     "bundle_skill_path": null,
     "delivery": "host_user_directory",
     "docs_url": "https://code.claude.com/docs/en/skills",
-    "document_sha256": "b0a0b73436d1172633932d72e1a1f20baa32dfbc88732400037ca0b075c829ee",
+    "document_sha256": "b642849b94e893159db6763885b3636d1810ee74641a5dc39b8f47443d8c98eb",
     "format": "skill_md",
     "id": "attention",
     "install": "filesystem_directory",
@@ -224,6 +232,6 @@
     "source_kind": "local_directory",
     "source_path": "/skills/attention/SKILL.md",
     "tool_contract_version": "1.3.0",
-    "version": "1.3.0"
+    "version": "1.4.0"
   }
 }

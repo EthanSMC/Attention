@@ -118,4 +118,142 @@ describe("Attention CLI", () => {
       expect.objectContaining({ id: "oauth_login", status: "pass" }),
     ]);
   });
+
+  it("routes channel start to the bridge runner", async () => {
+    const capture = captureOutput();
+    const calls: Array<Record<string, unknown>> = [];
+    const exitCode = await runAttentionCli(
+      [
+        "channel",
+        "start",
+        "codex",
+        "--origin",
+        "https://attention.example",
+      ],
+      {
+        output: capture.output,
+        runChannel: async (input) => {
+          calls.push({ ...input });
+          return 0;
+        },
+      },
+    );
+    expect(exitCode).toBe(0);
+    expect(calls).toEqual([
+      {
+        action: "start",
+        background: false,
+        hostId: "codex",
+        json: false,
+        origin: "https://attention.example",
+        service: false,
+      },
+    ]);
+  });
+
+  it("routes background channel activation without inventing a third navigation mode", async () => {
+    const capture = captureOutput();
+    const calls: Array<Record<string, unknown>> = [];
+    expect(
+      await runAttentionCli(
+        [
+          "channel",
+          "start",
+          "claude-code",
+          "--origin",
+          "https://attention.example",
+          "--background",
+        ],
+        {
+          output: capture.output,
+          runChannel: async (input) => {
+            calls.push({ ...input });
+            return 0;
+          },
+        },
+      ),
+    ).toBe(0);
+    expect(calls).toEqual([
+      expect.objectContaining({
+        action: "start",
+        background: true,
+        hostId: "claude-code",
+        service: false,
+      }),
+    ]);
+  });
+
+  it("routes channel status and logout", async () => {
+    const capture = captureOutput();
+    const calls: Array<Record<string, unknown>> = [];
+    const runChannel = async (input: {
+      action: string;
+      background: boolean;
+      hostId: string | null;
+      json: boolean;
+      service: boolean;
+    }) => {
+      calls.push({ ...input });
+      return 0;
+    };
+    expect(
+      await runAttentionCli(["channel", "status", "--json"], {
+        output: capture.output,
+        runChannel,
+      }),
+    ).toBe(0);
+    expect(
+      await runAttentionCli(["channel", "logout"], {
+        output: capture.output,
+        runChannel,
+      }),
+    ).toBe(0);
+    expect(calls).toEqual([
+      {
+        action: "status",
+        background: false,
+        hostId: null,
+        json: true,
+        service: false,
+      },
+      {
+        action: "logout",
+        background: false,
+        hostId: null,
+        json: false,
+        service: false,
+      },
+    ]);
+  });
+
+  it("rejects malformed channel usage", async () => {
+    const capture = captureOutput();
+    const runChannel = async () => 0;
+    expect(
+      await runAttentionCli(["channel"], { output: capture.output, runChannel }),
+    ).toBe(2);
+    expect(
+      await runAttentionCli(["channel", "start"], {
+        output: capture.output,
+        runChannel,
+      }),
+    ).toBe(2);
+    expect(
+      await runAttentionCli(["channel", "start", "codex", "--apply"], {
+        output: capture.output,
+        runChannel,
+      }),
+    ).toBe(2);
+    expect(capture.errors.join("\n")).toMatch(
+      /attention channel <start|does not accept --apply/u,
+    );
+  });
+
+  it("documents the channel bridge in help", async () => {
+    const capture = captureOutput();
+    expect(await runAttentionCli(["--help"], { output: capture.output })).toBe(0);
+    const help = capture.logs.join("\n");
+    expect(help).toContain("attention channel start <codex|claude-code>");
+    expect(help).not.toContain("does not ship an Attention iLink companion");
+  });
 });

@@ -1,5 +1,17 @@
 # Attention
 
+## 为什么是 Attention
+
+Attention 解决的是 AI 时代的信息质量与知识沉淀问题。传统内容平台依赖用户交互和分发算法组织信息；当低成本生成内容大量涌入后，重复、空洞却“看似言之有物”的 AI Slop 不断消耗用户的注意力。与此同时，平台中仍然存在真正有思考、有经验、有长期价值的内容，只是它们越来越难被识别和保留下来。
+
+对普通用户（Consumer）而言，Attention 利用真实的人类收藏作为质量信号，帮助用户减少筛选低质量内容的时间，在公开瀑布流中发现经 Filter 判断“值得保留”的信息，并始终回到原作者和原文阅读。
+
+对 Filter 而言，Attention 解决的是优质信息散落和无法复用的问题。过去收藏通常分散在微信文件传输助手、浏览器书签以及不同平台的收藏夹中，之后很难再次找到。Attention 将这些跨平台收藏统一整理为可检索、可管理、可被个人 Agent 调用的知识资产；Filter 也可以通过公开收藏完成一次轻量背书，让自己筛选过的好内容获得再次被看见的机会。
+
+Attention 不试图用 AI 生产更多内容，而是让人的判断成为过滤 AI Slop 的信号，让真正有价值的信息能够被保存、发现和持续利用。
+
+## 当前版本
+
 Attention 是一个“人筛选，AI 整理”的收藏与公开信息层。当前仓库已经形成账号体系首版：Guest 公开预览、邮箱验证码注册/登录、注册即 Member、Filter 公开供给、OAuth + PKCE、API Key、Hosted MCP、云同步、Consumer 裂变、Filter 年卡兑换和续费积分账本都执行真实的服务端身份与权限判断。第一期不提供官方 Hosted Agent 或 Hosted Channel；用户使用自己的 Agent，Attention 交付 Skill、MCP、OAuth 与 Local Channel Runtime 基础设施。
 
 第一期范围以 [`docs/first-release-scope.md`](docs/first-release-scope.md) 为唯一口径。系统架构与 Attention MCP 见 [`docs/architecture.md`](docs/architecture.md)；本地 Agent、Desktop 交互与 iLink Runtime 边界见 [`Local Agent Channel Runtime 设计`](docs/superpowers/specs/2026-08-07-local-agent-channel-runtime-design.md)。当前账号、注册 Member、OAuth、云同步和增长机制的产品决策见 [`账号与会员设计`](docs/superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md)。Web 视觉 token、组件和交互规则见 [`docs/design-system.md`](docs/design-system.md)；机器可读设计基线见 [`DESIGN.md`](DESIGN.md)，产品上下文见 [`PRODUCT.md`](PRODUCT.md)，设置页审查见 [`docs/settings-design-audit.md`](docs/settings-design-audit.md)。

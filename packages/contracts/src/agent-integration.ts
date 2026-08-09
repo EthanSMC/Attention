@@ -86,6 +86,7 @@ export const AgentIntegrationSchema = z
           "host_native",
           "codex_sdk_companion",
           "claude_channel_preview",
+          "attention_channel_bridge",
           "none",
         ]),
         minimum_version: z.string().min(1).nullable(),
@@ -251,6 +252,21 @@ export const AgentIntegrationSchema = z
         path: ["inbound"],
       });
     }
+    if (
+      value.inbound.engine === "attention_channel_bridge" &&
+      (value.inbound.availability !== "available" ||
+        value.channel.mode !== "bridge" ||
+        !value.inbound.requires_running_cli ||
+        value.inbound.requires_byo_api_key ||
+        value.inbound.stable_alternative !== null)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "the shipped Attention channel bridge is available, runs as a local CLI process on a bridge channel, and needs no BYO-key alternative",
+        path: ["inbound"],
+      });
+    }
   });
 
 export type AgentIntegration = z.infer<typeof AgentIntegrationSchema>;
@@ -360,11 +376,11 @@ const manifestInput = [
       can_confirm_wechat_identity: false,
     },
     channel: {
-      availability: "contract_only",
+      availability: "available",
       mode: "bridge",
       owner: "attention-channel",
       setup: "attention_cli_qr",
-      status_evidence: "none",
+      status_evidence: "running_cli_only",
     },
     desktop: {
       inbound: "unsupported",
@@ -376,11 +392,11 @@ const manifestInput = [
     display_name: "Codex",
     id: "codex",
     inbound: {
-      availability: "contract_only",
-      engine: "codex_sdk_companion",
+      availability: "available",
+      engine: "attention_channel_bridge",
       minimum_version: null,
       requires_byo_api_key: false,
-      requires_running_cli: false,
+      requires_running_cli: true,
       stable_alternative: null,
     },
     interactive: {
@@ -408,7 +424,7 @@ const manifestInput = [
       can_confirm_wechat_identity: false,
     },
     channel: {
-      availability: "contract_only",
+      availability: "available",
       mode: "bridge",
       owner: "attention-channel",
       setup: "attention_cli_qr",
@@ -424,16 +440,12 @@ const manifestInput = [
     display_name: "Claude Code",
     id: "claude-code",
     inbound: {
-      availability: "experimental",
-      engine: "claude_channel_preview",
-      minimum_version: "2.1.80",
+      availability: "available",
+      engine: "attention_channel_bridge",
+      minimum_version: null,
       requires_byo_api_key: false,
       requires_running_cli: true,
-      stable_alternative: {
-        availability: "contract_only",
-        engine: "claude_agent_sdk_byo_key",
-        requires_byo_api_key: true,
-      },
+      stable_alternative: null,
     },
     interactive: {
       availability: "available",

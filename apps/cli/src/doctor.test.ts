@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -5,6 +9,7 @@ import {
   ATTENTION_MCP_TOOL_NAMES,
 } from "@attention/contracts";
 
+import { defaultChannelState, saveChannelState } from "./channel/state";
 import type { CommandRunner } from "./command-runner";
 import { doctorExitCode, runDoctor } from "./doctor";
 
@@ -396,5 +401,61 @@ describe("doctor", () => {
       status: "fail",
     });
     expect(doctorExitCode(checks)).toBe(1);
+  });
+
+  it("reports local bridge login state for bridge hosts without secrets", async () => {
+    const stubRunner: CommandRunner = async () => ({
+      exitCode: 0,
+      signal: null,
+      stderr: "",
+      stdout: "ok",
+      timedOut: false,
+    });
+    const fetchImpl = async (): Promise<Response> => jsonResponse({});
+    const run = (baseDirectory?: string) =>
+      runDoctor({
+        bridgePreflight: {
+          ...(baseDirectory ? { baseDirectory } : {}),
+          hostId: "codex",
+        },
+        compatibilityInvocations: [],
+        fetchImpl,
+        hostId: "codex",
+        loginInvocation: null,
+        mcpUrl: "https://attention.example/mcp",
+        minimumVersion: null,
+        probe: false,
+        probeEvidence: "none",
+        probeInvocation: null,
+        runner: stubRunner,
+        versionInvocation: null,
+      });
+
+    const emptyDirectory = await mkdtemp(
+      join(tmpdir(), "attention-doctor-bridge-"),
+    );
+    try {
+      const withoutLogin = await run(emptyDirectory);
+      expect(withoutLogin.find((check) => check.id === "channel_bridge_preflight")).toMatchObject({
+        status: "warn",
+      });
+
+      const state = defaultChannelState();
+      state.token = "secret-token";
+      await saveChannelState(state, emptyDirectory);
+      const withLogin = await run(emptyDirectory);
+      const check = withLogin.find(
+        ({ id }) => id === "channel_bridge_preflight",
+      );
+      expect(check).toMatchObject({ status: "pass" });
+      expect(check?.detail).not.toContain("secret-token");
+      // A missing bridge login must never be reported as a hard failure.
+      expect(
+        withoutLogin.find(({ id }) => id === "channel_bridge_preflight")
+          ?.status,
+      ).not.toBe("fail");
+    } finally {
+      await rm(emptyDirectory, { force: true, recursive: true });
+    }
   });
 });

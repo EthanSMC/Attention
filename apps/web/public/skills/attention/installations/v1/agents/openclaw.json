@@ -226,7 +226,7 @@
     "bundle_skill_path": null,
     "delivery": "host_import_directory",
     "docs_url": "https://github.com/openclaw/openclaw/blob/main/docs/tools/skills.md",
-    "document_sha256": "b0a0b73436d1172633932d72e1a1f20baa32dfbc88732400037ca0b075c829ee",
+    "document_sha256": "b642849b94e893159db6763885b3636d1810ee74641a5dc39b8f47443d8c98eb",
     "format": "skill_md",
     "id": "attention",
     "install": "filesystem_directory",
@@ -250,6 +250,6 @@
     "source_kind": "public_url",
     "source_path": "/skills/attention/SKILL.md",
     "tool_contract_version": "1.3.0",
-    "version": "1.3.0"
+    "version": "1.4.0"
   }
 }

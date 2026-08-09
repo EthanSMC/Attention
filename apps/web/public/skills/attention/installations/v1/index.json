@@ -35,16 +35,16 @@
     }
   ],
   "migration": {
-    "from_schema": "2.1.0",
-    "guide_anchor": "#schema-22-migration"
+    "from_schema": "2.2.0",
+    "guide_anchor": "#schema-23-migration"
   },
   "release_stage": "infrastructure_only",
-  "schema_version": "2.2.0",
+  "schema_version": "2.3.0",
   "skill": {
     "id": "attention",
-    "document_sha256": "b0a0b73436d1172633932d72e1a1f20baa32dfbc88732400037ca0b075c829ee",
+    "document_sha256": "b642849b94e893159db6763885b3636d1810ee74641a5dc39b8f47443d8c98eb",
     "source_path": "/skills/attention/SKILL.md",
     "tool_contract_version": "1.3.0",
-    "version": "1.3.0"
+    "version": "1.4.0"
   }
 }
