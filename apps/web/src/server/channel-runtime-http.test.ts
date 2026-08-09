@@ -4,7 +4,7 @@ import type {
   InstallationView,
 } from "@attention/contracts";
 import type { AttentionDatabase } from "@attention/db";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { OAuthCloudPrincipal } from "./cloud-credentials";
 import {
@@ -24,6 +24,10 @@ import {
   type ChannelRuntimeHttpDependencies,
   type ChannelRuntimeHttpService,
 } from "./channel-runtime-http";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const accountId = "11111111-1111-4111-8111-111111111111";
 const installationId = "22222222-2222-4222-8222-222222222222";
@@ -168,6 +172,7 @@ function registerBody(agentIntegrationId: "openclaw" | "workbuddy" = "openclaw")
 
 describe("channel runtime HTTP authorization", () => {
   it("rejects PAT-shaped credentials and advertises runtime metadata", async () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "");
     const deps = dependencies(service(), null);
     const response = await handleListInstallations(
       new Request("https://attention.example/api/runtime/installations", {

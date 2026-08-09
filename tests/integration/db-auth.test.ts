@@ -97,6 +97,7 @@ import {
   issueFilterAnnualCode,
   loadGrowthDashboard,
   loginWithPassword,
+  OAuthRegistrationRateLimitError,
   prepareConsumerReferralIntent,
   recordPaidSubscriptionBound,
   recordReferralRenewalReversal,
@@ -122,6 +123,7 @@ import {
 } from "@attention/auth";
 import {
   accounts,
+  and,
   apiCredentials,
   castModerationVote,
   collectionEvents,
@@ -188,6 +190,18 @@ const oauthResources = {
 
 describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
   let handle: DatabaseHandle;
+
+  async function disableBaselineMembership(accountId: string): Promise<void> {
+    await handle.db
+      .update(entitlements)
+      .set({ memberEnabled: false })
+      .where(
+        and(
+          eq(entitlements.accountId, accountId),
+          eq(entitlements.source, "signup"),
+        ),
+      );
+  }
 
   beforeAll(async () => {
     handle = createDatabase(databaseUrl!, { maxConnections: 20 });
@@ -599,7 +613,9 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       expect(results.filter((result) => result.status === "rejected")).toHaveLength(2);
       for (const rejected of results.filter((result) => result.status === "rejected")) {
         expect(rejected).toEqual(
-          expect.objectContaining({ reason: expect.objectContaining({ code: "invalid_request" }) }),
+          expect.objectContaining({
+            reason: expect.any(OAuthRegistrationRateLimitError),
+          }),
         );
       }
     } finally {
@@ -634,6 +650,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       challengeId: challenge.challengeId,
       code: challenge.code,
     });
+    await disableBaselineMembership(verified.accountId);
     const principal = {
       accountId: verified.accountId,
       isFilter: false,
@@ -703,8 +720,9 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       challengeId: challenge.challengeId,
       code: challenge.code,
     });
+    await disableBaselineMembership(verified.accountId);
     const freePrincipal = await resolveSession(handle.db, verified.session.token, { touch: false });
-    if (!freePrincipal) throw new Error("Expected a Free principal");
+    if (!freePrincipal || freePrincipal.isMember) throw new Error("Expected a Free principal");
     const freeCollection = await collectFromWeb(handle.db, freePrincipal, {
       idempotency_key: "public-reuse-free",
       raw_input: "https://example.org/public-reuse",
@@ -1058,8 +1076,10 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       "attention_get_collection_status",
       "attention_update_collection",
       "attention_list_public_content",
+      "attention_search_content",
       "attention_report_content",
       "attention_get_digest_settings",
+      "attention_update_digest_settings",
     ]);
     expect(
       tools.tools.every(
@@ -1070,7 +1090,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       arguments: {
         client_context: {
           skill_id: "attention",
-          skill_version: "1.3.0",
+          skill_version: "1.4.0",
           workflow_run_id: "oauth-sdk-integration",
         },
       },
@@ -1078,7 +1098,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
     expect(account.isError).not.toBe(true);
     expect(account.structuredContent).toMatchObject({
-      capabilities: { is_filter: false, is_member: false },
+      capabilities: { is_filter: false, is_member: true },
     });
     await client.close();
   });
@@ -1939,15 +1959,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
     // This fixture represents a legacy account that has explicitly lost its
     // baseline signup entitlement; new registrations are Members by default.
-    await handle.db
-      .update(entitlements)
-      .set({ memberEnabled: false })
-      .where(
-        and(
-          eq(entitlements.accountId, verified.accountId),
-          eq(entitlements.source, "signup"),
-        ),
-      );
+    await disableBaselineMembership(verified.accountId);
     const principal = await resolveSession(handle.db, verified.session.token, { touch: false });
     if (!principal || principal.isMember) throw new Error("Expected a non-member legacy fixture");
     const response = await collectFromWeb(handle.db, principal, {

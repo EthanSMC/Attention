@@ -9,6 +9,7 @@ import {
 const originalRuntimeUrl = process.env.ATTENTION_CHANNEL_RUNTIME_PUBLIC_URL;
 const originalMcpUrl = process.env.ATTENTION_MCP_PUBLIC_URL;
 const originalSyncUrl = process.env.ATTENTION_SYNC_PUBLIC_URL;
+const originalWebOrigin = process.env.NEXT_PUBLIC_APP_URL;
 
 afterEach(() => {
   if (originalRuntimeUrl === undefined) {
@@ -26,6 +27,11 @@ afterEach(() => {
   } else {
     process.env.ATTENTION_SYNC_PUBLIC_URL = originalSyncUrl;
   }
+  if (originalWebOrigin === undefined) {
+    delete process.env.NEXT_PUBLIC_APP_URL;
+  } else {
+    process.env.NEXT_PUBLIC_APP_URL = originalWebOrigin;
+  }
 });
 
 describe("OAuth resource routing", () => {
@@ -42,6 +48,7 @@ describe("OAuth resource routing", () => {
   });
 
   it("maps each audience to its own protected-resource metadata URL", () => {
+    delete process.env.NEXT_PUBLIC_APP_URL;
     const request = new Request("https://attention.example/api/runtime");
 
     expect(oauthResourceMetadataUrl(request, "attention-mcp")).toBe(
@@ -56,6 +63,8 @@ describe("OAuth resource routing", () => {
   });
 
   it("publishes runtime protected-resource metadata with only runtime scopes", async () => {
+    delete process.env.NEXT_PUBLIC_APP_URL;
+    delete process.env.ATTENTION_CHANNEL_RUNTIME_PUBLIC_URL;
     const response = handleRuntimeProtectedResourceMetadataRequest(
       new Request(
         "https://attention.example/.well-known/oauth-protected-resource/api/runtime",

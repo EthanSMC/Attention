@@ -1,7 +1,7 @@
 import type { AttentionDatabase } from "@attention/db";
 import { extractWWWAuthenticateParams } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { NextRequest } from "next/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { POST as startEmailLogin } from "./api/auth/email/start/route";
 import { POST as verifyEmailLogin } from "./api/auth/email/verify/route";
@@ -10,6 +10,10 @@ import { handleMcpProtectedResourceMetadataRequest } from "./.well-known/oauth-p
 import { handleMcpRequest } from "./mcp/route";
 import { handleOAuthRevokeRequest } from "./oauth/revoke/route";
 import { handleOAuthTokenRequest } from "./oauth/token/route";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 function oversizedChunkedRequest(url: string, contentType: string): {
   cancelled: () => boolean;
@@ -166,6 +170,7 @@ describe("public route request body limits", () => {
   });
 
   it("advertises the MCP resource scopes in the unauthorized challenge", async () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "");
     const response = await handleMcpRequest(
       new Request("https://attention.example/mcp", { method: "GET" }),
       {
