@@ -44,7 +44,7 @@ function rateLimitedRegistrationDatabase(): AttentionDatabase {
 }
 
 describe("OAuth dynamic registration request limits", () => {
-  it("accepts the exact metadata emitted by Codex CLI", async () => {
+  it("normalizes the exact all-scopes metadata emitted by Codex CLI to the MCP audience", async () => {
     vi.stubEnv(
       "ATTENTION_HMAC_SECRET",
       "attention-registration-test-secret-at-least-32-characters",
@@ -62,7 +62,7 @@ describe("OAuth dynamic registration request limits", () => {
             ],
             response_types: ["code"],
             scope:
-              "profile:read collection:read collection:write digest:read digest:write moderation:write moderation:court:read moderation:court:vote public:read public:full ai:search subscription:read",
+              "profile:read collection:read collection:write digest:read digest:write moderation:write moderation:court:read moderation:court:vote sync:read sync:write public:read public:full ai:search subscription:read runtime:register runtime:heartbeat channel:bind:report channel:disconnect:report",
             token_endpoint_auth_method: "none",
           }),
           headers: { "content-type": "application/json" },
@@ -74,6 +74,8 @@ describe("OAuth dynamic registration request limits", () => {
       await expect(response.json()).resolves.toMatchObject({
         application_type: "native",
         client_name: "Codex",
+        scope:
+          "ai:search collection:read collection:write digest:read digest:write moderation:court:read moderation:court:vote moderation:write profile:read public:full public:read subscription:read",
         token_endpoint_auth_method: "none",
       });
       expect(inserted).toHaveLength(1);

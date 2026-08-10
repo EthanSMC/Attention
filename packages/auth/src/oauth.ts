@@ -184,6 +184,12 @@ function normalizeScopes(value: string): OAuthScope[] {
 export function resolveOAuthClientAllowedScopes(value?: string): OAuthScope[] {
   if (value === undefined) return [...oauthDefaultClientScopes];
   const scopes = normalizeScopes(value);
+  // Codex registers the authorization server's exact advertised scope union.
+  // DCR has no resource field, so narrow only that exact union to the MCP
+  // audience; every other mixed-audience request remains invalid below.
+  if (scopes.length === scopeSet.size) {
+    return [...oauthScopesByAudience["attention-mcp"]];
+  }
   const runtimeScopes = scopes.filter((scope) => runtimeScopeSet.has(scope));
   if (
     runtimeScopes.length > 0 &&
