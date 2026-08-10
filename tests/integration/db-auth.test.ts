@@ -786,6 +786,36 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     expect(await resolveSession(handle.db, passwordLogin.session.token, { touch: false })).not.toBeNull();
   });
 
+  it("allows the web runtime role to finish a successful password login", async () => {
+    const challenge = await createLoginChallenge(handle.db, {
+      email: "runtime-password@example.com",
+    });
+    const verified = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: challenge.challengeId,
+      code: challenge.code,
+    });
+    await setPassword(handle.db, {
+      accountId: verified.accountId,
+      authenticatedAt: new Date(),
+      password: "correct horse battery staple",
+    });
+
+    const runtimeHandle = createDatabase(databaseUrl!, { maxConnections: 1 });
+    try {
+      await runtimeHandle.sql.unsafe("SET ROLE attention_web_runtime");
+      const passwordLogin = await loginWithPassword(runtimeHandle.db, {
+        email: "runtime-password@example.com",
+        password: "correct horse battery staple",
+        requesterFingerprint: "a".repeat(64),
+      });
+      expect(passwordLogin.accountId).toBe(verified.accountId);
+    } finally {
+      await runtimeHandle.sql.unsafe("RESET ROLE").catch(() => undefined);
+      await runtimeHandle.close();
+    }
+  });
+
   it("rate-limits repeated password failures even when the final password is correct", async () => {
     const challenge = await createLoginChallenge(handle.db, { email: "password-limit@example.com" });
     const verified = await verifyLoginChallenge(handle.db, {
