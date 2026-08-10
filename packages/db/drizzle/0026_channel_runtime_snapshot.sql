@@ -1,0 +1,2 @@
+ALTER TABLE "agent_installations" ADD COLUMN "runtime_checkpoint" jsonb;--> statement-breakpoint
+ALTER TABLE "agent_installations" ADD CONSTRAINT "agent_installations_runtime_checkpoint_shape" CHECK ("agent_installations"."runtime_checkpoint" IS NULL OR (jsonb_typeof("agent_installations"."runtime_checkpoint") = 'object' AND NOT ("agent_installations"."runtime_checkpoint" ?| ARRAY['token', 'thread_id', 'message', 'url', 'reply'])));

@@ -17,6 +17,8 @@ import {
   PairingVerificationReportSchema,
   RegisterInstallationRequestSchema,
   RevokeChannelBindingRequestSchema,
+  RuntimeCheckpointReportSchema,
+  RuntimePhaseSchema,
   canTransitionChannelBindingStatus,
   canTransitionInstallationStatus,
   isChannelProviderSupportedByAgent,
@@ -28,6 +30,17 @@ const challengeId = "33333333-3333-4333-8333-333333333333";
 const eventId = "44444444-4444-4444-8444-444444444444";
 const channelFingerprint = "a".repeat(64);
 const peerFingerprint = "b".repeat(64);
+
+const runtimeCheckpoint = {
+  bridge_status: "online",
+  ilink_status: "connected",
+  codex_phase: "restarting",
+  last_healthy_at: "2026-08-10T10:00:00.000Z",
+  last_successful_message_at: "2026-08-10T09:59:00.000Z",
+  last_error_code: "codex_runtime_crashed",
+  pending_inbound: 2,
+  pending_outbound: 0,
+} as const;
 
 const registration = {
   api_version: "1",
@@ -75,6 +88,7 @@ const installationHeartbeat = {
   event_id: "55555555-5555-4555-8555-555555555555",
   installation_id: installationId,
   runtime_health: "active",
+  runtime_checkpoint: runtimeCheckpoint,
   observed_at: "2026-08-07T08:03:00.000Z",
 } as const;
 
@@ -102,6 +116,115 @@ const verifiedBindingView = {
 } as const;
 
 describe("local channel runtime v1 contract", () => {
+  it("accepts only the approved bounded runtime checkpoint", () => {
+    expect(RuntimeCheckpointReportSchema.parse(runtimeCheckpoint)).toEqual(
+      runtimeCheckpoint,
+    );
+    expect(RuntimeCheckpointReportSchema.parse({
+      ...runtimeCheckpoint,
+      last_error_code: null,
+      last_healthy_at: null,
+      last_successful_message_at: null,
+    })).toMatchObject({
+      last_error_code: null,
+      last_healthy_at: null,
+      last_successful_message_at: null,
+    });
+    expect([
+      "starting",
+      "healthy",
+      "restarting",
+      "recovering_thread",
+      "replaying_history",
+      "degraded_auth",
+      "degraded_runtime",
+      "stopped",
+    ].map((phase) => RuntimePhaseSchema.parse(phase))).toEqual([
+      "starting",
+      "healthy",
+      "restarting",
+      "recovering_thread",
+      "replaying_history",
+      "degraded_auth",
+      "degraded_runtime",
+      "stopped",
+    ]);
+
+    for (const [field, invalid] of [
+      ["bridge_status", "offline"],
+      ["ilink_status", "unknown"],
+      ["codex_phase", "active"],
+      ["last_healthy_at", "yesterday"],
+      ["last_error_code", "raw failure message with spaces"],
+      ["pending_inbound", -1],
+      ["pending_inbound", 1.5],
+      ["pending_outbound", 10_001],
+    ] as const) {
+      expect(
+        RuntimeCheckpointReportSchema.safeParse({
+          ...runtimeCheckpoint,
+          [field]: invalid,
+        }).success,
+        field,
+      ).toBe(false);
+    }
+  });
+
+  it("rejects privacy-sensitive runtime checkpoint fields", () => {
+    for (const forbidden of [
+      "token",
+      "thread_id",
+      "message",
+      "url",
+      "reply",
+    ]) {
+      expect(() =>
+        RuntimeCheckpointReportSchema.parse({
+          ...runtimeCheckpoint,
+          [forbidden]: "secret",
+        })
+      ).toThrow();
+    }
+  });
+
+  it("carries the latest checkpoint on heartbeats and installation views", () => {
+    expect(InstallationHeartbeatSchema.parse(installationHeartbeat)).toEqual(
+      installationHeartbeat,
+    );
+    expect(InstallationViewSchema.parse({
+      installation_id: installationId,
+      agent_integration_id: "codex",
+      owner_kind: "bridge",
+      device_name: "Ethan's MacBook",
+      adapter_version: "1.2.0",
+      skill_version: "2.0.0",
+      tool_contract_version: "2026-08-07",
+      capabilities: registration.capabilities,
+      status: "active",
+      registered_at: "2026-08-07T08:00:00.000Z",
+      last_seen_at: "2026-08-10T10:00:00.000Z",
+      disconnected_at: null,
+      revoked_at: null,
+      runtime_checkpoint: runtimeCheckpoint,
+    })).toMatchObject({ runtime_checkpoint: runtimeCheckpoint });
+    expect(InstallationViewSchema.parse({
+      installation_id: installationId,
+      agent_integration_id: "codex",
+      owner_kind: "bridge",
+      device_name: "Ethan's MacBook",
+      adapter_version: "1.2.0",
+      skill_version: "2.0.0",
+      tool_contract_version: "2026-08-07",
+      capabilities: registration.capabilities,
+      status: "registered",
+      registered_at: "2026-08-07T08:00:00.000Z",
+      last_seen_at: null,
+      disconnected_at: null,
+      revoked_at: null,
+      runtime_checkpoint: null,
+    })).toMatchObject({ runtime_checkpoint: null });
+  });
+
   it("accepts a complete installation and binding lifecycle", () => {
     expect(RegisterInstallationRequestSchema.parse(registration)).toEqual(
       registration,

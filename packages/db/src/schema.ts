@@ -5,7 +5,8 @@ import {
   CHANNEL_OWNER_KINDS,
   INSTALLATION_STATUSES,
   LOCAL_CHANNEL_PROVIDERS,
-  type RuntimeCapabilities
+  type RuntimeCapabilities,
+  type RuntimeCheckpointReport
 } from "@attention/contracts";
 import {
   type AnyPgColumn,
@@ -1113,6 +1114,7 @@ export const agentInstallations = pgTable(
     skillVersion: varchar("skill_version", { length: 64 }).notNull(),
     toolContractVersion: varchar("tool_contract_version", { length: 64 }).notNull(),
     capabilities: jsonb("capabilities").$type<RuntimeCapabilities>().notNull(),
+    runtimeCheckpoint: jsonb("runtime_checkpoint").$type<RuntimeCheckpointReport>(),
     status: installationStatusEnum("status").default("registered").notNull(),
     registeredAt: timestamp("registered_at", { withTimezone: true }).defaultNow().notNull(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
@@ -1139,6 +1141,10 @@ export const agentInstallations = pgTable(
       check(
         "agent_installations_capabilities_shape",
         sql`jsonb_typeof(${table.capabilities}) = 'object' AND ${table.capabilities} ?& ARRAY['heartbeat_mode', 'pairing_verification', 'restricted_profile'] AND ${table.capabilities} - ARRAY['heartbeat_mode', 'pairing_verification', 'restricted_profile'] = '{}'::jsonb AND ${table.capabilities}->>'heartbeat_mode' IN ('runtime', 'event_driven') AND ${table.capabilities}->'pairing_verification' = 'true'::jsonb AND jsonb_typeof(${table.capabilities}->'restricted_profile') = 'boolean' AND (${table.ownerKind} <> 'bridge' OR ${table.capabilities}->'restricted_profile' = 'true'::jsonb)`
+      ),
+      check(
+        "agent_installations_runtime_checkpoint_shape",
+        sql`${table.runtimeCheckpoint} IS NULL OR (jsonb_typeof(${table.runtimeCheckpoint}) = 'object' AND NOT (${table.runtimeCheckpoint} ?| ARRAY['token', 'thread_id', 'message', 'url', 'reply']))`
       ),
       check(
         "agent_installations_terminal_status_shape",

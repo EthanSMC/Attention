@@ -6,6 +6,7 @@ import {
   accounts,
   createDatabase,
   eventLedger,
+  agentInstallations,
   externalChannelBindingChallenges,
   oauthClients,
   type DatabaseHandle,
@@ -42,6 +43,16 @@ const registration = {
     pairing_verification: true,
     restricted_profile: true,
   },
+} as const;
+const runtimeCheckpoint = {
+  bridge_status: "online",
+  ilink_status: "connected",
+  codex_phase: "restarting",
+  last_healthy_at: "2026-08-07T08:00:00.000Z",
+  last_successful_message_at: "2026-08-07T07:59:00.000Z",
+  last_error_code: "codex_runtime_crashed",
+  pending_inbound: 2,
+  pending_outbound: 0,
 } as const;
 
 describe.skipIf(!databaseUrl)("local channel runtime service with PostgreSQL", () => {
@@ -108,12 +119,50 @@ describe.skipIf(!databaseUrl)("local channel runtime service with PostgreSQL", (
       event_id: "44444444-4444-4444-8444-444444444444",
       installation_id: installationId,
       observed_at: "2026-08-07T08:00:30.000Z",
+      runtime_checkpoint: runtimeCheckpoint,
       runtime_health: "active",
     });
     expect(heartbeat).toMatchObject({
       last_seen_at: "2026-08-07T08:01:00.000Z",
       status: "active",
+      runtime_checkpoint: runtimeCheckpoint,
     });
+    expect(await service.recordInstallationHeartbeat(principal, {
+      api_version: "1",
+      event_id: "44444444-4444-4444-8444-444444444444",
+      installation_id: installationId,
+      observed_at: "2026-08-07T08:00:30.000Z",
+      runtime_checkpoint: runtimeCheckpoint,
+      runtime_health: "active",
+    })).toEqual(heartbeat);
+
+    now = new Date("2026-08-07T08:01:30.000Z");
+    const healthyCheckpoint = {
+      ...runtimeCheckpoint,
+      codex_phase: "healthy" as const,
+      last_error_code: null,
+      pending_inbound: 0,
+    };
+    const newerHeartbeat = await service.recordInstallationHeartbeat(principal, {
+      api_version: "1",
+      event_id: "99999999-9999-4999-8999-999999999999",
+      installation_id: installationId,
+      observed_at: "2026-08-07T08:01:30.000Z",
+      runtime_checkpoint: healthyCheckpoint,
+      runtime_health: "active",
+    });
+    expect(newerHeartbeat.runtime_checkpoint).toEqual(healthyCheckpoint);
+    const [storedInstallation] = await handle.db
+      .select()
+      .from(agentInstallations);
+    expect(storedInstallation?.runtimeCheckpoint).toEqual(healthyCheckpoint);
+    await expect(service.getInstallation(
+      {
+        accountId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        clientId,
+      },
+      installationId,
+    )).rejects.toMatchObject({ code: "installation_not_found", status: 404 });
 
     const challenge = await service.createChannelBinding(principal, {
       api_version: "1",
@@ -205,7 +254,7 @@ describe.skipIf(!databaseUrl)("local channel runtime service with PostgreSQL", (
     ]);
 
     const events = await handle.db.select().from(eventLedger);
-    expect(events).toHaveLength(7);
+    expect(events).toHaveLength(8);
     expect(JSON.stringify(events)).not.toContain("A7K92Q");
   });
 });

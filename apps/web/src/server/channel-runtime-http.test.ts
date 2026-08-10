@@ -37,6 +37,16 @@ const eventId = "55555555-5555-4555-8555-555555555555";
 const observedAt = "2026-08-07T08:00:00.000Z";
 const fingerprint = "a".repeat(64);
 const peerFingerprint = "b".repeat(64);
+const runtimeCheckpoint = {
+  bridge_status: "online",
+  ilink_status: "connected",
+  codex_phase: "restarting",
+  last_healthy_at: "2026-08-07T07:59:00.000Z",
+  last_successful_message_at: "2026-08-07T07:58:00.000Z",
+  last_error_code: "codex_runtime_crashed",
+  pending_inbound: 2,
+  pending_outbound: 0,
+} as const;
 
 const principal: OAuthCloudPrincipal = {
   accountId,
@@ -68,6 +78,7 @@ const installation: InstallationView = {
   owner_kind: "native",
   registered_at: observedAt,
   revoked_at: null,
+  runtime_checkpoint: null,
   skill_version: "1.0.0",
   status: "registered",
   tool_contract_version: "1.0.0",
@@ -303,6 +314,28 @@ describe("channel runtime HTTP request contracts", () => {
     expect(deps.createService).not.toHaveBeenCalled();
   });
 
+  it("rejects privacy-sensitive fields inside a runtime checkpoint", async () => {
+    const deps = dependencies();
+    const response = await handleInstallationHeartbeat(
+      jsonRequest(`/api/runtime/installations/${installationId}/heartbeat`, {
+        api_version: "1",
+        event_id: eventId,
+        installation_id: installationId,
+        observed_at: observedAt,
+        runtime_checkpoint: { ...runtimeCheckpoint, thread_id: "secret" },
+        runtime_health: "active",
+      }),
+      { installationId },
+      deps,
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: { code: "invalid_request" },
+    });
+    expect(deps.createService).not.toHaveBeenCalled();
+  });
+
   it("rejects a binding id that disagrees with the route", async () => {
     const deps = dependencies();
     const response = await handleChannelBindingActivity(
@@ -357,6 +390,35 @@ describe("channel runtime HTTP route operations", () => {
     );
   });
 
+  it("returns the accepted runtime checkpoint in the installation view", async () => {
+    const checkpointView = {
+      ...installation,
+      last_seen_at: observedAt,
+      runtime_checkpoint: runtimeCheckpoint,
+      status: "degraded" as const,
+    };
+    const runtimeService = service({
+      recordInstallationHeartbeat: vi.fn(async () => checkpointView),
+    });
+    const response = await handleInstallationHeartbeat(
+      jsonRequest(`/api/runtime/installations/${installationId}/heartbeat`, {
+        api_version: "1",
+        event_id: eventId,
+        installation_id: installationId,
+        observed_at: observedAt,
+        runtime_checkpoint: runtimeCheckpoint,
+        runtime_health: "degraded",
+      }),
+      { installationId },
+      dependencies(runtimeService),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      installation: checkpointView,
+    });
+  });
+
   it("routes installation and binding state operations to the core service", async () => {
     const runtimeService = service();
     const deps = dependencies(runtimeService);
@@ -383,6 +445,7 @@ describe("channel runtime HTTP route operations", () => {
           event_id: eventId,
           installation_id: installationId,
           observed_at: observedAt,
+          runtime_checkpoint: runtimeCheckpoint,
           runtime_health: "active",
         },
       ),

@@ -162,6 +162,28 @@ describe("local channel runtime database schema", () => {
     );
   });
 
+  it("stores a nullable privacy-safe runtime checkpoint object", () => {
+    const installationConfig = configFor(agentInstallations);
+    const runtimeCheckpoint = installationConfig.columns.find(
+      (column) => column.name === "runtime_checkpoint"
+    );
+    const runtimeCheckpointConstraint = installationConfig.checks.find(
+      (constraint) =>
+        constraint.name === "agent_installations_runtime_checkpoint_shape"
+    );
+    const predicate = new PgDialect().sqlToQuery(
+      runtimeCheckpointConstraint!.value
+    ).sql;
+
+    expect(runtimeCheckpoint?.getSQLType()).toBe("jsonb");
+    expect(runtimeCheckpoint?.notNull).toBe(false);
+    expect(predicate).toContain("jsonb_typeof");
+    expect(predicate).toContain("'object'");
+    for (const forbidden of ["token", "thread_id", "message", "url", "reply"]) {
+      expect(predicate).toContain(`'${forbidden}'`);
+    }
+  });
+
   it("allows only the narrow runtime lifecycle audit envelope", () => {
     const policies = configFor(eventLedger).policies;
     const toolPolicy = policies.find(
