@@ -6470,6 +6470,115 @@ body:has(.agent-doc-layout) main {
   white-space: nowrap;
 }
 
+.connection-card__intro {
+  display: grid;
+  gap: 5px;
+}
+
+.connection-card__intro > * {
+  margin: 0;
+}
+
+.connection-card__intro > p:last-child {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.channel-runtime-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.channel-runtime-list > li {
+  display: grid;
+  align-items: center;
+  gap: 14px 18px;
+  grid-template-columns: minmax(150px, 1fr) auto;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+}
+
+.channel-runtime-list__identity {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.channel-runtime-list__identity strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-runtime-list__identity > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.channel-runtime-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: end;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.channel-runtime-status > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.channel-runtime-status--online {
+  color: var(--success);
+}
+
+.channel-runtime-status--degraded,
+.channel-runtime-status--stale {
+  color: var(--warning);
+}
+
+.channel-runtime-facts {
+  display: grid;
+  gap: 12px 24px;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.channel-runtime-facts > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.channel-runtime-facts dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.channel-runtime-facts dd {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-data);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .agent-doc-brand {
   display: inline-flex;
   min-height: 44px;
@@ -6821,6 +6930,10 @@ body:has(.agent-doc-layout) main {
 
   .agent-entry-actions .button {
     flex: 1 1 150px;
+  }
+
+  .channel-runtime-facts {
+    grid-template-columns: 1fr;
   }
 
   .agent-doc-layout {
