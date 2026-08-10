@@ -70,6 +70,7 @@ export interface RuntimeReporterOptions {
   readonly onBindingChallenge?: (
     challenge: ChannelBindingChallenge,
   ) => void;
+  readonly onBindingInvalidated?: () => void;
   readonly onBindingVerified?: (bindingId: string) => void;
   readonly onStatusChange?: (status: RuntimeReporterStatus) => void;
   readonly requestTimeoutMs?: number;
@@ -96,6 +97,7 @@ export interface RuntimeReporterState {
 interface DeliveryResult {
   readonly body: unknown;
   readonly ok: boolean;
+  readonly status: number | null;
 }
 
 export interface RuntimeReporter {
@@ -123,6 +125,7 @@ class LocalRuntimeReporter implements RuntimeReporter {
   readonly #onBindingChallenge:
     | ((challenge: ChannelBindingChallenge) => void)
     | undefined;
+  readonly #onBindingInvalidated: (() => void) | undefined;
   readonly #onBindingVerified: ((bindingId: string) => void) | undefined;
   readonly #onStatusChange:
     | ((status: RuntimeReporterStatus) => void)
@@ -139,6 +142,7 @@ class LocalRuntimeReporter implements RuntimeReporter {
   #currentSnapshot: RuntimeReporterSnapshot;
   #heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   #lastErrorCode: string | null = null;
+  #registered = false;
   #stoppingDeliveryOpen = false;
   #started = false;
   #status: RuntimeReporterStatus = "idle";
@@ -158,6 +162,7 @@ class LocalRuntimeReporter implements RuntimeReporter {
     this.#currentSnapshot = options.snapshot;
     this.#now = options.now ?? (() => new Date());
     this.#onBindingChallenge = options.onBindingChallenge;
+    this.#onBindingInvalidated = options.onBindingInvalidated;
     this.#onBindingVerified = options.onBindingVerified;
     this.#onStatusChange = options.onStatusChange;
     this.#requestTimeoutMs = positiveDuration(
@@ -177,42 +182,7 @@ class LocalRuntimeReporter implements RuntimeReporter {
     if (this.#started || !this.#accepting) return;
     this.#started = true;
     this.#setStatus("registering", null);
-    this.#enqueue(async () => {
-      const registration = RegisterInstallationRequestSchema.parse({
-        adapter_version: this.#identity.adapterVersion,
-        agent_integration_id: this.#identity.agentIntegrationId,
-        api_version: CHANNEL_RUNTIME_API_VERSION,
-        capabilities: {
-          heartbeat_mode: "runtime",
-          pairing_verification: true,
-          restricted_profile: this.#identity.restrictedProfile,
-        },
-        device_name: this.#identity.deviceName,
-        installation_id: this.#identity.installationId,
-        skill_version: this.#identity.skillVersion,
-        tool_contract_version: this.#identity.toolContractVersion,
-      });
-      const registered = await this.#post("/installations", registration);
-      if (!registered.ok) return;
-
-      if (this.#bindingId === null) {
-        const binding = CreateChannelBindingRequestSchema.parse({
-          api_version: CHANNEL_RUNTIME_API_VERSION,
-          channel_account_fingerprint:
-            this.#identity.channelAccountFingerprint,
-          installation_id: this.#identity.installationId,
-          provider: this.#identity.provider,
-        });
-        const reported = await this.#post("/channel-bindings", binding);
-        if (!reported.ok) return;
-        const challenge = ChannelBindingChallengeSchema.parse(
-          responseMember(reported.body, "challenge"),
-        );
-        this.#bindingId = challenge.binding_id;
-        this.#onBindingChallenge?.(challenge);
-      }
-      this.#setStatus("active", null);
-    });
+    this.#enqueue(async () => void (await this.#ensureRegistered()));
 
     this.#heartbeatTimer = setInterval(() => {
       if (this.#accepting) this.#enqueueHeartbeat(this.#currentSnapshot);
@@ -239,10 +209,14 @@ class LocalRuntimeReporter implements RuntimeReporter {
         installation_id: this.#identity.installationId,
         observed_at: this.#now().toISOString(),
       });
-      await this.#post(
+      const result = await this.#post(
         `/channel-bindings/${encodeURIComponent(bindingId)}/activity`,
         body,
       );
+      if (bindingRejected(result)) {
+        this.#invalidateBinding();
+        await this.#ensureRegistered();
+      }
     });
   }
 
@@ -268,6 +242,9 @@ class LocalRuntimeReporter implements RuntimeReporter {
       if (result.ok) {
         this.#bindingId = bindingId;
         this.#onBindingVerified?.(bindingId);
+      } else if (bindingRejected(result)) {
+        this.#invalidateBinding();
+        await this.#ensureRegistered();
       }
     });
   }
@@ -310,6 +287,7 @@ class LocalRuntimeReporter implements RuntimeReporter {
   ): void {
     if (!duringStop && !this.#accepting) return;
     this.#enqueue(async () => {
+      if (!(await this.#ensureRegistered())) return;
       const body = InstallationHeartbeatSchema.parse({
         api_version: CHANNEL_RUNTIME_API_VERSION,
         event_id: this.#eventId(),
@@ -345,13 +323,61 @@ class LocalRuntimeReporter implements RuntimeReporter {
     this.#tail = this.#tail.then(run, run);
   }
 
+  async #ensureRegistered(): Promise<boolean> {
+    if (!this.#registered) {
+      this.#setStatus("registering", null);
+      const registration = RegisterInstallationRequestSchema.parse({
+        adapter_version: this.#identity.adapterVersion,
+        agent_integration_id: this.#identity.agentIntegrationId,
+        api_version: CHANNEL_RUNTIME_API_VERSION,
+        capabilities: {
+          heartbeat_mode: "runtime",
+          pairing_verification: true,
+          restricted_profile: this.#identity.restrictedProfile,
+        },
+        device_name: this.#identity.deviceName,
+        installation_id: this.#identity.installationId,
+        skill_version: this.#identity.skillVersion,
+        tool_contract_version: this.#identity.toolContractVersion,
+      });
+      const registered = await this.#post("/installations", registration);
+      if (!registered.ok) return false;
+      this.#registered = true;
+    }
+
+    if (this.#bindingId === null) {
+      const binding = CreateChannelBindingRequestSchema.parse({
+        api_version: CHANNEL_RUNTIME_API_VERSION,
+        channel_account_fingerprint:
+          this.#identity.channelAccountFingerprint,
+        installation_id: this.#identity.installationId,
+        provider: this.#identity.provider,
+      });
+      const reported = await this.#post("/channel-bindings", binding);
+      if (!reported.ok) return false;
+      const challenge = ChannelBindingChallengeSchema.parse(
+        responseMember(reported.body, "challenge"),
+      );
+      this.#bindingId = challenge.binding_id;
+      this.#onBindingChallenge?.(challenge);
+    }
+    this.#setStatus("active", null);
+    return true;
+  }
+
+  #invalidateBinding(): void {
+    if (this.#bindingId === null) return;
+    this.#bindingId = null;
+    this.#onBindingInvalidated?.();
+  }
+
   async #post(path: string, payload: unknown): Promise<DeliveryResult> {
     const body = JSON.stringify(payload);
     let refreshed = false;
     let token: string | null = null;
     for (let attempt = 0; ; attempt += 1) {
       if (!this.#accepting && !this.#stoppingDeliveryOpen) {
-        return { body: null, ok: false };
+        return { body: null, ok: false, status: null };
       }
       try {
         token ??= await this.#accessTokenProvider.accessToken({
@@ -361,7 +387,7 @@ class LocalRuntimeReporter implements RuntimeReporter {
         });
         if (!token) {
           this.#setStatus("degraded", "runtime_auth_required");
-          return { body: null, ok: false };
+          return { body: null, ok: false, status: null };
         }
         let response = await this.#send(path, body, token);
         if (response.status === 401 && !refreshed) {
@@ -374,12 +400,16 @@ class LocalRuntimeReporter implements RuntimeReporter {
           });
           if (!token) {
             this.#setStatus("degraded", "runtime_auth_required");
-            return { body: null, ok: false };
+            return { body: null, ok: false, status: null };
           }
           response = await this.#send(path, body, token);
         }
         if (response.ok) {
-          return { body: await responseBody(response), ok: true };
+          return {
+            body: await responseBody(response),
+            ok: true,
+            status: response.status,
+          };
         }
         if (!retryableStatus(response.status)) {
           this.#setStatus(
@@ -388,18 +418,18 @@ class LocalRuntimeReporter implements RuntimeReporter {
               ? "runtime_auth_required"
               : "runtime_report_rejected",
           );
-          return { body: null, ok: false };
+          return { body: null, ok: false, status: response.status };
         }
       } catch {
         // Network and token-provider failures share the bounded retry policy.
       }
       if (!this.#accepting && !this.#stoppingDeliveryOpen) {
-        return { body: null, ok: false };
+        return { body: null, ok: false, status: null };
       }
       const delay = this.#retryBackoffMs[attempt];
       if (delay === undefined) {
         this.#setStatus("degraded", "runtime_report_failed");
-        return { body: null, ok: false };
+        return { body: null, ok: false, status: null };
       }
       await this.#sleep(delay);
     }
@@ -505,6 +535,10 @@ function positiveDuration(value: number | undefined, fallback: number): number {
 
 function retryableStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function bindingRejected(result: DeliveryResult): boolean {
+  return !result.ok && (result.status === 404 || result.status === 409);
 }
 
 function responseMember(body: unknown, key: string): unknown {

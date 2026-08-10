@@ -231,6 +231,74 @@ describe("RuntimeReporter bootstrap", () => {
 
     await reporter.stop();
   });
+
+  it("retries registration on a later transition after bounded startup failure", async () => {
+    const paths: string[] = [];
+    let registrations = 0;
+    const reporter = createRuntimeReporter(reporterOptions({
+      fetchImpl: async (url) => {
+        const path = new URL(String(url)).pathname;
+        paths.push(path);
+        if (path.endsWith("/installations")) {
+          registrations += 1;
+          return registrations === 1
+            ? jsonResponse({ error: { code: "temporarily_unavailable" } }, 503)
+            : jsonResponse({ installation }, 201);
+        }
+        return jsonResponse({ installation: { ...installation, status: "active" } });
+      },
+      retryBackoffMs: [],
+    }));
+
+    reporter.start();
+    await vi.waitFor(() => expect(reporter.snapshot().status).toBe("degraded"));
+    reporter.transition(snapshot);
+    await vi.waitFor(() => expect(paths).toHaveLength(3));
+
+    expect(paths).toEqual([
+      "/api/runtime/installations",
+      "/api/runtime/installations",
+      `/api/runtime/installations/${installationId}/heartbeat`,
+    ]);
+    expect(reporter.snapshot().status).toBe("active");
+    await reporter.stop();
+  });
+
+  it("invalidates a rejected persisted binding and requests a fresh pairing challenge", async () => {
+    const paths: string[] = [];
+    const invalidations: number[] = [];
+    const challenges: unknown[] = [];
+    const reporter = createRuntimeReporter(reporterOptions({
+      fetchImpl: async (url) => {
+        const path = new URL(String(url)).pathname;
+        paths.push(path);
+        if (path.endsWith("/installations")) {
+          return jsonResponse({ installation }, 201);
+        }
+        if (path.endsWith("/activity")) {
+          return jsonResponse({ error: { code: "binding_not_active" } }, 409);
+        }
+        return jsonResponse({ challenge }, 201);
+      },
+      onBindingChallenge: (value) => challenges.push(value),
+      onBindingInvalidated: () => invalidations.push(1),
+    }));
+
+    reporter.start();
+    await vi.waitFor(() => expect(reporter.snapshot().status).toBe("active"));
+    reporter.activity();
+    await vi.waitFor(() => expect(paths).toHaveLength(3));
+
+    expect(paths).toEqual([
+      "/api/runtime/installations",
+      `/api/runtime/channel-bindings/${bindingId}/activity`,
+      "/api/runtime/channel-bindings",
+    ]);
+    expect(invalidations).toEqual([1]);
+    expect(challenges).toEqual([challenge]);
+    expect(reporter.snapshot().bindingId).toBe(bindingId);
+    await reporter.stop();
+  });
 });
 
 describe("RuntimeReporter scheduling and delivery", () => {
