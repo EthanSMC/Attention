@@ -72,6 +72,24 @@ role_guard=${role_guard//$'\n'/}
   exit 1
 }
 
+password_login_privilege_guard=$(
+  attention_compose exec -T postgres sh -ceu '
+    exec psql \
+      --username="$POSTGRES_USER" \
+      --dbname="$POSTGRES_DB" \
+      --no-align \
+      --tuples-only \
+      --set ON_ERROR_STOP=1 \
+      --command="SELECT has_column_privilege('\''attention_web_runtime'\'', '\''password_login_attempts'\'', '\''success'\'', '\''UPDATE'\'')"
+  '
+)
+password_login_privilege_guard=${password_login_privilege_guard//$'\r'/}
+password_login_privilege_guard=${password_login_privilege_guard//$'\n'/}
+[[ "$password_login_privilege_guard" == "t" ]] || {
+  echo "web runtime cannot complete a successful password login" >&2
+  exit 1
+}
+
 verify_runtime_login() {
   local role=$1 password_key=$2 password
   password=$(attention_env_value "$password_key")

@@ -345,6 +345,21 @@ describe("staging database backup", () => {
 });
 
 describe("staging deployment order", () => {
+  it("keeps successful password-login completion available to the web runtime role", () => {
+    const migrationSource = readdirSync(resolve(root, "packages/db/drizzle"))
+      .filter((name) => /^\d+_.+\.sql$/u.test(name))
+      .map((name) => readFileSync(resolve(root, "packages/db/drizzle", name), "utf8"))
+      .join("\n");
+    const verifier = readFileSync(resolve(staging, "verify-database.sh"), "utf8");
+
+    expect(migrationSource).toMatch(
+      /GRANT UPDATE \(success\)\s+ON TABLE password_login_attempts TO attention_web_runtime;/u,
+    );
+    expect(verifier).toContain("password_login_privilege_guard");
+    expect(verifier).toContain("has_column_privilege");
+    expect(verifier).toContain("password_login_attempts");
+  });
+
   it("proves the pre-migration backup restores before applying migrations", () => {
     const source = readFileSync(resolve(staging, "deploy.sh"), "utf8");
     const backup = source.indexOf(
@@ -416,6 +431,7 @@ describe("staging application rollback", () => {
         "  *\"ps --filter publish=9099 \"*) printf 'qa-container-id\\n' ;;",
         "  *\"SELECT count(*), max(created_at)\"*) printf '%s|%s\\n' \"$EXPECTED_MIGRATION_COUNT\" \"$EXPECTED_MIGRATION_HEAD\" ;;",
         "  *\"SELECT max(created_at)\"*) printf '%s\\n' \"$EXPECTED_MIGRATION_HEAD\" ;;",
+        "  *\"has_column_privilege\"*) printf 't\\n' ;;",
         "  *\"FROM pg_roles\"*) printf 't\\n' ;;",
         "esac",
         "exit 0",
