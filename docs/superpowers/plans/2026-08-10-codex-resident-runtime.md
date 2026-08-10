@@ -20,6 +20,33 @@
 - Use full message IDs to derive a SHA-256 idempotency reference; never truncate a shared prefix.
 - Preserve all existing uncommitted OAuth compatibility, model-default, reply, test, and generated-artifact changes.
 
+## Verified Codex Protocol Corrections
+
+Real `codex app-server` verification on 2026-08-10 supersedes any earlier
+command-line assumptions in this plan:
+
+- Earlier ignore-user-configuration/rules flags and app-server-level sandbox
+  flags are invalid for this runtime and must not be used.
+- Setting an empty MCP object on the command line merges with user
+  configuration; it does not clear existing MCP servers and is not an
+  isolation mechanism.
+- Start app-server with a dedicated Channel `CODEX_HOME` that references the
+  user's existing local Codex login without reading or copying its token. That
+  home contains only the Attention MCP configuration.
+- The supported launch shape is `codex --disable apps --disable plugins
+  --disable skill_search -c 'mcp_servers.attention.url="<mcp-url>"' app-server
+  --stdio`. Keep it as structured argv and launch with `shell: false`.
+- Put `sandbox: "read-only"` in thread start/resume parameters and a read-only,
+  no-network `sandboxPolicy` in turn parameters. Do not pass it on app-server
+  argv.
+- After initialize, call `mcpServerStatus/list` and fail closed unless the
+  returned server list is exactly one server named `attention`.
+- Text input for `turn/start` is `{ type: "text", text, text_elements: [] }`.
+
+The transport and real protocol behavior have been verified. Remaining task
+checkboxes still govern integration, artifacts, Reporter/Web work, and release
+acceptance; this plan does not claim those unfinished pieces are deployed.
+
 ## File Structure
 
 - Create `apps/cli/src/channel/codex-app-server-rpc.ts`: bounded newline-delimited JSON-RPC transport and child lifecycle.
@@ -88,7 +115,7 @@ Expected: FAIL because `codex-app-server-rpc.ts` does not exist.
 
 - [ ] **Step 3: Implement the minimal transport**
 
-Use `spawn("codex", args, { shell: false, stdio: ["pipe", "pipe", "pipe"] })`. Parse one JSON object per stdout line, allocate monotonically increasing integer request IDs, cap stdout/stderr buffers at 262,144 bytes, and reject pending requests on close. Respond to command/file approvals with `{ decision: "decline" }`; respond to permissions, dynamic tools, user input, token refresh, attestation, time, and every unknown server request with JSON-RPC method-not-supported. Authentication continues through the user's local `CODEX_HOME`; the Bridge never reads or supplies Codex tokens.
+Use `spawn("codex", args, { shell: false, stdio: ["pipe", "pipe", "pipe"] })`. Parse one JSON object per stdout line, allocate monotonically increasing integer request IDs, cap stdout/stderr buffers at 262,144 bytes, and reject pending requests on close. Respond to command/file approvals with `{ decision: "decline" }`; respond to permissions, dynamic tools, user input, token refresh, attestation, time, and every unknown server request with JSON-RPC method-not-supported. Authentication is made available through the dedicated Channel `CODEX_HOME`, which references the user's existing local login without parsing or copying the credential; the Bridge never reads or supplies Codex tokens.
 
 ```ts
 export class CodexAppServerRpc {
@@ -169,7 +196,15 @@ Give Claude Code a no-op shutdown and a subprocess snapshot so callers have no o
 
 - [ ] **Step 4: Implement thread and turn mapping**
 
-Start `codex app-server --stdio` with the existing ignored-user-config flags, feature disables, Attention MCP URL/tool list, model, effort, verbosity, and approved Attention writes. Send `initialize`, then `thread/resume` or `thread/start`, and finally `turn/start` with one `{ type: "text", text }` input. Resolve only after matching `turn/completed`; capture the final `agentMessage` item for the matching thread and turn.
+Prepare a dedicated Channel `CODEX_HOME` that references the user's existing
+Codex login and contains only the Attention MCP configuration. Start the
+structured app-server argv described in **Verified Codex Protocol Corrections**,
+send `initialize`, and fail closed unless `mcpServerStatus/list` returns exactly
+the `attention` server. Send `thread/resume` or `thread/start` with read-only
+sandbox parameters, then `turn/start` with one
+`{ type: "text", text, text_elements: [] }` input and the read-only,
+no-network sandbox policy. Resolve only after matching `turn/completed`; capture
+the final `agentMessage` item for the matching thread and turn.
 
 - [ ] **Step 5: Implement restart and recovery signaling**
 

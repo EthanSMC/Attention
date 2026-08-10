@@ -1,6 +1,6 @@
 # Attention Codex 常驻 Runtime 与掉线恢复设计
 
-状态：已确认，待实施
+状态：已确认；协议实机验证完成，Bridge/Reporter/Web 集成与发布验收仍在进行
 
 确认日期：2026-08-10
 
@@ -82,9 +82,32 @@ Bridge 通过 `codex app-server --stdio` 启动子进程，使用 JSON-RPC 协�
 5. 以 `turn/completed` 和最终 Agent message 为一次调用完成；
 6. 超时先发送 `turn/interrupt`，再根据进程健康状态决定是否重启。
 
-`app-server` 发起的反向请求必须由 Bridge 确定性处理：只允许当前 Channel
-白名单内已声明可写的 Attention MCP 工具；Shell、文件写入、浏览器、其他 MCP
-和未知审批类型一律拒绝。不能把审批问题转发到微信让模型或用户临时扩大权限。
+`app-server` 发起的反向请求必须由 Bridge 确定性处理：命令、文件与
+审批请求一律拒绝，未知的 server request 返回 method-not-supported。
+Attention MCP 是 `app-server` 在隔离配置中加载的唯一 MCP，不是 Bridge 临时
+批准的 dynamic tool。不能把审批问题转发到微信让模型或用户临时扩大权限。
+
+### 4.1 已实测的启动与隔离事实
+
+2026-08-10 的真实 `codex app-server` 验证得到以下结论：
+
+- 不使用已证伪的“忽略用户配置/规则”标志或 app-server 命令行沙箱标志。
+- 通过命令行设置空 MCP 对象会与用户配置合并，不会清空已有 MCP，
+  因此不能用于 Channel 权限隔离。
+- Bridge 必须使用独立的 Channel `CODEX_HOME`；该目录只引用本机现有
+  `auth.json`，并只配置 Attention MCP。Bridge 不解析、复制或上报 Codex
+  认证内容。
+- 可用的启动形式是在 `app-server --stdio` 之前传入全局 feature disable 与
+  Attention MCP 地址；沙箱在 `thread/start` / `thread/resume` 中设为
+  `read-only`，并在 `turn/start` 中设为无网络的 read-only policy，而不是
+  app-server 命令行参数。
+- `initialize` 后必须调用 `mcpServerStatus/list`，并严格验证结果中只有
+  `attention`。多出或缺少任何 MCP 都进入 `degraded_runtime`，不处理用户 turn。
+- 真实协议已验证 `thread/start`、`turn/start`、两轮复用与进程重启后
+  `thread/resume`。`turn/start` 的文本输入需包含空的 `text_elements`。
+
+这些是协议和安全边界的已验证事实，不表示 Bridge 集成、Reporter、Web
+状态或新 CLI 产物已完成发布。
 
 模型、推理档位、MCP 工具白名单和写操作授权保持当前产品默认：
 

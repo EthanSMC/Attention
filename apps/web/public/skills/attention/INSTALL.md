@@ -73,7 +73,7 @@ placeholders.
 |---|---|---|---|---|
 | OpenClaw | available | external Tencent `openclaw-weixin` plugin | host-native, OpenClaw `>= 2026.5.12` for the current plugin | MCP only; Runtime reporter is contract-only |
 | Hermes Agent | available | native Hermes Gateway | host-native gateway | MCP only; Runtime reporter is contract-only |
-| Codex | available in CLI/Desktop | local `attention-channel` bridge shipped with the Attention CLI | the bridge polls iLink and invokes Codex in a restricted profile; the Codex SDK companion remains a future alternative | MCP only; the bridge does not report to the Runtime in this release |
+| Codex | available in CLI/Desktop | local `attention-channel` bridge shipped with the Attention CLI | the published bridge polls iLink and invokes Codex in a restricted profile; a resident app-server candidate is still in integration/release acceptance | MCP only; the bridge does not report to the Runtime in this release |
 | Claude Code | available in Code/Desktop surfaces | local `attention-channel` bridge shipped with the Attention CLI | the bridge polls iLink and invokes headless Claude Code in a restricted profile | MCP only; the bridge does not report to the Runtime in this release |
 | WorkBuddy | Skill bundle and MCP available in `>= 4.8.2` | WorkBuddy UI | host-managed | MCP only; channel state is unverifiable |
 
@@ -248,6 +248,21 @@ scan, so closing the terminal does not stop inbound delivery. An inbound
 message is not guaranteed to appear as a visible Desktop conversation. A future Codex SDK
 companion remains a separate `contract_only` design alternative.
 
+The approved next Codex runtime keeps the same local bridge as the sole iLink
+owner but keeps one `codex app-server` resident. It first resumes the locally
+persisted thread ID; if that thread cannot be resumed, it creates a thread after
+replaying the local last 20 user/assistant exchanges. Its Channel defaults are
+`gpt-5.6-luna`, reasoning effort `medium`, and verbosity `low` for every user.
+It uses a dedicated Channel `CODEX_HOME` and fails closed unless app-server
+reports exactly one MCP server named `attention`. No iLink credential, Codex
+token, thread ID, message, URL, or reply is sent to Attention by this runtime.
+
+This paragraph describes the verified candidate architecture, not the current
+published artifact. Do not claim resident behavior until the public CLI
+manifest points to an artifact that has passed Bridge integration, artifact
+checks, and real-device acceptance. The published manifest remains the source
+of truth for what users can install now.
+
 The restricted profile template is published at:
 
 ```text
@@ -334,6 +349,13 @@ logout` stops/removes the background service and deletes the local iLink
 state. If iLink expires, the service exits without opening an unattended QR
 prompt; rerun the same `--background` command in a terminal.
 
+When the resident Codex candidate is eventually published, a Codex process
+failure does not transfer iLink ownership: the bridge keeps polling, queues
+normal messages, and can answer exact local status/help/retry/continue commands.
+If the whole device or bridge is offline, WeChat receives no Attention reply.
+After the separate Runtime reporter is shipped, Web may show only the last
+reported heartbeat and checkpoint; it never takes over iLink or Codex.
+
 Privacy boundary for the bridge:
 
 - The iLink token, sync cursor, and context tokens stay in
@@ -344,6 +366,10 @@ Privacy boundary for the bridge:
 - Bridge logs omit tokens and full message bodies.
 - The bridge does not register with the Local Channel Runtime in this
   release, so the Attention service and Web cannot observe bridge state.
+- A future Runtime reporter may send stable status, timestamps, error codes,
+  and bounded queue counts only. It must never send iLink/Codex/MCP tokens,
+  Codex thread IDs, message identifiers or text, URLs, replies, contacts, or
+  raw WeChat identifiers.
 
 ## Final acceptance
 

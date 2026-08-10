@@ -1,6 +1,6 @@
 # Attention 本地 Agent 与微信 Channel 一期设计
 
-状态：一期本地桥已交付；服务端 Reporter / Binding 仍为后续基础设施
+状态：一期本地桥已交付；Codex 常驻 Runtime 与 Reporter 仍在集成/发布验收
 
 最后校正：2026-08-10
 
@@ -109,13 +109,22 @@ iLink long-poll
 → 回复 iLink
 ```
 
+上述 `codex exec` 是当前已发布 CLI 产物的行为。已确认的下一个 Codex
+Runtime 使用同一本地 Bridge 常驻管理 `codex app-server`：优先用本机保存的
+thread ID 恢复，失败时回放本地最近 20 轮 user/assistant 对话重建会话。
+它使用 `gpt-5.6-luna` / `medium` / `low` 的 Channel 默认值，独立
+`CODEX_HOME` 中只加载 Attention MCP，并在初始化后验证 MCP 列表恰好只有
+`attention`。该候选产物必须完成 Bridge 集成、产物同步和真机门槛后才能
+写成已上线；协议结论见
+[`Codex 常驻 Runtime 设计`](./2026-08-10-attention-codex-resident-runtime-design.md)。
+
 用户首次在终端执行 `attention channel start <host> --background`：桥先通过宿主真实调用 `attention_get_my_account`，然后由用户扫码 iLink；凭据持久化后安装 macOS LaunchAgent、Linux systemd user unit 或 Windows 登录任务。它不是 root 服务，凭据不上报，登录过期时也不会在无人值守状态弹二维码。收发消息先落本地队列，进程中断后可继续；`channel logout` 同时撤销后台服务和本地 iLink 状态。
 
 Claude Code `>= 2.1.80` 另有实验性的 MCP Channels：自定义 stdio Channel 只能向一个正在运行的 CLI 会话推送消息。它不是 Desktop 唤醒机制。稳定的常驻 Claude Agent SDK 方案需要用户自带 Anthropic API Key（或受支持云平台凭证），不能复用 claude.ai Pro/Max OAuth 或额度；这一方案也尚未交付。
 
 ### 4.3 Desktop 支持边界
 
-- Codex Desktop 与 CLI 可交互使用 Attention Skill/MCP；本地 iLink bridge 只由用户设备运行，并通过受限的 `codex exec` 调用当前已安装 CLI。它不依赖实验性的 app-server，也不承诺生成可见 Desktop 对话。
+- Codex Desktop 与 CLI 可交互使用 Attention Skill/MCP；本地 iLink bridge 只由用户设备运行。当前发布产物通过受限 `codex exec` 调用已安装 CLI，正在验收的候选产物改为常驻 `codex app-server`。两者都不承诺生成可见 Desktop 对话。
 - Claude Code 的交互式 Skill/MCP 与 Desktop 入站是两回事。Claude Channels 只作用于正在运行的 CLI；Desktop 入站不支持。
 - Desktop 不是 Channel Owner。iLink token 仍由 native host 或 `attention-channel` 持有，并且不得进入 Desktop、模型上下文或 Attention 服务端。
 - Web 和安装器必须区分“Desktop 已配置”和“微信 Runtime 正在运行”，不能把前者显示成后者。
@@ -168,7 +177,12 @@ Web `/account/connections` 只给一个“复制给 AI”的提示词。Agent �
 5. 用户扫码并从微信发送真实链接；只有 MCP 成功且 Web“我的收藏”出现内容才算完成。
 6. `attention doctor`、`channel status` 只报告可直接观测的本机脱敏事实。
 
-未来某个本地 Reporter 发布后，才增加 Runtime OAuth、安装注册、配对挑战、心跳与断开流程。该流程必须使用和 MCP OAuth 分离的 client/audience/token。WorkBuddy 在没有官方状态接口前不进入这条流程，也不复用 MCP 制造“事件驱动心跳”。失败时从最后一个成功步骤继续，不要求整套重装。
+本地 Reporter 完成发布后，才增加 Runtime OAuth、安装注册、配对挑战、心跳与断开流程。该流程必须使用和 MCP OAuth 分离的 client/audience/token。Reporter 只能上报设备/宿主类型、稳定状态、时间、错误码与队列数等脱敏断点；不得上报 iLink/Codex/MCP token、Codex thread ID、聊天或 message ID、URL、回复、联系人或原始微信标识。WorkBuddy 在没有官方状态接口前不进入这条流程，也不复用 MCP 制造“事件驱动心跳”。失败时从最后一个成功步骤继续，不要求整套重装。
+
+无论 Reporter 是否发布，Bridge 都是唯一 iLink owner。Codex 掉线但 Bridge
+仍在线时，Bridge 可在微信中返回本地状态、接收重试/继续指令并安全排队。
+整台设备或 Bridge 离线时，微信不会有 Attention 回复；服务端最多只能
+显示 Reporter 上次上报的最后心跳与最后断点，不接管 iLink 或模型。
 
 ## 7. Attention 服务端绑定模型
 
@@ -346,7 +360,7 @@ CI 必须验证：
 1. 已完成：schema `2.3.0` Manifest、防过度承诺测试、五宿主 Skill/MCP 安装器、doctor、公开文档和 Web 简化入口。
 2. 已完成：Codex/Claude Code 本地桥、受限宿主调用、账号验收、持久化收发队列、用户级后台服务和本地退出。
 3. 发布门槛：完成两宿主真机矩阵并保存脱敏证据。
-4. 后续：Local Channel Binding、独立 Runtime OAuth 与第一个真实 Reporter；在此之前 Web 不展示连接状态。
+4. 进行中：Codex 常驻 app-server、本地断点/恢复、Local Channel Binding、独立 Runtime OAuth 与第一个真实 Reporter；在这些能力完成发布和真机验收前，Web 不展示实时连接状态。
 5. 后续：分别评估 SDK Companion；WorkBuddy 等待官方可验证接口，不制造私有协议。
-7. Reporter 交付后执行 iLink 实机、launchd/systemd、权限与断线恢复 E2E；
-8. 有可验证数据后再实现 Web 三段连接路径。
+6. Reporter 交付后执行 iLink 实机、launchd/systemd、权限与断线恢复 E2E；
+7. 有可验证数据后再实现 Web 三段连接路径。
