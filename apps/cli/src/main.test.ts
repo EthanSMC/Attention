@@ -71,6 +71,33 @@ describe("Attention CLI", () => {
     expect(capture.errors.join("\n")).toMatch(/--apply/);
   });
 
+  it("passes the interactive Runtime authorizer only to configure apply", async () => {
+    const capture = captureOutput();
+    const authorizeRuntime = async () => {
+      throw new Error("the apply dependency owns invocation order");
+    };
+    let receivedAuthorizer: unknown;
+    expect(await runAttentionCli(
+      [
+        "configure",
+        "codex",
+        "--origin",
+        "https://attention.example",
+        "--apply",
+        "--login",
+      ],
+      {
+        applyConfigure: async (_plan, options) => {
+          receivedAuthorizer = options.authorizeRuntime;
+          return [];
+        },
+        authorizeRuntime,
+        output: capture.output,
+      },
+    )).toBe(0);
+    expect(receivedAuthorizer).toBe(authorizeRuntime);
+  });
+
   it("shows WorkBuddy's downloadable bundle without claiming it was imported", async () => {
     const capture = captureOutput();
     expect(
@@ -165,6 +192,9 @@ describe("Attention CLI", () => {
           "--background",
         ],
         {
+          authorizeRuntime: async () => {
+            throw new Error("background channel start must never open OAuth");
+          },
           output: capture.output,
           runChannel: async (input) => {
             calls.push({ ...input });
@@ -254,6 +284,8 @@ describe("Attention CLI", () => {
     expect(await runAttentionCli(["--help"], { output: capture.output })).toBe(0);
     const help = capture.logs.join("\n");
     expect(help).toContain("attention channel start <codex|claude-code>");
+    expect(help).toContain("separate Runtime OAuth");
+    expect(help).toContain("never opens a browser");
     expect(help).not.toContain("does not ship an Attention iLink companion");
   });
 });

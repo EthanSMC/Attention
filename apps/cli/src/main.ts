@@ -24,6 +24,7 @@ import {
   runDoctor,
 } from "./doctor";
 import { requireAttentionOrigin } from "./origin";
+import type { RuntimeAuthorizer } from "./runtime-oauth";
 
 const CLI_VERSION = "0.1.0";
 
@@ -37,6 +38,7 @@ export interface AttentionCliDependencies {
     plan: ReturnType<typeof buildConfigurePlan>,
     options: ApplyConfigureOptions,
   ) => Promise<readonly ApplyResult[]>;
+  readonly authorizeRuntime?: RuntimeAuthorizer;
   readonly environment?: NodeJS.ProcessEnv;
   readonly output?: OutputWriter;
   readonly runChannel?: (input: {
@@ -93,10 +95,11 @@ Safety:
   configure is a dry run by default. --apply installs, stages, or downloads
   the public Skill according to the host manifest and runs declared MCP
   commands without a shell. WorkBuddy import remains an explicit UI step.
-  OAuth is started only when --apply --login is explicit. Local iLink tokens
-  are never requested, uploaded, or printed: the channel bridge stores them
-  under ~/.attention/channel/ on this device and does not report to the
-  Attention service.
+  MCP OAuth and the separate Runtime OAuth are started only when --apply
+  --login is explicit. Background channel startup never opens a browser.
+  Local iLink tokens are never requested, uploaded, or printed: the channel
+  bridge stores them under ~/.attention/channel/ and reports only bounded,
+  privacy-safe health checkpoints through the dedicated Runtime credential.
 
 Origin:
   Pass --origin or set ATTENTION_ORIGIN. Non-loopback origins must use HTTPS.
@@ -433,6 +436,9 @@ export async function runAttentionCli(
       }
       const apply = dependencies.applyConfigure ?? applyConfigurePlan;
       const results = await apply(plan, {
+        ...(dependencies.authorizeRuntime
+          ? { authorizeRuntime: dependencies.authorizeRuntime }
+          : {}),
         forceSkill: options.forceSkill,
         login: options.login,
       });
