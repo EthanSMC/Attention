@@ -31,8 +31,65 @@ const ANSI_ESCAPE_RE = new RegExp(
   `${String.fromCodePoint(27)}\\[[0-9;]*[A-Za-z]`,
   "gu",
 );
-const ROLLOUT_UUID_RE =
-  /rollout-\d{4}-\d{2}-\d{2}T[\d-]+-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/u;
+const ROLLOUT_FILE_RE =
+  /rollout-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/u;
+
+const ATTENTION_CHANNEL_TOOL_NAMES = [
+  "attention_get_my_account",
+  "attention_list_collections",
+  "attention_collect_content",
+  "attention_select_collection_candidate",
+  "attention_get_collection_status",
+  "attention_update_collection",
+] as const;
+
+const ATTENTION_CHANNEL_APPROVED_WRITE_TOOLS = [
+  "attention_collect_content",
+  "attention_select_collection_candidate",
+  "attention_update_collection",
+] as const;
+
+export interface ParsedCodexJsonLines {
+  readonly reply: string;
+  readonly sessionId: string | null;
+}
+
+/** Extracts stable conversation state from `codex exec --json` output. */
+export function parseCodexJsonLines(output: string): ParsedCodexJsonLines {
+  let reply = "";
+  let sessionId: string | null = null;
+  for (const line of output.split("\n")) {
+    if (!line.trim()) continue;
+    let event: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(line) as unknown;
+      if (parsed === null || typeof parsed !== "object") continue;
+      event = parsed as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (
+      event.type === "thread.started" &&
+      typeof event.thread_id === "string" &&
+      event.thread_id.length > 0
+    ) {
+      sessionId = event.thread_id;
+      continue;
+    }
+    if (event.type !== "item.completed") continue;
+    const item = event.item;
+    if (item === null || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    if (
+      record.type === "agent_message" &&
+      typeof record.text === "string" &&
+      record.text.trim().length > 0
+    ) {
+      reply = record.text.trim();
+    }
+  }
+  return { reply, sessionId };
+}
 
 export function codexSessionsDirectory(homeDirectory: string): string {
   return join(homeDirectory, ".codex", "sessions");
@@ -78,9 +135,22 @@ export async function findLatestCodexSessionId(input: {
             continue;
           }
           for (const file of files) {
-            const match = ROLLOUT_UUID_RE.exec(file);
-            const uuid = match?.[1];
-            if (!uuid) continue;
+            const match = ROLLOUT_FILE_RE.exec(file);
+            const filenameTimestamp = match?.[1];
+            const uuid = match?.[2];
+            if (!filenameTimestamp || !uuid) continue;
+            const sessionStartedAt = Date.parse(
+              filenameTimestamp.replace(
+                /T(\d{2})-(\d{2})-(\d{2})$/u,
+                "T$1:$2:$3",
+              ),
+            );
+            if (
+              Number.isFinite(sessionStartedAt) &&
+              sessionStartedAt < Math.floor(input.sinceMs / 1_000) * 1_000
+            ) {
+              continue;
+            }
             try {
               const info = await stat(join(dayPath, file));
               if (info.mtimeMs >= input.sinceMs) {
@@ -122,6 +192,7 @@ export function createCodexBrain(
       const baseArgs = [
         "--ignore-user-config",
         "--ignore-rules",
+        "--json",
         "--skip-git-repo-check",
         "--sandbox",
         "read-only",
@@ -130,7 +201,6 @@ export function createCodexBrain(
           "browser_use",
           "browser_use_external",
           "browser_use_full_cdp_access",
-          "code_mode_host",
           "computer_use",
           "image_generation",
           "in_app_browser",
@@ -148,6 +218,18 @@ export function createCodexBrain(
         ].flatMap((feature) => ["--disable", feature]),
         "-c",
         `mcp_servers.attention.url=${JSON.stringify(options.mcpUrl)}`,
+        "-c",
+        `mcp_servers.attention.enabled_tools=${JSON.stringify(ATTENTION_CHANNEL_TOOL_NAMES)}`,
+        "-c",
+        `model=${JSON.stringify("gpt-5.6-luna")}`,
+        "-c",
+        `model_reasoning_effort=${JSON.stringify("medium")}`,
+        "-c",
+        `model_verbosity=${JSON.stringify("low")}`,
+        ...ATTENTION_CHANNEL_APPROVED_WRITE_TOOLS.flatMap((tool) => [
+          "-c",
+          `mcp_servers.attention.tools.${tool}.approval_mode=${JSON.stringify("approve")}`,
+        ]),
         "--output-last-message",
         outFile,
       ];
@@ -165,12 +247,11 @@ export function createCodexBrain(
             (options.homeDirectory
               ? join(options.homeDirectory, ".codex")
               : process.env.CODEX_HOME ?? join(homedir(), ".codex")),
-          HOME: input.cwd,
-          USERPROFILE: input.cwd,
         },
         executable: "codex",
         timeoutMs: BRAIN_TIMEOUT_MS,
       });
+      const parsedJsonLines = parseCodexJsonLines(result.stdout);
 
       if (result.timedOut) {
         return {
@@ -191,17 +272,21 @@ export function createCodexBrain(
         await rm(outFile, { force: true }).catch(() => undefined);
       }
       if (!reply) {
+        reply = parsedJsonLines.reply;
+      }
+      if (!reply && parsedJsonLines.sessionId === null) {
         reply = result.stdout.replace(ANSI_ESCAPE_RE, "").trim();
       }
 
       const sessionId =
         result.exitCode === 0
-          ? await findLatestCodexSessionId({
+          ? (parsedJsonLines.sessionId ??
+            (await findLatestCodexSessionId({
               ...(options.homeDirectory
                 ? { homeDirectory: options.homeDirectory }
                 : {}),
               sinceMs: startedAt,
-            })
+            })))
           : null;
 
       const resumeFailed =

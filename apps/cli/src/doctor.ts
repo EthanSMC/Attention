@@ -427,7 +427,10 @@ async function checkHostOAuthSession(
         title: "Host OAuth session",
       };
     }
-    if (attention.auth_status !== "oauth") {
+    if (
+      attention.auth_status !== "oauth" &&
+      attention.auth_status !== "o_auth"
+    ) {
       return {
         detail:
           attention.auth_status === "not_logged_in"

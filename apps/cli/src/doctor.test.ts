@@ -31,7 +31,8 @@ describe("doctor", () => {
           : invocation.args.join(" ") === "mcp list --json"
             ? JSON.stringify([
                 {
-                  auth_status: "oauth",
+                  // Codex 0.147 serializes its OAuth enum as `o_auth`.
+                  auth_status: "o_auth",
                   enabled: true,
                   name: "attention",
                   transport: {

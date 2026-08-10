@@ -9,7 +9,11 @@ import { ATTENTION_MCP_TOOL_NAMES } from "@attention/contracts";
 
 import type { BrainInvocation, ExecBrainResult } from "../brain";
 import { createClaudeCodeBrain } from "./claude-code";
-import { createCodexBrain, findLatestCodexSessionId } from "./codex";
+import {
+  createCodexBrain,
+  findLatestCodexSessionId,
+  parseCodexJsonLines,
+} from "./codex";
 
 const tempDirs: string[] = [];
 
@@ -192,13 +196,14 @@ describe("codex brain", () => {
     expect(captured.invocation?.executable).toBe("codex");
     expect(captured.invocation?.environment).toMatchObject({
       CODEX_HOME: expect.stringContaining("attention-codex-home-"),
-      HOME: "/tmp",
-      USERPROFILE: "/tmp",
     });
-    expect(captured.invocation?.args.slice(0, 6)).toEqual([
+    expect(captured.invocation?.environment).not.toHaveProperty("HOME");
+    expect(captured.invocation?.environment).not.toHaveProperty("USERPROFILE");
+    expect(captured.invocation?.args.slice(0, 7)).toEqual([
       "exec",
       "--ignore-user-config",
       "--ignore-rules",
+      "--json",
       "--skip-git-repo-check",
       "--sandbox",
       "read-only",
@@ -206,13 +211,30 @@ describe("codex brain", () => {
     expect(captured.invocation?.args).toContain(
       'mcp_servers.attention.url="https://attention.example/mcp"',
     );
+    expect(captured.invocation?.args).toContain(
+      'mcp_servers.attention.enabled_tools=["attention_get_my_account","attention_list_collections","attention_collect_content","attention_select_collection_candidate","attention_get_collection_status","attention_update_collection"]',
+    );
+    expect(captured.invocation?.args).toContain("--json");
+    expect(captured.invocation?.args).toContain('model="gpt-5.6-luna"');
+    expect(captured.invocation?.args).toContain(
+      'model_reasoning_effort="medium"',
+    );
+    expect(captured.invocation?.args).toContain('model_verbosity="low"');
+    for (const tool of [
+      "attention_collect_content",
+      "attention_select_collection_candidate",
+      "attention_update_collection",
+    ]) {
+      expect(captured.invocation?.args).toContain(
+        `mcp_servers.attention.tools.${tool}.approval_mode="approve"`,
+      );
+    }
     expect(captured.invocation?.args).toContain("--ignore-rules");
     for (const feature of [
       "apps",
       "browser_use",
       "browser_use_external",
       "browser_use_full_cdp_access",
-      "code_mode_host",
       "computer_use",
       "image_generation",
       "in_app_browser",
@@ -232,6 +254,7 @@ describe("codex brain", () => {
       expect(captured.invocation?.args).toContain(feature);
       expect(flagIndex).toBeGreaterThan(-1);
     }
+    expect(captured.invocation?.args).not.toContain("code_mode_host");
     expect(captured.invocation?.args.slice(-2)).toEqual(["--", "收藏"]);
     expect(outcome.ok).toBe(true);
     expect(outcome.reply).toBe("已收藏 ✓");
@@ -276,6 +299,36 @@ describe("codex brain", () => {
     expect(outcome.reply).toBe("来自 stdout");
   });
 
+  it("uses the thread id and reply emitted by codex JSONL", async () => {
+    const threadId = "019feb18-58cb-73d0-b579-e23e47b6eb53";
+    const brain = createCodexBrain({
+      execImpl: async () =>
+        execResult({
+          stdout: [
+            JSON.stringify({ type: "thread.started", thread_id: threadId }),
+            JSON.stringify({
+              type: "item.completed",
+              item: { type: "agent_message", text: "已收藏 ✓" },
+            }),
+          ].join("\n"),
+        }),
+      homeDirectory: await makeTempDir("attention-codex-jsonl-"),
+      mcpUrl: "https://attention.example/mcp",
+    });
+
+    const outcome = await brain.invoke({
+      cwd: "/tmp",
+      prompt: "收藏",
+      sessionId: null,
+    });
+
+    expect(outcome).toMatchObject({
+      ok: true,
+      reply: "已收藏 ✓",
+      sessionId: threadId,
+    });
+  });
+
   it("marks failed runs as not ok and keeps resume diagnostics", async () => {
     const brain = createCodexBrain({
       execImpl: async () =>
@@ -290,6 +343,27 @@ describe("codex brain", () => {
     });
     expect(outcome.ok).toBe(false);
     expect(outcome.resumeFailed).toBe(true);
+  });
+});
+
+describe("parseCodexJsonLines", () => {
+  it("ignores malformed events while retaining the latest Agent message", () => {
+    expect(
+      parseCodexJsonLines(
+        [
+          "not-json",
+          JSON.stringify({ type: "thread.started", thread_id: "thread-1" }),
+          JSON.stringify({
+            type: "item.completed",
+            item: { type: "agent_message", text: "first" },
+          }),
+          JSON.stringify({
+            type: "item.completed",
+            item: { type: "agent_message", text: "final" },
+          }),
+        ].join("\n"),
+      ),
+    ).toEqual({ reply: "final", sessionId: "thread-1" });
   });
 });
 
@@ -318,5 +392,32 @@ describe("findLatestCodexSessionId", () => {
       sinceMs: 0,
     });
     expect(found).toBeNull();
+  });
+
+  it("ignores an older session whose file was modified during the invocation", async () => {
+    const home = await makeTempDir("attention-codex-session-race-");
+    const oldDir = join(home, ".codex", "sessions", "2026", "07", "31");
+    const newDir = join(home, ".codex", "sessions", "2026", "08", "10");
+    await mkdir(oldDir, { recursive: true });
+    await mkdir(newDir, { recursive: true });
+    const oldUuid = "019fb67d-6501-7943-98dc-5ea421741aa0";
+    const newUuid = "019feb0c-2613-7932-9e7e-80efd6ad361a";
+    const startedAt = new Date("2026-08-10T17:41:09").getTime();
+    await writeFile(
+      join(newDir, `rollout-2026-08-10T17-41-09-${newUuid}.jsonl`),
+      "{}",
+      "utf8",
+    );
+    await writeFile(
+      join(oldDir, `rollout-2026-07-31T12-44-59-${oldUuid}.jsonl`),
+      "{}",
+      "utf8",
+    );
+
+    const found = await findLatestCodexSessionId({
+      homeDirectory: home,
+      sinceMs: startedAt,
+    });
+    expect(found).toBe(newUuid);
   });
 });

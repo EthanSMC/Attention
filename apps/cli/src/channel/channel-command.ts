@@ -29,6 +29,7 @@ import {
   PROCESSING_ACK_REPLY,
 } from "./limits";
 import { handleInboundMessage } from "./pipeline";
+import { shouldSendProcessingAcknowledgement } from "./messages";
 import {
   completeInbound,
   enqueueInbound,
@@ -319,16 +320,20 @@ async function processPendingInbound(
       runtime.state.contextTokens[message.fromUserId] = message.contextToken;
     }
     if (!pending.acknowledged) {
-      enqueueOutbound(runtime.state, {
-        contextToken: message.contextToken,
-        id: outboundIdentifier({ inboundId: pending.id, kind: "ack" }),
-        text: PROCESSING_ACK_REPLY,
-        toUserId: message.fromUserId,
-      });
+      if (shouldSendProcessingAcknowledgement(message)) {
+        enqueueOutbound(runtime.state, {
+          contextToken: message.contextToken,
+          id: outboundIdentifier({ inboundId: pending.id, kind: "ack" }),
+          text: PROCESSING_ACK_REPLY,
+          toUserId: message.fromUserId,
+        });
+      }
       pending.acknowledged = true;
       await persist();
-      await flushPendingOutbound(runtime, persist);
-      if (!runtime.client.token) return;
+      if (runtime.state.pendingOutbound.length > 0) {
+        await flushPendingOutbound(runtime, persist);
+        if (!runtime.client.token) return;
+      }
     }
 
     const outcome = await handleInboundMessage({

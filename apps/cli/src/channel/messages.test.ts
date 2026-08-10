@@ -4,6 +4,7 @@ import {
   extractText,
   messageIdentifier,
   parseInboundMessage,
+  shouldSendProcessingAcknowledgement,
 } from "./messages";
 
 describe("extractText", () => {
@@ -117,5 +118,36 @@ describe("messageIdentifier", () => {
       itemList: [{ text_item: { text: "different" }, type: 1 }],
     });
     expect(other).not.toBe(messageIdentifier(baseMessage));
+  });
+});
+
+describe("shouldSendProcessingAcknowledgement", () => {
+  it("does not interrupt ordinary conversation with a generic acknowledgement", () => {
+    expect(
+      shouldSendProcessingAcknowledgement({
+        contextToken: "ctx",
+        fromUserId: "owner",
+        itemList: [{ text_item: { text: "你好呀" }, type: 1 }],
+        raw: {},
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps a collection-specific acknowledgement for shared links", () => {
+    expect(
+      shouldSendProcessingAcknowledgement({
+        contextToken: "ctx",
+        fromUserId: "owner",
+        itemList: [
+          {
+            text_item: {
+              text: "复制打开小红书 https://xhslink.cn/o/example",
+            },
+            type: 1,
+          },
+        ],
+        raw: {},
+      }),
+    ).toBe(true);
   });
 });

@@ -33,8 +33,8 @@ export const PROCESSED_MESSAGE_RING_SIZE = 1_000;
 /** Maximum durable inbound messages processed in one cycle; excess stays queued. */
 export const MAXIMUM_PENDING_MESSAGES = 5;
 
-/** Immediate non-terminal acknowledgement before the Agent starts work. */
-export const PROCESSING_ACK_REPLY = "收到，正在处理…";
+/** Immediate non-terminal acknowledgement for link collection work only. */
+export const PROCESSING_ACK_REPLY = "正在收藏…";
 
 /** Reply sent for messages that carry no usable text. */
 export const NON_TEXT_REPLY =

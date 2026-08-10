@@ -83,6 +83,15 @@ export interface InboundMessage {
   readonly raw: Record<string, unknown>;
 }
 
+const SHARED_LINK_RE = /(?:https?:\/\/|www\.)[^\s]+/iu;
+
+/** Only link/share collection work gets an intermediate progress receipt. */
+export function shouldSendProcessingAcknowledgement(
+  message: InboundMessage,
+): boolean {
+  return SHARED_LINK_RE.test(extractText(message.itemList).text);
+}
+
 /**
  * Returns a stable identifier for an inbound message, used for
  * deduplication and as the bridge-provided reference for idempotency keys.
