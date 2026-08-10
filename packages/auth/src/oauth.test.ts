@@ -113,6 +113,76 @@ describe("OAuth resource indicators", () => {
       }),
     ).rejects.toMatchObject({ code: "invalid_scope" });
   });
+
+  it("narrows the exact authorization-server scope union for every MCP client", async () => {
+    const db = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: async () => [
+              {
+                active: true,
+                allowedScopes: [...oauthScopesByAudience["attention-mcp"]],
+                clientId: "attention-test-client",
+                name: "Generic MCP client",
+                redirectUris: ["http://127.0.0.1:43820/callback"],
+              },
+            ],
+          }),
+        }),
+      }),
+    } as unknown as AttentionDatabase;
+
+    const request = await validateAuthorizationRequest(db, {
+      clientId: "attention-test-client",
+      codeChallenge: "a".repeat(43),
+      codeChallengeMethod: "S256",
+      redirectUri: "http://127.0.0.1:43820/callback",
+      resource: resources["attention-mcp"],
+      resources,
+      responseType: "code",
+      scope:
+        "profile:read collection:read collection:write digest:read digest:write moderation:write moderation:court:read moderation:court:vote sync:read sync:write public:read public:full ai:search subscription:read runtime:register runtime:heartbeat channel:bind:report channel:disconnect:report",
+    });
+
+    expect(request.scopes).toEqual(
+      [...oauthScopesByAudience["attention-mcp"]].sort(),
+    );
+  });
+
+  it("does not apply the MCP union fallback to the runtime resource", async () => {
+    const db = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: async () => [
+              {
+                active: true,
+                allowedScopes: [...oauthScopesByAudience["attention-channel-runtime"]],
+                clientId: "attention-runtime-client",
+                name: "Runtime client",
+                redirectUris: ["http://127.0.0.1:43820/callback"],
+              },
+            ],
+          }),
+        }),
+      }),
+    } as unknown as AttentionDatabase;
+
+    await expect(
+      validateAuthorizationRequest(db, {
+        clientId: "attention-runtime-client",
+        codeChallenge: "a".repeat(43),
+        codeChallengeMethod: "S256",
+        redirectUri: "http://127.0.0.1:43820/callback",
+        resource: resources["attention-channel-runtime"],
+        resources,
+        responseType: "code",
+        scope:
+          "profile:read collection:read collection:write digest:read digest:write moderation:write moderation:court:read moderation:court:vote sync:read sync:write public:read public:full ai:search subscription:read runtime:register runtime:heartbeat channel:bind:report channel:disconnect:report",
+      }),
+    ).rejects.toMatchObject({ code: "invalid_scope" });
+  });
 });
 
 describe("OAuth dynamic client scope policy", () => {

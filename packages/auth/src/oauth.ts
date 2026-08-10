@@ -181,13 +181,21 @@ function normalizeScopes(value: string): OAuthScope[] {
   return scopes as OAuthScope[];
 }
 
+function isExactScopeSet(
+  scopes: readonly OAuthScope[],
+  expected: readonly OAuthScope[],
+): boolean {
+  const expectedSet = new Set<OAuthScope>(expected);
+  return scopes.length === expectedSet.size && scopes.every((scope) => expectedSet.has(scope));
+}
+
 export function resolveOAuthClientAllowedScopes(value?: string): OAuthScope[] {
   if (value === undefined) return [...oauthDefaultClientScopes];
   const scopes = normalizeScopes(value);
-  // Codex registers the authorization server's exact advertised scope union.
-  // DCR has no resource field, so narrow only that exact union to the MCP
-  // audience; every other mixed-audience request remains invalid below.
-  if (scopes.length === scopeSet.size) {
+  // Some MCP clients register the authorization server's exact advertised
+  // scope union. DCR has no resource field, so narrow only that exact union to
+  // the MCP audience; every other mixed-audience request remains invalid.
+  if (isExactScopeSet(scopes, oauthScopes)) {
     return [...oauthScopesByAudience["attention-mcp"]];
   }
   const runtimeScopes = scopes.filter((scope) => runtimeScopeSet.has(scope));
@@ -234,7 +242,12 @@ export async function validateAuthorizationRequest(
     .limit(1);
   if (!client) throw new OAuthError("invalid_client");
   if (!client.redirectUris.includes(input.redirectUri)) throw new OAuthError("invalid_request");
-  const requestedScopes = normalizeScopes(input.scope);
+  const submittedScopes = normalizeScopes(input.scope);
+  const requestedScopes =
+    resolvedResource.audience === "attention-mcp" &&
+    isExactScopeSet(submittedScopes, oauthScopes)
+      ? [...oauthScopesByAudience["attention-mcp"]].sort()
+      : submittedScopes;
   const audienceScopes = new Set<string>(oauthScopesByAudience[resolvedResource.audience]);
   if (
     requestedScopes.some((scope) => !audienceScopes.has(scope)) ||
