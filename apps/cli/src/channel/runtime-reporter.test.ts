@@ -299,6 +299,67 @@ describe("RuntimeReporter bootstrap", () => {
     expect(reporter.snapshot().bindingId).toBe(bindingId);
     await reporter.stop();
   });
+
+  it("renews an expired pairing challenge without restarting the process", async () => {
+    const paths: string[] = [];
+    const invalidations: number[] = [];
+    const challenges: unknown[] = [];
+    const reporter = createRuntimeReporter(reporterOptions({
+      fetchImpl: async (url) => {
+        const path = new URL(String(url)).pathname;
+        paths.push(path);
+        return path.endsWith("/installations")
+          ? jsonResponse({ installation }, 201)
+          : jsonResponse({ challenge }, 201);
+      },
+      onBindingChallenge: (value) => challenges.push(value),
+      onBindingInvalidated: () => invalidations.push(1),
+    }));
+
+    reporter.start();
+    await vi.waitFor(() => expect(reporter.snapshot().status).toBe("active"));
+    reporter.renewPairing();
+    await vi.waitFor(() => expect(paths).toHaveLength(2));
+
+    expect(paths).toEqual([
+      "/api/runtime/installations",
+      "/api/runtime/channel-bindings",
+    ]);
+    expect(invalidations).toEqual([1]);
+    expect(challenges).toEqual([challenge]);
+    await reporter.stop();
+  });
+
+  it("re-registers when the server no longer has the installation", async () => {
+    const paths: string[] = [];
+    let registrations = 0;
+    const reporter = createRuntimeReporter(reporterOptions({
+      fetchImpl: async (url) => {
+        const path = new URL(String(url)).pathname;
+        paths.push(path);
+        if (path.endsWith("/installations")) {
+          registrations += 1;
+          return jsonResponse({ installation }, 201);
+        }
+        if (path.endsWith("/heartbeat")) {
+          return jsonResponse({ error: { code: "installation_not_found" } }, 404);
+        }
+        return jsonResponse({ installation });
+      },
+    }));
+
+    reporter.start();
+    await vi.waitFor(() => expect(reporter.snapshot().status).toBe("active"));
+    reporter.transition(snapshot);
+    await vi.waitFor(() => expect(registrations).toBe(2));
+
+    expect(paths).toEqual([
+      "/api/runtime/installations",
+      `/api/runtime/installations/${installationId}/heartbeat`,
+      "/api/runtime/installations",
+    ]);
+    await reporter.stop();
+  });
 });
 
 describe("RuntimeReporter scheduling and delivery", () => {
@@ -524,6 +585,31 @@ describe("RuntimeReporter scheduling and delivery", () => {
     });
     expect(JSON.stringify(requests[1]?.body)).not.toContain("owner_user_id");
     await vi.waitFor(() => expect(verified).toEqual([bindingId]));
+    await reporter.stop();
+  });
+
+  it("reports terminal pairing verification failure to the local bridge", async () => {
+    let failed = 0;
+    const reporter = createRuntimeReporter(reporterOptions({
+      fetchImpl: async (url) =>
+        String(url).endsWith("/installations")
+          ? jsonResponse({ installation }, 201)
+          : jsonResponse({ error: { code: "temporarily_unavailable" } }, 503),
+      onPairingVerificationFailed: () => {
+        failed += 1;
+      },
+      retryBackoffMs: [],
+    }));
+
+    reporter.start();
+    await vi.waitFor(() => expect(reporter.snapshot().status).toBe("active"));
+    reporter.verifyPairing({
+      challengeId,
+      pairedPeerFingerprint: "b".repeat(64),
+      pairingCode: "ABCD2345",
+    });
+    await vi.waitFor(() => expect(failed).toBe(1));
+    expect(reporter.snapshot().status).toBe("degraded");
     await reporter.stop();
   });
 

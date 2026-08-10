@@ -180,6 +180,7 @@ describe("channel state persistence", () => {
     state.runtimeReporter = {
       bindingId: "22222222-2222-4222-8222-222222222222",
       installationId: "11111111-1111-4111-8111-111111111111",
+      runtimeClientFingerprint: "a".repeat(64),
     };
     await saveChannelState(state, base);
 
@@ -196,12 +197,14 @@ describe("channel state persistence", () => {
     raw.runtimeReporter = {
       bindingId: "raw-provider-account-id",
       installationId: "11111111-1111-4111-8111-111111111111",
+      runtimeClientFingerprint: "not-a-fingerprint",
     };
     await writeFile(channelStatePath(base), JSON.stringify(raw), "utf8");
 
     expect((await loadChannelState(base)).runtimeReporter).toEqual({
       bindingId: null,
       installationId: "11111111-1111-4111-8111-111111111111",
+      runtimeClientFingerprint: null,
     });
   });
 

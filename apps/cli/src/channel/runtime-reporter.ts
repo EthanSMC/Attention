@@ -72,6 +72,7 @@ export interface RuntimeReporterOptions {
   ) => void;
   readonly onBindingInvalidated?: () => void;
   readonly onBindingVerified?: (bindingId: string) => void;
+  readonly onPairingVerificationFailed?: () => void;
   readonly onStatusChange?: (status: RuntimeReporterStatus) => void;
   readonly requestTimeoutMs?: number;
   readonly retryBackoffMs?: readonly number[];
@@ -102,6 +103,7 @@ interface DeliveryResult {
 
 export interface RuntimeReporter {
   activity(): void;
+  renewPairing(): void;
   snapshot(): RuntimeReporterState;
   start(): void;
   stop(): Promise<void>;
@@ -127,6 +129,7 @@ class LocalRuntimeReporter implements RuntimeReporter {
     | undefined;
   readonly #onBindingInvalidated: (() => void) | undefined;
   readonly #onBindingVerified: ((bindingId: string) => void) | undefined;
+  readonly #onPairingVerificationFailed: (() => void) | undefined;
   readonly #onStatusChange:
     | ((status: RuntimeReporterStatus) => void)
     | undefined;
@@ -164,6 +167,8 @@ class LocalRuntimeReporter implements RuntimeReporter {
     this.#onBindingChallenge = options.onBindingChallenge;
     this.#onBindingInvalidated = options.onBindingInvalidated;
     this.#onBindingVerified = options.onBindingVerified;
+    this.#onPairingVerificationFailed =
+      options.onPairingVerificationFailed;
     this.#onStatusChange = options.onStatusChange;
     this.#requestTimeoutMs = positiveDuration(
       options.requestTimeoutMs,
@@ -220,6 +225,14 @@ class LocalRuntimeReporter implements RuntimeReporter {
     });
   }
 
+  renewPairing(): void {
+    if (!this.#started || !this.#accepting) return;
+    this.#enqueue(async () => {
+      this.#invalidateBinding();
+      await this.#ensureRegistered();
+    });
+  }
+
   verifyPairing(input: RuntimePairingVerification): void {
     if (!this.#started || !this.#accepting) return;
     const bindingId = input.bindingId ?? this.#bindingId;
@@ -245,6 +258,9 @@ class LocalRuntimeReporter implements RuntimeReporter {
       } else if (bindingRejected(result)) {
         this.#invalidateBinding();
         await this.#ensureRegistered();
+        this.#onPairingVerificationFailed?.();
+      } else {
+        this.#onPairingVerificationFailed?.();
       }
     });
   }
@@ -296,10 +312,14 @@ class LocalRuntimeReporter implements RuntimeReporter {
         runtime_checkpoint: checkpointReport(snapshot),
         runtime_health: runtimeHealth(snapshot),
       });
-      await this.#post(
+      const result = await this.#post(
         `/installations/${encodeURIComponent(this.#identity.installationId)}/heartbeat`,
         body,
       );
+      if (!result.ok && result.status === 404) {
+        this.#registered = false;
+        await this.#ensureRegistered();
+      }
     }, duringStop);
   }
 

@@ -54,6 +54,7 @@ export interface RuntimeCheckpoint {
 export interface RuntimeReporterLocalState {
   bindingId: string | null;
   installationId: string | null;
+  runtimeClientFingerprint: string | null;
 }
 
 export interface PendingInboundMessage {
@@ -112,7 +113,11 @@ export function defaultChannelState(): ChannelState {
     pendingInbound: [],
     pendingOutbound: [],
     processedMessageIds: [],
-    runtimeReporter: { bindingId: null, installationId: null },
+    runtimeReporter: {
+      bindingId: null,
+      installationId: null,
+      runtimeClientFingerprint: null,
+    },
     runtimeState: defaultRuntimeCheckpoint(),
     syncBuf: "",
     token: null,
@@ -228,7 +233,11 @@ function normalizeRuntimeReporterState(
   raw: unknown,
 ): RuntimeReporterLocalState {
   if (raw === null || typeof raw !== "object") {
-    return { bindingId: null, installationId: null };
+    return {
+      bindingId: null,
+      installationId: null,
+      runtimeClientFingerprint: null,
+    };
   }
   const record = raw as Record<string, unknown>;
   return {
@@ -241,6 +250,11 @@ function normalizeRuntimeReporterState(
       typeof record.installationId === "string" &&
       UUID_PATTERN.test(record.installationId)
         ? record.installationId
+        : null,
+    runtimeClientFingerprint:
+      typeof record.runtimeClientFingerprint === "string" &&
+      /^[a-f0-9]{64}$/u.test(record.runtimeClientFingerprint)
+        ? record.runtimeClientFingerprint
         : null,
   };
 }
