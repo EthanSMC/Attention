@@ -38,6 +38,8 @@ export interface PipelineInput {
   /** Working directory for brain subprocesses (the channel state dir). */
   readonly cwd: string;
   readonly message: InboundMessage;
+  /** Ephemeral server pairing code; never persisted or replayed. */
+  readonly pairingCode?: string | null;
   readonly state: ChannelState;
   /** Brain invocation seam so tests can run without a real host CLI. */
   readonly invokeBrain?: (input: {
@@ -62,6 +64,7 @@ export type ControlCommand =
   | "help"
   | "retry"
   | "continue"
+  | "pairing_verification"
   | "reset_confirmation"
   | "reset";
 
@@ -143,9 +146,12 @@ export async function handleInboundMessage(
       TRUNCATION_NOTE;
   }
 
-  const controlCommand = matchControlCommand(text, {
-    degraded: canResumeInterruptedTurn(state),
-  });
+  const controlCommand =
+    input.pairingCode && text.trim() === input.pairingCode
+      ? "pairing_verification"
+      : matchControlCommand(text, {
+          degraded: canResumeInterruptedTurn(state),
+        });
   if (controlCommand === "reset") {
     state.history = [];
     state.brainSession = null;
@@ -214,6 +220,8 @@ function buildControlReply(
   switch (command) {
     case "help":
       return CONTROL_HELP_REPLY;
+    case "pairing_verification":
+      return "正在验证设备绑定…";
     case "retry":
       return CONTROL_RETRY_REPLY;
     case "continue":

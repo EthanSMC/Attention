@@ -131,6 +131,27 @@ describe("handleInboundMessage", () => {
     expect(state.history).toEqual([]);
   });
 
+  it("intercepts only the exact ephemeral Runtime pairing code", async () => {
+    const state = defaultChannelState();
+    let calls = 0;
+    const output = await handleInboundMessage({
+      brain: fakeBrain("codex"),
+      cwd: "/tmp",
+      invokeBrain: async () => {
+        calls += 1;
+        return okOutcome("never");
+      },
+      message: textMessage(" ABCD2345 "),
+      pairingCode: "ABCD2345",
+      state,
+    });
+
+    expect(calls).toBe(0);
+    expect(output.controlCommand).toBe("pairing_verification");
+    expect(output.replies).toEqual(["正在验证设备绑定…"]);
+    expect(state.history).toEqual([]);
+  });
+
   it("passes ordinary text containing command words to the brain", async () => {
     const state = defaultChannelState();
     state.runtimeState.phase = "degraded_runtime";

@@ -70,6 +70,7 @@ export interface RuntimeReporterOptions {
   readonly onBindingChallenge?: (
     challenge: ChannelBindingChallenge,
   ) => void;
+  readonly onBindingVerified?: (bindingId: string) => void;
   readonly onStatusChange?: (status: RuntimeReporterStatus) => void;
   readonly requestTimeoutMs?: number;
   readonly retryBackoffMs?: readonly number[];
@@ -122,6 +123,7 @@ class LocalRuntimeReporter implements RuntimeReporter {
   readonly #onBindingChallenge:
     | ((challenge: ChannelBindingChallenge) => void)
     | undefined;
+  readonly #onBindingVerified: ((bindingId: string) => void) | undefined;
   readonly #onStatusChange:
     | ((status: RuntimeReporterStatus) => void)
     | undefined;
@@ -156,6 +158,7 @@ class LocalRuntimeReporter implements RuntimeReporter {
     this.#currentSnapshot = options.snapshot;
     this.#now = options.now ?? (() => new Date());
     this.#onBindingChallenge = options.onBindingChallenge;
+    this.#onBindingVerified = options.onBindingVerified;
     this.#onStatusChange = options.onStatusChange;
     this.#requestTimeoutMs = positiveDuration(
       options.requestTimeoutMs,
@@ -262,7 +265,10 @@ class LocalRuntimeReporter implements RuntimeReporter {
         `/channel-bindings/${encodeURIComponent(bindingId)}/verify`,
         body,
       );
-      if (result.ok) this.#bindingId = bindingId;
+      if (result.ok) {
+        this.#bindingId = bindingId;
+        this.#onBindingVerified?.(bindingId);
+      }
     });
   }
 

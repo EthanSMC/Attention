@@ -177,10 +177,32 @@ describe("channel state persistence", () => {
     };
     state.history = [{ content: "hi", role: "user" }];
     state.processedMessageIds = ["m-1"];
+    state.runtimeReporter = {
+      bindingId: "22222222-2222-4222-8222-222222222222",
+      installationId: "11111111-1111-4111-8111-111111111111",
+    };
     await saveChannelState(state, base);
 
     const loaded = await loadChannelState(base);
     expect(loaded).toEqual(state);
+  });
+
+  it("migrates and validates opaque Runtime reporter identifiers", async () => {
+    const base = await makeTempBase();
+    await saveChannelState(defaultChannelState(), base);
+    const raw = JSON.parse(
+      await readFile(channelStatePath(base), "utf8"),
+    ) as Record<string, unknown>;
+    raw.runtimeReporter = {
+      bindingId: "raw-provider-account-id",
+      installationId: "11111111-1111-4111-8111-111111111111",
+    };
+    await writeFile(channelStatePath(base), JSON.stringify(raw), "utf8");
+
+    expect((await loadChannelState(base)).runtimeReporter).toEqual({
+      bindingId: null,
+      installationId: "11111111-1111-4111-8111-111111111111",
+    });
   });
 
   it("writes the state file with restrictive permissions", async () => {

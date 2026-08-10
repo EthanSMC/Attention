@@ -419,6 +419,7 @@ describe("RuntimeReporter scheduling and delivery", () => {
   it("reports pairing verification with only the irreversible peer fingerprint", async () => {
     const requests: SeenRequest[] = [];
     const peerFingerprint = "b".repeat(64);
+    const verified: string[] = [];
     const reporter = createRuntimeReporter(reporterOptions({
       fetchImpl: async (url, init) => {
         requests.push({
@@ -430,6 +431,7 @@ describe("RuntimeReporter scheduling and delivery", () => {
           ? jsonResponse({ installation }, 201)
           : jsonResponse({ binding: {} });
       },
+      onBindingVerified: (value) => verified.push(value),
     }));
 
     reporter.start();
@@ -453,6 +455,7 @@ describe("RuntimeReporter scheduling and delivery", () => {
       pairing_code: "ABCD2345",
     });
     expect(JSON.stringify(requests[1]?.body)).not.toContain("owner_user_id");
+    await vi.waitFor(() => expect(verified).toEqual([bindingId]));
     await reporter.stop();
   });
 

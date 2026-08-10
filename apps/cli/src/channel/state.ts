@@ -50,6 +50,12 @@ export interface RuntimeCheckpoint {
   retryAttempt: number;
 }
 
+/** Opaque control-plane identifiers; contains no provider or OAuth secret. */
+export interface RuntimeReporterLocalState {
+  bindingId: string | null;
+  installationId: string | null;
+}
+
 export interface PendingInboundMessage {
   acknowledged: boolean;
   attempts: number;
@@ -77,6 +83,7 @@ export interface ChannelState {
   lastActivityAt: string | null;
   pendingInbound: PendingInboundMessage[];
   pendingOutbound: PendingOutboundMessage[];
+  runtimeReporter: RuntimeReporterLocalState;
   runtimeState: RuntimeCheckpoint;
 }
 
@@ -105,6 +112,7 @@ export function defaultChannelState(): ChannelState {
     pendingInbound: [],
     pendingOutbound: [],
     processedMessageIds: [],
+    runtimeReporter: { bindingId: null, installationId: null },
     runtimeState: defaultRuntimeCheckpoint(),
     syncBuf: "",
     token: null,
@@ -204,11 +212,36 @@ function normalizeState(raw: unknown): ChannelState {
             typeof (item as PendingOutboundMessage).toUserId === "string",
         )
       : [],
+    runtimeReporter: normalizeRuntimeReporterState(record.runtimeReporter),
     runtimeState: normalizeRuntimeCheckpoint(record.runtimeState),
     syncBuf: typeof record.syncBuf === "string" ? record.syncBuf : "",
     token: typeof record.token === "string" && record.token
       ? record.token
       : null,
+  };
+}
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+function normalizeRuntimeReporterState(
+  raw: unknown,
+): RuntimeReporterLocalState {
+  if (raw === null || typeof raw !== "object") {
+    return { bindingId: null, installationId: null };
+  }
+  const record = raw as Record<string, unknown>;
+  return {
+    bindingId:
+      typeof record.bindingId === "string" &&
+      UUID_PATTERN.test(record.bindingId)
+        ? record.bindingId
+        : null,
+    installationId:
+      typeof record.installationId === "string" &&
+      UUID_PATTERN.test(record.installationId)
+        ? record.installationId
+        : null,
   };
 }
 
