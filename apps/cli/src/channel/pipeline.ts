@@ -7,12 +7,18 @@
  * serial queue and the actual iLink reply sending.
  */
 
+import { createHash } from "node:crypto";
+
 import type { BrainAdapter, BrainOutcome } from "./brain";
 import {
   BRAIN_FAILURE_REPLY,
   BRAIN_MAXIMUM_INPUT_CHARS,
+  CONTROL_CONTINUE_REPLY,
+  CONTROL_HELP_REPLY,
+  CONTROL_RETRY_REPLY,
   MAXIMUM_REPLY_CHARS,
   NON_TEXT_REPLY,
+  RESET_CONFIRMATION_REPLY,
   RESET_REPLY,
 } from "./limits";
 import { type InboundMessage, extractText, messageIdentifier } from "./messages";
@@ -47,10 +53,55 @@ export interface PipelineOutput {
   readonly replies: readonly string[];
   /** True when the message was new and fully handled. */
   readonly processed: boolean;
+  /** Exact local command handled without invoking the brain, when present. */
+  readonly controlCommand?: ControlCommand;
 }
 
-const RESET_COMMAND = "/reset";
+export type ControlCommand =
+  | "status"
+  | "help"
+  | "retry"
+  | "continue"
+  | "reset_confirmation"
+  | "reset";
+
 const TRUNCATION_NOTE = "\n…（内容过长已截断）";
+
+const ALWAYS_LOCAL_COMMANDS: Readonly<Record<string, ControlCommand>> = {
+  "/help": "help",
+  "/reset": "reset",
+  "/retry": "retry",
+  "/status": "status",
+  "帮助": "help",
+  "连接状态": "status",
+  "重新连接": "retry",
+  "状态": "status",
+  "重试": "retry",
+  "重置会话": "reset_confirmation",
+};
+
+/** Derives a bounded idempotency reference from the complete message id. */
+export function buildMessageRef(messageId: string): string {
+  const digest = createHash("sha256").update(messageId).digest("hex");
+  return `msg-${digest.slice(0, 48)}`;
+}
+
+/** Matches only a complete trimmed control message. */
+export function matchControlCommand(
+  text: string,
+  context: { readonly degraded: boolean },
+): ControlCommand | null {
+  const commandText = text.trim();
+  const alwaysLocal = ALWAYS_LOCAL_COMMANDS[commandText];
+  if (alwaysLocal) return alwaysLocal;
+  if (
+    context.degraded &&
+    (commandText === "继续" || commandText === "/continue")
+  ) {
+    return "continue";
+  }
+  return null;
+}
 
 export async function handleInboundMessage(
   input: PipelineInput,
@@ -92,15 +143,35 @@ export async function handleInboundMessage(
       TRUNCATION_NOTE;
   }
 
-  if (text.trim() === RESET_COMMAND) {
+  const controlCommand = matchControlCommand(text, {
+    degraded: canResumeInterruptedTurn(state),
+  });
+  if (controlCommand === "reset") {
     state.history = [];
     state.brainSession = null;
+    state.runtimeState.activeTurnMessageRef = null;
     state.lastActivityAt = new Date().toISOString();
     rememberProcessedMessage(state, messageId);
-    return { completed: true, processed: true, replies: [RESET_REPLY] };
+    return {
+      completed: true,
+      controlCommand,
+      processed: true,
+      replies: [RESET_REPLY],
+    };
+  }
+  if (controlCommand) {
+    state.lastActivityAt = new Date().toISOString();
+    rememberProcessedMessage(state, messageId);
+    return {
+      completed: true,
+      controlCommand,
+      processed: true,
+      replies: [buildControlReply(controlCommand, state)],
+    };
   }
 
-  const messageRef = `msg-${messageId}`.slice(0, 64);
+  const messageRef = buildMessageRef(messageId);
+  state.runtimeState.activeTurnMessageRef = messageRef;
   const outcome = await invokeWithFallback(input, text, messageRef);
 
   state.lastActivityAt = new Date().toISOString();
@@ -114,6 +185,8 @@ export async function handleInboundMessage(
     };
   }
 
+  state.runtimeState.activeTurnMessageRef = null;
+  state.runtimeState.lastSuccessfulMessageAt = state.lastActivityAt;
   appendHistory(state, text, outcome.reply.trim());
   rememberProcessedMessage(state, messageId);
   return {
@@ -121,6 +194,50 @@ export async function handleInboundMessage(
     processed: true,
     replies: splitReply(outcome.reply.trim()),
   };
+}
+
+function canResumeInterruptedTurn(state: ChannelState): boolean {
+  if (state.runtimeState.activeTurnMessageRef === null) return false;
+  return (
+    state.runtimeState.phase === "restarting" ||
+    state.runtimeState.phase === "recovering_thread" ||
+    state.runtimeState.phase === "replaying_history" ||
+    state.runtimeState.phase === "degraded_auth" ||
+    state.runtimeState.phase === "degraded_runtime"
+  );
+}
+
+function buildControlReply(
+  command: Exclude<ControlCommand, "reset">,
+  state: ChannelState,
+): string {
+  switch (command) {
+    case "help":
+      return CONTROL_HELP_REPLY;
+    case "retry":
+      return CONTROL_RETRY_REPLY;
+    case "continue":
+      return CONTROL_CONTINUE_REPLY;
+    case "reset_confirmation":
+      return RESET_CONFIRMATION_REPLY;
+    case "status": {
+      const runtime = state.runtimeState;
+      const wechat = state.token
+        ? "本地存在微信登录态"
+        : "本地未保存微信登录态";
+      const lastSuccess = runtime.lastSuccessfulMessageAt ?? "无";
+      const retry = runtime.nextRetryAt
+        ? `下次自动重试：${runtime.nextRetryAt}。`
+        : "";
+      return [
+        `${wechat}。`,
+        `Codex Runtime：${runtime.phase}。`,
+        `最近成功处理：${lastSuccess}。`,
+        `${state.pendingInbound.length} 条消息等待处理，${state.pendingOutbound.length} 条待发送。`,
+        retry,
+      ].join("");
+    }
+  }
 }
 
 async function invokeWithFallback(

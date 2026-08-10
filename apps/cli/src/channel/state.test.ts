@@ -1,5 +1,11 @@
-import { stat } from "node:fs/promises";
-import { mkdtemp, rm } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +14,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { BRAIN_HISTORY_TURNS, PROCESSED_MESSAGE_RING_SIZE } from "./limits";
 import {
   appendHistory,
+  channelStateDirectory,
   channelStatePath,
   clearChannelState,
   defaultChannelState,
@@ -37,6 +44,124 @@ describe("channel state persistence", () => {
     expect(state).toEqual(defaultChannelState());
   });
 
+  it("migrates state without a runtime checkpoint to safe stopped defaults", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    await saveChannelState(state, base);
+    const raw = JSON.parse(
+      await readFile(channelStatePath(base), "utf8"),
+    ) as Record<string, unknown>;
+    delete raw.runtimeState;
+    await writeFile(channelStatePath(base), JSON.stringify(raw), "utf8");
+
+    expect((await loadChannelState(base)).runtimeState).toEqual({
+      activeTurnMessageRef: null,
+      lastErrorCode: null,
+      lastHealthyAt: null,
+      lastSuccessfulMessageAt: null,
+      lastTransitionAt: null,
+      nextRetryAt: null,
+      phase: "stopped",
+      retryAttempt: 0,
+    });
+  });
+
+  it("persists a runtime phase checkpoint atomically", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    state.runtimeState = {
+      activeTurnMessageRef:
+        "msg-72cad190ed71ed0309138ac14e9982dbc21abd357ff0820d",
+      lastErrorCode: "codex_runtime_crashed",
+      lastHealthyAt: "2026-08-10T10:00:00.000Z",
+      lastSuccessfulMessageAt: "2026-08-10T10:01:00.000Z",
+      lastTransitionAt: "2026-08-10T10:02:00.000Z",
+      nextRetryAt: "2026-08-10T10:02:04.000Z",
+      phase: "restarting",
+      retryAttempt: 3,
+    };
+
+    await saveChannelState(state, base);
+
+    expect((await loadChannelState(base)).runtimeState).toEqual(
+      state.runtimeState,
+    );
+  });
+
+  it("normalizes an invalid runtime checkpoint to safe stopped defaults", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    await saveChannelState(state, base);
+    const raw = JSON.parse(
+      await readFile(channelStatePath(base), "utf8"),
+    ) as Record<string, unknown>;
+    raw.runtimeState = {
+      activeTurnMessageRef: 12,
+      lastErrorCode: ["secret"],
+      lastHealthyAt: "not-a-date",
+      lastSuccessfulMessageAt: false,
+      lastTransitionAt: {},
+      nextRetryAt: "tomorrow",
+      phase: "unknown",
+      retryAttempt: -1,
+    };
+    await writeFile(channelStatePath(base), JSON.stringify(raw), "utf8");
+
+    expect((await loadChannelState(base)).runtimeState).toEqual(
+      defaultChannelState().runtimeState,
+    );
+  });
+
+  it("keeps a valid phase while rejecting non-ISO checkpoint fields", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    await saveChannelState(state, base);
+    const raw = JSON.parse(
+      await readFile(channelStatePath(base), "utf8"),
+    ) as Record<string, unknown>;
+    raw.runtimeState = {
+      activeTurnMessageRef: "raw-message-id",
+      lastErrorCode: "Bearer secret-token",
+      lastHealthyAt: "2026-08-10",
+      lastSuccessfulMessageAt: null,
+      lastTransitionAt: "2026-08-10T10:02:00.000Z",
+      nextRetryAt: null,
+      phase: "restarting",
+      retryAttempt: 2,
+    };
+    await writeFile(channelStatePath(base), JSON.stringify(raw), "utf8");
+
+    expect((await loadChannelState(base)).runtimeState).toEqual({
+      activeTurnMessageRef: null,
+      lastErrorCode: null,
+      lastHealthyAt: null,
+      lastSuccessfulMessageAt: null,
+      lastTransitionAt: "2026-08-10T10:02:00.000Z",
+      nextRetryAt: null,
+      phase: "restarting",
+      retryAttempt: 2,
+    });
+  });
+
+  it("does not persist raw message ids or diagnostic text in a checkpoint", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    state.runtimeState.phase = "degraded_runtime";
+    state.runtimeState.activeTurnMessageRef = "raw-private-message-id";
+    state.runtimeState.lastErrorCode = "Bearer secret-diagnostic";
+
+    await saveChannelState(state, base);
+
+    const persisted = await readFile(channelStatePath(base), "utf8");
+    expect(persisted).not.toContain("raw-private-message-id");
+    expect(persisted).not.toContain("secret-diagnostic");
+    expect((await loadChannelState(base)).runtimeState).toMatchObject({
+      activeTurnMessageRef: null,
+      lastErrorCode: null,
+      phase: "degraded_runtime",
+    });
+  });
+
   it("round-trips state through disk", async () => {
     const base = await makeTempBase();
     const state = defaultChannelState();
@@ -61,15 +186,19 @@ describe("channel state persistence", () => {
   it("writes the state file with restrictive permissions", async () => {
     const base = await makeTempBase();
     await saveChannelState(defaultChannelState(), base);
+    await chmod(channelStateDirectory(base), 0o755);
+    await chmod(channelStatePath(base), 0o644);
+    await saveChannelState(defaultChannelState(), base);
     const info = await stat(channelStatePath(base));
     expect(info.mode & 0o777).toBe(0o600);
+    const directoryInfo = await stat(channelStateDirectory(base));
+    expect(directoryInfo.mode & 0o777).toBe(0o700);
   });
 
   it("rejects corrupted state files instead of guessing", async () => {
     const base = await makeTempBase();
     const corrupted = defaultChannelState();
     await saveChannelState(corrupted, base);
-    const { writeFile } = await import("node:fs/promises");
     await writeFile(channelStatePath(base), "{not-json", "utf8");
     await expect(loadChannelState(base)).rejects.toThrow();
   });
@@ -83,7 +212,6 @@ describe("channel state persistence", () => {
       updatedAt: "now",
     };
     await saveChannelState(state, base);
-    const { readFile, writeFile } = await import("node:fs/promises");
     const raw = JSON.parse(
       await readFile(channelStatePath(base), "utf8"),
     ) as Record<string, unknown>;
@@ -136,5 +264,20 @@ describe("channel state persistence", () => {
       content: "q10",
       role: "user",
     });
+  });
+
+  it("loads only the most recent twenty complete exchanges", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    state.history = Array.from({ length: 25 }, (_, index) => [
+      { content: `q${index}`, role: "user" as const },
+      { content: `a${index}`, role: "assistant" as const },
+    ]).flat();
+    await saveChannelState(state, base);
+
+    const history = (await loadChannelState(base)).history;
+    expect(history).toHaveLength(40);
+    expect(history[0]).toEqual({ content: "q5", role: "user" });
+    expect(history.at(-1)).toEqual({ content: "a24", role: "assistant" });
   });
 });
