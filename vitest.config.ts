@@ -5,6 +5,11 @@ import { defineConfig } from "vitest/config";
 const root = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
+  oxc: {
+    jsx: {
+      runtime: "automatic",
+    },
+  },
   resolve: {
     alias: {
       "@attention/ai": `${root}packages/ai/src/index.ts`,
@@ -19,7 +24,12 @@ export default defineConfig({
     }
   },
   test: {
-    include: ["tests/**/*.test.ts", "packages/**/*.test.ts", "apps/**/*.test.ts"],
+    include: [
+      "tests/**/*.test.ts",
+      "packages/**/*.test.ts",
+      "apps/**/*.test.ts",
+      "apps/**/*.test.tsx",
+    ],
     coverage: {
       reporter: ["text", "html"]
     }
