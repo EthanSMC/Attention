@@ -567,15 +567,9 @@ export async function channelStart(
       let reporterIdentityChanged = false;
       const previousRuntimeClientFingerprint =
         runtime.state.runtimeReporter.runtimeClientFingerprint;
-      if (
-        runtimeClientFingerprint &&
-        previousRuntimeClientFingerprint &&
-        runtimeClientFingerprint !== previousRuntimeClientFingerprint
-      ) {
-        runtime.state.runtimeReporter.bindingId = null;
-        runtime.state.runtimeReporter.installationId = null;
-        reporterIdentityChanged = true;
-      }
+      // DCR issues a new client_id on normal reauthorization. Its fingerprint
+      // can restart the Reporter onto fresh credentials, but it is not a
+      // reliable account-switch signal and must not rotate device identity.
       if (
         runtimeClientFingerprint &&
         runtimeClientFingerprint !== previousRuntimeClientFingerprint
