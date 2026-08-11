@@ -3,7 +3,6 @@
 import {
   type FormEvent,
   useCallback,
-  useMemo,
   useReducer,
   useRef,
   useState,
@@ -17,11 +16,17 @@ import {
   createApiKeyManagerState,
 } from "./api-key-manager-state";
 
-interface OAuthConnection {
-  clientId: string;
-  clientName: string;
-  createdAt: string;
+interface McpOAuthConnection {
+  id: string;
+  label: string;
+  lastAuthorizedAt: string;
+  lastUsedAt: string | null;
   scopes: string[];
+}
+
+interface McpOAuthConnectionGroup {
+  clientName: string;
+  connections: McpOAuthConnection[];
 }
 
 interface LocalChannelRuntime {
@@ -57,17 +62,89 @@ const runtimeStatusLabels: Record<LocalChannelRuntime["status"], string> = {
   stale: "久未在线",
 };
 
+export function OAuthGroupRevokeModal({
+  busy,
+  clientName,
+  connectionCount,
+  onCancel,
+  onConfirm,
+}: {
+  busy: boolean;
+  clientName: string;
+  connectionCount: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      aria-labelledby="oauth-group-revoke-title"
+      aria-modal="true"
+      className="collect-modal oauth-group-revoke-modal"
+      role="dialog"
+    >
+      <button
+        aria-label="关闭撤销确认"
+        className="collect-modal__backdrop"
+        disabled={busy}
+        onClick={onCancel}
+        tabIndex={-1}
+        type="button"
+      />
+      <section className="collect-modal__sheet oauth-group-revoke-modal__sheet">
+        <header className="collect-modal__heading">
+          <div>
+            <p className="eyebrow">OAuth / MCP</p>
+            <h2 id="oauth-group-revoke-title">
+              撤销 {clientName} 的 {connectionCount} 个连接？
+            </h2>
+          </div>
+          <button
+            aria-label="关闭"
+            className="collect-modal__close"
+            disabled={busy}
+            onClick={onCancel}
+            type="button"
+          >
+            ×
+          </button>
+        </header>
+        <p>
+          这 {connectionCount} 个连接会立即停止访问 Attention。连接名称会重新可用，之后仍可再次授权。
+        </p>
+        <div className="oauth-group-revoke-modal__actions">
+          <button
+            className="button button--secondary"
+            disabled={busy}
+            onClick={onCancel}
+            type="button"
+          >
+            取消
+          </button>
+          <button
+            className="button button--danger"
+            disabled={busy}
+            onClick={onConfirm}
+            type="button"
+          >
+            {busy ? "正在撤销…" : `撤销全部 ${connectionCount} 个连接`}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function ConnectionManager({
   agentConnectionPrompt,
   agentDocumentationUrl,
   localChannelRuntimes,
-  oauthConnections,
+  mcpOAuthConnections,
   pats,
 }: {
   agentConnectionPrompt: string;
   agentDocumentationUrl: string;
   localChannelRuntimes: LocalChannelRuntime[];
-  oauthConnections: OAuthConnection[];
+  mcpOAuthConnections: McpOAuthConnectionGroup[];
   pats: PatConnection[];
 }) {
   const [apiKeys, dispatchApiKey] = useReducer(
@@ -77,16 +154,15 @@ export function ConnectionManager({
   );
   const { clearFeedback, feedback, showFeedback } = useTransientFeedback();
   const [revokingPatId, setRevokingPatId] = useState<string | null>(null);
+  const [revokingOAuthConnectionId, setRevokingOAuthConnectionId] = useState<
+    string | null
+  >(null);
+  const [oauthGroupToRevoke, setOAuthGroupToRevoke] = useState<
+    McpOAuthConnectionGroup | null
+  >(null);
+  const [revokingOAuthGroup, setRevokingOAuthGroup] = useState(false);
   const createRequestInFlight = useRef(false);
   const revokeRequestInFlight = useRef(false);
-  const activeClients = useMemo(() => {
-    const seen = new Set<string>();
-    return oauthConnections.filter((item) => {
-      if (seen.has(item.clientId)) return false;
-      seen.add(item.clientId);
-      return true;
-    });
-  }, [oauthConnections]);
   const activePats = apiKeys.rows.filter((item) => item.status === "active");
 
   async function copy(value: string, label = "内容") {
@@ -192,10 +268,51 @@ export function ConnectionManager({
     }
   }
 
-  async function revokeOAuth(clientId: string) {
-    const response = await fetch(`/api/account/oauth/${encodeURIComponent(clientId)}`, { method: "DELETE" });
-    if (response.ok) window.location.reload();
-    else showFeedback("撤销没有完成，请重试。", "error");
+  async function revokeOAuthConnection(connectionId: string) {
+    if (revokeRequestInFlight.current) return;
+    revokeRequestInFlight.current = true;
+    setRevokingOAuthConnectionId(connectionId);
+    clearFeedback();
+    try {
+      const response = await fetch(
+        `/api/account/oauth/${encodeURIComponent(connectionId)}`,
+        { method: "DELETE" },
+      );
+      if (response.ok) window.location.reload();
+      else showFeedback("撤销没有完成，请重试。", "error");
+    } catch {
+      showFeedback("网络连接失败，撤销没有完成。请重试。", "error");
+    } finally {
+      revokeRequestInFlight.current = false;
+      setRevokingOAuthConnectionId(null);
+    }
+  }
+
+  async function revokeOAuthGroup(group: McpOAuthConnectionGroup) {
+    if (revokeRequestInFlight.current) return;
+    revokeRequestInFlight.current = true;
+    setRevokingOAuthGroup(true);
+    clearFeedback();
+    try {
+      const response = await fetch("/api/account/oauth/group", {
+        body: JSON.stringify({ client_name: group.clientName }),
+        headers: { "Content-Type": "application/json" },
+        method: "DELETE",
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        revoked_count?: number;
+      };
+      if (response.ok && result.revoked_count === group.connections.length) {
+        window.location.reload();
+      } else {
+        showFeedback("批量撤销没有完成，请刷新页面后重试。", "error");
+      }
+    } catch {
+      showFeedback("网络连接失败，批量撤销没有完成。请重试。", "error");
+    } finally {
+      revokeRequestInFlight.current = false;
+      setRevokingOAuthGroup(false);
+    }
   }
 
   return (
@@ -281,7 +398,75 @@ export function ConnectionManager({
       <section className="connection-card">
         <p className="settings-card__eyebrow">已授权客户端</p>
         <h2>OAuth 连接</h2>
-        {activeClients.length ? <ul className="credential-list">{activeClients.map((item) => <li key={item.clientId}><div><strong>{item.clientName}</strong><span>{item.scopes.join(" · ")}</span></div><button onClick={() => revokeOAuth(item.clientId)} type="button">撤销</button></li>)}</ul> : <p>还没有 OAuth 客户端连接。</p>}
+        <p>每个名称代表一次独立授权。展开客户端后，可以查看权限与最近活动，或只撤销其中一个连接。</p>
+        {mcpOAuthConnections.length ? (
+          <div className="oauth-connection-groups">
+            {mcpOAuthConnections.map((group) => (
+              <details className="oauth-connection-group" key={group.clientName}>
+                <summary>
+                  <strong>
+                    {group.clientName} · {group.connections.length} 个连接
+                  </strong>
+                  <span aria-hidden="true">⌄</span>
+                </summary>
+                <div className="oauth-connection-group__body">
+                  <div className="oauth-connection-group__toolbar">
+                    <span>按连接名称分别管理，不按客户端注册合并。</span>
+                    <button
+                      onClick={() => setOAuthGroupToRevoke(group)}
+                      type="button"
+                    >
+                      撤销全部
+                    </button>
+                  </div>
+                  <ul className="oauth-connection-list">
+                    {group.connections.map((connection) => (
+                      <li key={connection.id}>
+                        <div className="oauth-connection-list__heading">
+                          <strong>{connection.label}</strong>
+                          <button
+                            aria-label={`撤销连接：${connection.label}`}
+                            disabled={revokingOAuthConnectionId !== null}
+                            onClick={() => revokeOAuthConnection(connection.id)}
+                            type="button"
+                          >
+                            {revokingOAuthConnectionId === connection.id
+                              ? "撤销中…"
+                              : "撤销"}
+                          </button>
+                        </div>
+                        <dl className="oauth-connection-facts">
+                          <div>
+                            <dt>最近授权</dt>
+                            <dd>{formatAccountDateTime(connection.lastAuthorizedAt)}</dd>
+                          </div>
+                          <div>
+                            <dt>最近使用</dt>
+                            <dd>
+                              {connection.lastUsedAt
+                                ? formatAccountDateTime(connection.lastUsedAt)
+                                : "尚未使用"}
+                            </dd>
+                          </div>
+                        </dl>
+                        <details className="oauth-scope-disclosure">
+                          <summary>权限范围（{connection.scopes.length}）</summary>
+                          <div>
+                            {connection.scopes.map((scope) => (
+                              <code key={scope}>{scope}</code>
+                            ))}
+                          </div>
+                        </details>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </details>
+            ))}
+          </div>
+        ) : (
+          <p>还没有 OAuth 客户端连接。</p>
+        )}
       </section>
 
       <section className="connection-card">
@@ -365,6 +550,17 @@ export function ConnectionManager({
           retryBlocked={apiKeys.uncertain}
           secret={apiKeys.secret}
           stage={apiKeys.modal}
+        />
+      ) : null}
+      {oauthGroupToRevoke ? (
+        <OAuthGroupRevokeModal
+          busy={revokingOAuthGroup}
+          clientName={oauthGroupToRevoke.clientName}
+          connectionCount={oauthGroupToRevoke.connections.length}
+          onCancel={() => {
+            if (!revokingOAuthGroup) setOAuthGroupToRevoke(null);
+          }}
+          onConfirm={() => revokeOAuthGroup(oauthGroupToRevoke)}
         />
       ) : null}
     </div>

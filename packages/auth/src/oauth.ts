@@ -8,11 +8,13 @@ import {
   gte,
   gt,
   isNull,
+  lte,
   oauthAccessTokens,
   oauthAuthorizationCodes,
   oauthClients,
   oauthConnections,
   oauthRefreshTokens,
+  or,
   sql,
   type AttentionDatabase,
   type AttentionTransaction,
@@ -104,6 +106,7 @@ const runtimeScopeSet = new Set<string>(CHANNEL_RUNTIME_SCOPES);
 const codeTtlMs = 10 * 60 * 1_000;
 const accessTtlMs = 60 * 60 * 1_000;
 const refreshTtlMs = 30 * 24 * 60 * 60 * 1_000;
+const oauthLastUsedTouchIntervalMs = 5 * 60 * 1_000;
 
 function runtimeInstallationHmacSecret(): string {
   const secret = process.env.ATTENTION_HMAC_SECRET?.trim();
@@ -655,6 +658,7 @@ export async function resolveOAuthAccessToken(
       accountId: oauthAccessTokens.accountId,
       audience: oauthAccessTokens.audience,
       clientId: oauthAccessTokens.clientId,
+      connectionId: oauthAccessTokens.connectionId,
       expiresAt: oauthAccessTokens.expiresAt,
       id: oauthAccessTokens.id,
       scopes: oauthAccessTokens.scopes,
@@ -674,7 +678,37 @@ export async function resolveOAuthAccessToken(
     .limit(1);
   if (!token || token.audience !== options.audience) return null;
   const capabilities = await resolveAccountCapabilities(db, token.accountId, now);
-  await db.update(oauthAccessTokens).set({ lastUsedAt: now }).where(eq(oauthAccessTokens.id, token.id));
+  const touchCutoff = new Date(now.getTime() - oauthLastUsedTouchIntervalMs);
+  await Promise.all([
+    db
+      .update(oauthAccessTokens)
+      .set({ lastUsedAt: now })
+      .where(
+        and(
+          eq(oauthAccessTokens.id, token.id),
+          or(
+            isNull(oauthAccessTokens.lastUsedAt),
+            lte(oauthAccessTokens.lastUsedAt, touchCutoff),
+          ),
+        ),
+      ),
+    token.connectionId
+      ? db
+          .update(oauthConnections)
+          .set({ lastUsedAt: now, updatedAt: now })
+          .where(
+            and(
+              eq(oauthConnections.id, token.connectionId),
+              eq(oauthConnections.accountId, token.accountId),
+              isNull(oauthConnections.revokedAt),
+              or(
+                isNull(oauthConnections.lastUsedAt),
+                lte(oauthConnections.lastUsedAt, touchCutoff),
+              ),
+            ),
+          )
+      : Promise.resolve(),
+  ]);
   return {
     ...token,
     ...capabilities,

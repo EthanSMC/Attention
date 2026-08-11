@@ -1,8 +1,19 @@
 import { apiKeyScopes } from "@attention/auth";
+import type * as AttentionAuth from "@attention/auth";
 import type { AttentionDatabase } from "@attention/db";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import * as accountServer from "./account";
 import { loadConnectionOverview } from "./account";
+
+const authMocks = vi.hoisted(() => ({
+  revokeOAuthConnection: vi.fn(),
+}));
+
+vi.mock("@attention/auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof AttentionAuth>()),
+  revokeOAuthConnection: authMocks.revokeOAuthConnection,
+}));
 
 function connectionDatabase(input: {
   oauth?: object[];
@@ -92,6 +103,196 @@ describe("loadConnectionOverview API Key scope truth", () => {
       needsRotation: false,
       scopes: apiKeyScopes,
     });
+  });
+});
+
+describe("loadConnectionOverview logical MCP OAuth projection", () => {
+  it("groups active MCP connections without collapsing labels or leaking Runtime rows", async () => {
+    const result = await loadConnectionOverview(
+      connectionDatabase({
+        oauth: [
+          {
+            audience: "attention-mcp",
+            clientName: "Codex",
+            id: "10000000-0000-4000-8000-000000000001",
+            kind: "mcp",
+            label: "工作 MacBook",
+            lastAuthorizedAt: new Date("2026-08-11T10:00:00.000Z"),
+            lastUsedAt: new Date("2026-08-11T10:30:00.000Z"),
+            scopes: ["collection:read", "collection:write"],
+          },
+          {
+            audience: "attention-mcp",
+            clientName: " Codex ",
+            id: "10000000-0000-4000-8000-000000000002",
+            kind: "mcp",
+            label: "家里 Mac mini",
+            lastAuthorizedAt: new Date("2026-08-10T10:00:00.000Z"),
+            lastUsedAt: null,
+            scopes: ["collection:read"],
+          },
+          {
+            audience: "attention-mcp",
+            clientName: "Ｃｏｄｅｘ",
+            id: "10000000-0000-4000-8000-000000000003",
+            kind: "mcp",
+            label: "测试容器",
+            lastAuthorizedAt: new Date("2026-08-09T10:00:00.000Z"),
+            lastUsedAt: new Date("2026-08-09T11:00:00.000Z"),
+            scopes: ["profile:read"],
+          },
+          {
+            audience: "attention-channel-runtime",
+            clientName: "Attention Local Channel Runtime",
+            id: "20000000-0000-4000-8000-000000000001",
+            kind: "runtime",
+            label: "Ethan MacBook Pro",
+            lastAuthorizedAt: new Date("2026-08-11T09:00:00.000Z"),
+            lastUsedAt: new Date("2026-08-11T09:30:00.000Z"),
+            scopes: ["runtime:heartbeat"],
+          },
+          {
+            audience: "attention-channel-runtime",
+            clientName: "Attention Local Channel Runtime",
+            id: "20000000-0000-4000-8000-000000000002",
+            kind: "runtime",
+            label: "Studio Mac",
+            lastAuthorizedAt: new Date("2026-08-10T09:00:00.000Z"),
+            lastUsedAt: null,
+            scopes: ["runtime:register"],
+          },
+        ],
+        pats: [],
+        runtimes: [
+          {
+            agentIntegrationId: "codex",
+            bindingLastSeenAt: new Date("2026-08-11T10:40:00.000Z"),
+            bindingStatus: "healthy",
+            deviceName: "Ethan MacBook Pro",
+            installationId: "30000000-0000-4000-8000-000000000001",
+            installationLastSeenAt: new Date("2026-08-11T10:39:00.000Z"),
+            installationStatus: "active",
+            runtimeCheckpoint: {
+              bridge_status: "online",
+              codex_phase: "healthy",
+              ilink_status: "connected",
+              last_error_code: null,
+              last_healthy_at: "2026-08-11T10:39:00.000Z",
+              last_successful_message_at: "2026-08-11T10:35:00.000Z",
+              pending_inbound: 0,
+              pending_outbound: 0,
+            },
+          },
+        ],
+      }),
+      crypto.randomUUID(),
+    );
+
+    expect(result.mcpOAuthConnections).toEqual([
+      {
+        clientName: "Codex",
+        connections: [
+          {
+            id: "10000000-0000-4000-8000-000000000001",
+            label: "工作 MacBook",
+            lastAuthorizedAt: new Date("2026-08-11T10:00:00.000Z"),
+            lastUsedAt: new Date("2026-08-11T10:30:00.000Z"),
+            scopes: ["collection:read", "collection:write"],
+          },
+          {
+            id: "10000000-0000-4000-8000-000000000002",
+            label: "家里 Mac mini",
+            lastAuthorizedAt: new Date("2026-08-10T10:00:00.000Z"),
+            lastUsedAt: null,
+            scopes: ["collection:read"],
+          },
+          {
+            id: "10000000-0000-4000-8000-000000000003",
+            label: "测试容器",
+            lastAuthorizedAt: new Date("2026-08-09T10:00:00.000Z"),
+            lastUsedAt: new Date("2026-08-09T11:00:00.000Z"),
+            scopes: ["profile:read"],
+          },
+        ],
+      },
+    ]);
+    expect(result.localChannelRuntimes).toHaveLength(1);
+    expect(result.localChannelRuntimes[0]).toMatchObject({
+      deviceName: "Ethan MacBook Pro",
+      status: "online",
+    });
+    expect(JSON.stringify(result.mcpOAuthConnections)).not.toMatch(
+      /Runtime|installation|deviceName|clientId|token|hash/u,
+    );
+  });
+});
+
+describe("MCP OAuth group revocation", () => {
+  it("selects only current-account MCP connections with the normalized client name", async () => {
+    authMocks.revokeOAuthConnection.mockClear();
+    const candidate = Reflect.get(
+      accountServer,
+      "revokeMcpOAuthConnectionGroup",
+    ) as ((
+      db: AttentionDatabase,
+      input: { accountId: string; clientName: string },
+    ) => Promise<number>) | undefined;
+    expect(candidate).toBeTypeOf("function");
+    if (!candidate) return;
+
+    const rows = [
+      {
+        accountId: "account-1",
+        audience: "attention-mcp",
+        clientName: "Codex",
+        id: "10000000-0000-4000-8000-000000000001",
+        kind: "mcp",
+      },
+      {
+        accountId: "account-1",
+        audience: "attention-mcp",
+        clientName: "Ｃｏｄｅｘ",
+        id: "10000000-0000-4000-8000-000000000002",
+        kind: "mcp",
+      },
+      {
+        accountId: "account-1",
+        audience: "attention-mcp",
+        clientName: "Claude",
+        id: "10000000-0000-4000-8000-000000000003",
+        kind: "mcp",
+      },
+      {
+        accountId: "account-1",
+        audience: "attention-channel-runtime",
+        clientName: "Codex",
+        id: "20000000-0000-4000-8000-000000000001",
+        kind: "runtime",
+      },
+      {
+        accountId: "account-2",
+        audience: "attention-mcp",
+        clientName: "Codex",
+        id: "10000000-0000-4000-8000-000000000009",
+        kind: "mcp",
+      },
+    ];
+    const db = {
+      select: () => ({
+        from: () => ({
+          innerJoin: () => ({ where: async () => rows }),
+        }),
+      }),
+    } as unknown as AttentionDatabase;
+
+    await expect(candidate(db, {
+      accountId: "account-1",
+      clientName: "  codex  ",
+    })).resolves.toBe(2);
+    expect(authMocks.revokeOAuthConnection.mock.calls).toEqual([
+      [db, "account-1", "10000000-0000-4000-8000-000000000001"],
+      [db, "account-1", "10000000-0000-4000-8000-000000000002"],
+    ]);
   });
 });
 

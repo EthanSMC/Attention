@@ -18,6 +18,7 @@ import {
   oauthDefaultScopesByAudience,
   oauthScopesByAudience,
   registerPublicOAuthClient,
+  resolveOAuthAccessToken,
   resolveOAuthClientAllowedScopes,
   resolveOAuthResource,
   rotateRefreshToken,
@@ -308,6 +309,60 @@ describe("OAuth dynamic client scope policy", () => {
 });
 
 describe("OAuth connection-aware authorization", () => {
+  it("touches the resolved logical connection with the bounded token-audit cadence", async () => {
+    const rawAccessToken = opaqueToken("connection-last-used-access-token");
+    const connectionId = "20000000-0000-4000-8000-000000000002";
+    const updates: Array<{
+      condition: unknown;
+      table: unknown;
+      value: Record<string, unknown>;
+    }> = [];
+    const db = {
+      select: () => {
+        let table: unknown;
+        const query = {
+          from: (value: unknown) => {
+            table = value;
+            return query;
+          },
+          innerJoin: () => query,
+          limit: async () => table === oauthAccessTokens
+            ? [{
+                accountId,
+                audience: "attention-mcp",
+                clientId,
+                connectionId,
+                expiresAt: new Date("2026-08-11T13:00:00.000Z"),
+                id: "30000000-0000-4000-8000-000000000003",
+                scopes: ["profile:read"],
+                status: "active",
+              }]
+            : [],
+          where: () => query,
+        };
+        return query;
+      },
+      update: (table: unknown) => ({
+        set: (value: Record<string, unknown>) => ({
+          where: async (condition: unknown) => {
+            updates.push({ condition, table, value });
+          },
+        }),
+      }),
+    } as unknown as AttentionDatabase;
+
+    await expect(resolveOAuthAccessToken(db, rawAccessToken, {
+      audience: "attention-mcp",
+      now,
+    })).resolves.toMatchObject({ accountId, clientId, tokenId: expect.any(String) });
+
+    const connectionUpdate = updates.find(({ table }) => table === oauthConnections);
+    expect(connectionUpdate?.value).toEqual({ lastUsedAt: now, updatedAt: now });
+    expect(sqlParameterDates(connectionUpdate?.condition)).toContainEqual(
+      new Date("2026-08-11T11:55:00.000Z"),
+    );
+  });
+
   it("stores exact normalized create intent on the authorization code", async () => {
     const inserted: Array<Record<string, unknown>> = [];
     const db = {
@@ -847,5 +902,14 @@ function sqlParameterStrings(value: unknown, seen = new WeakSet<object>()): stri
   seen.add(value);
   const result: string[] = [];
   for (const child of Object.values(value)) result.push(...sqlParameterStrings(child, seen));
+  return result;
+}
+
+function sqlParameterDates(value: unknown, seen = new WeakSet<object>()): Date[] {
+  if (value instanceof Date) return [value];
+  if (!value || typeof value !== "object" || seen.has(value)) return [];
+  seen.add(value);
+  const result: Date[] = [];
+  for (const child of Object.values(value)) result.push(...sqlParameterDates(child, seen));
   return result;
 }
