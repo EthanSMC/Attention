@@ -79,6 +79,7 @@ import {
 
 export const CHANNEL_BRIDGE_HOSTS = ["codex", "claude-code"] as const;
 export type ChannelBridgeHost = (typeof CHANNEL_BRIDGE_HOSTS)[number];
+const ACCOUNT_VERIFICATION_CACHE_MS = 24 * 60 * 60 * 1_000;
 
 export interface ChannelCommandOptions {
   readonly accountVerifier?: (
@@ -245,6 +246,39 @@ export async function channelStart(
     return 1;
   }
 
+  if (options.background) {
+    const state = await loadChannelState(options.baseDirectory);
+    const stateDirectory = channelStateDirectory(options.baseDirectory);
+    await mkdir(stateDirectory, { mode: 0o700, recursive: true });
+    const client = new ILinkClient({
+      baseUrl: state.baseUrl || ILINK_BASE_URL,
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      timeoutMs: ILINK_LONG_POLL_TIMEOUT_MS,
+    });
+    client.token = state.token;
+    client.accountId = state.accountId;
+    const runtime: Runtime = {
+      client,
+      log: (message) => write(`[${timestamp()}] ${message}\n`),
+      sleep,
+      state,
+      write,
+    };
+    if (!client.token) {
+      const loggedIn = await doLogin(runtime);
+      if (!loggedIn) return 1;
+      await saveChannelState(state, options.baseDirectory);
+    }
+    const installer =
+      options.backgroundInstaller ?? defaultBackgroundInstaller;
+    await installer({ hostId, origin: options.origin });
+    write(
+      "后台桥已启用。后台服务会完成 Attention 账号验收并开始接收消息；" +
+        "可用 attention channel status 查看本地队列。\n",
+    );
+    return 0;
+  }
+
   const lock = await acquireChannelLock(options.baseDirectory);
   if (!lock) {
     write(
@@ -298,11 +332,25 @@ export async function channelStart(
     }
     syncRuntimeCheckpoint(state, activeBrain);
     await saveChannelState(state, options.baseDirectory);
-    const account = await (options.accountVerifier ?? verifyAttentionAccount)(
-      activeBrain,
-      cwd,
-    );
-    if (!account) {
+    const accountVerifiedAt = state.accountVerification
+      ? Date.parse(state.accountVerification.verifiedAt)
+      : Number.NaN;
+    const now = Date.now();
+    const cachedAccountVerification =
+      options.service === true &&
+      state.accountVerification?.hostId === hostId &&
+      state.accountVerification.mcpUrl === mcpUrl &&
+      accountVerifiedAt <= now + 60_000 &&
+      accountVerifiedAt >= now - ACCOUNT_VERIFICATION_CACHE_MS;
+    const account = cachedAccountVerification
+      ? null
+      : await (options.accountVerifier ?? verifyAttentionAccount)(
+          activeBrain,
+          cwd,
+        );
+    if (!cachedAccountVerification && !account) {
+      state.accountVerification = null;
+      await saveChannelState(state, options.baseDirectory);
       write(
         "Attention 账号验收失败：Agent 未能真实调用 attention_get_my_account。\n" +
           `请先运行 attention configure ${hostId} --apply --login，完成 OAuth 后重试。\n`,
@@ -315,11 +363,21 @@ export async function channelStart(
       }
       return 1;
     }
-    write(
-      `Attention 已连接：${account.displayName}` +
-        `${account.attentionId ? ` (@${account.attentionId})` : ""}` +
-        `，Filter=${account.isFilter ? "是" : "否"}，Member=${account.isMember ? "是" : "否"}。\n`,
-    );
+    if (account) {
+      state.accountVerification = {
+        hostId,
+        mcpUrl,
+        verifiedAt: new Date().toISOString(),
+      };
+      await saveChannelState(state, options.baseDirectory);
+      write(
+        `Attention 已连接：${account.displayName}` +
+          `${account.attentionId ? ` (@${account.attentionId})` : ""}` +
+          `，Filter=${account.isFilter ? "是" : "否"}，Member=${account.isMember ? "是" : "否"}。\n`,
+      );
+    } else {
+      write("Attention 账号最近已验收；后台服务直接恢复微信桥。\n");
+    }
 
     const client = new ILinkClient({
       baseUrl: state.baseUrl || ILINK_BASE_URL,
@@ -702,16 +760,6 @@ export async function channelStart(
         reporterSlot.current?.reporter.transition(
           buildReporterSnapshot(runtime, activeBrain),
         );
-
-        if (options.background) {
-          const installer =
-            options.backgroundInstaller ?? defaultBackgroundInstaller;
-          await installer({ hostId, origin: options.origin });
-          runtime.log(
-            "后台桥已启用。可用 attention channel status 查看本地队列；用 attention channel logout 停止并删除登录态。",
-          );
-          return 0;
-        }
 
         await flushPendingOutbound(runtime, persist);
         if (!client.token) continue;

@@ -12,10 +12,14 @@ import type { ChannelBridgeHost } from "./channel-command";
 
 const SERVICE_LABEL = "cn.noveltystudio.attention.channel";
 
+type ChannelServiceCommand = CommandInvocation & {
+  readonly allowFailure?: boolean;
+  readonly retryAttempts?: number;
+  readonly retryDelayMs?: number;
+};
+
 export interface ChannelServicePlan {
-  readonly commands: readonly (CommandInvocation & {
-    readonly allowFailure?: boolean;
-  })[];
+  readonly commands: readonly ChannelServiceCommand[];
   readonly files: readonly {
     readonly contents: string;
     readonly mode: number;
@@ -25,12 +29,8 @@ export interface ChannelServicePlan {
 }
 
 export interface ChannelServiceRemovalPlan {
-  readonly afterCommands: readonly (CommandInvocation & {
-    readonly allowFailure?: boolean;
-  })[];
-  readonly commands: readonly (CommandInvocation & {
-    readonly allowFailure?: boolean;
-  })[];
+  readonly afterCommands: readonly ChannelServiceCommand[];
+  readonly commands: readonly ChannelServiceCommand[];
   readonly label: string;
   readonly paths: readonly string[];
 }
@@ -127,7 +127,12 @@ ${
           args: ["bootout", `${domain}/${SERVICE_LABEL}`],
           executable: "launchctl",
         },
-        { args: ["bootstrap", domain, path], executable: "launchctl" },
+        {
+          args: ["bootstrap", domain, path],
+          executable: "launchctl",
+          retryAttempts: 3,
+          retryDelayMs: 250,
+        },
         {
           args: ["kickstart", "-k", `${domain}/${SERVICE_LABEL}`],
           executable: "launchctl",
@@ -282,13 +287,21 @@ export function buildChannelServiceRemovalPlan(
 }
 
 async function executeCommands(
-  commands: ChannelServicePlan["commands"],
+  commands: readonly ChannelServiceCommand[],
   label: string,
   runner: CommandRunner,
+  sleep: (milliseconds: number) => Promise<void> = async (milliseconds) =>
+    await new Promise((resolve) => setTimeout(resolve, milliseconds)),
 ): Promise<void> {
   for (const command of commands) {
-    const result = await runner(command, { timeoutMs: 20_000 });
-    if (result.exitCode !== 0 && !command.allowFailure) {
+    const maximumAttempts = Math.max(1, command.retryAttempts ?? 1);
+    for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+      const result = await runner(command, { timeoutMs: 20_000 });
+      if (result.exitCode === 0 || command.allowFailure) break;
+      if (attempt < maximumAttempts) {
+        await sleep(command.retryDelayMs ?? 0);
+        continue;
+      }
       throw new Error(
         `Could not update ${label}: ${result.stderr || result.stdout || `exit ${String(result.exitCode)}`}`,
       );
@@ -299,6 +312,7 @@ async function executeCommands(
 export async function installChannelService(
   plan: ChannelServicePlan,
   runner: CommandRunner = runCommand,
+  sleep?: (milliseconds: number) => Promise<void>,
 ): Promise<void> {
   for (const file of plan.files) {
     await mkdir(dirname(file.path), { mode: 0o700, recursive: true });
@@ -315,7 +329,7 @@ export async function installChannelService(
       await rm(temporary, { force: true });
     }
   }
-  await executeCommands(plan.commands, plan.label, runner);
+  await executeCommands(plan.commands, plan.label, runner, sleep);
 }
 
 export async function uninstallChannelService(

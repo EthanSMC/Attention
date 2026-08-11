@@ -193,7 +193,7 @@ describe("dedicated Runtime OAuth", () => {
       registrationEndpoint,
     ]);
     expect(new Set(harness.userAgents)).toEqual(
-      new Set(["attention-cli/0.2.0"]),
+      new Set(["attention-cli/0.2.1"]),
     );
     expect(harness.registrationBodies).toEqual([{
       application_type: "native",
@@ -204,7 +204,7 @@ describe("dedicated Runtime OAuth", () => {
       response_types: ["code"],
       scope: runtimeScope,
       software_id: "attention-channel-runtime",
-      software_version: "0.2.0",
+      software_version: "0.2.1",
       token_endpoint_auth_method: "none",
     }]);
     const authorizeUrl = harness.openedAuthorizationUrl();

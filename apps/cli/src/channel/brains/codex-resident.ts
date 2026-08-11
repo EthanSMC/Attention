@@ -339,11 +339,16 @@ export function createCodexResidentBrain(
   const ensureStarted = async (): Promise<boolean> => {
     desiredRunning = true;
     ensureHealthMonitor();
+    const recoverableRequestFailure =
+      snapshot.phase === "degraded_runtime" &&
+      (snapshot.lastErrorCode === "codex_thread_failed" ||
+        snapshot.lastErrorCode === "codex_turn_start_failed");
     if (
       rpc.snapshot().phase === "running" &&
       (snapshot.phase === "healthy" ||
         snapshot.phase === "recovering_thread" ||
-        snapshot.phase === "replaying_history")
+        snapshot.phase === "replaying_history" ||
+        recoverableRequestFailure)
     ) {
       return true;
     }

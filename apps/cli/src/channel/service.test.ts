@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   buildChannelServicePlan,
   buildChannelServiceRemovalPlan,
+  installChannelService,
   isChannelServiceConfigured,
 } from "./service";
 
@@ -42,6 +43,53 @@ describe("background channel service plans", () => {
       "launchctl",
     ]);
     expect(plan.commands[1]?.args).toContain("gui/501");
+  });
+
+  it("retries a transient macOS bootstrap failure before kickstart", async () => {
+    const home = await mkdtemp(join(tmpdir(), "attention-service-retry-"));
+    temporaryDirectories.push(home);
+    const plan = buildChannelServicePlan({
+      ...input,
+      homeDirectory: home,
+      platform: "darwin",
+    });
+    const invocations: string[] = [];
+    let bootstrapAttempts = 0;
+
+    await installChannelService(
+      plan,
+      async (invocation) => {
+        invocations.push(invocation.args[0] ?? "");
+        if (invocation.args[0] === "bootstrap") {
+          bootstrapAttempts += 1;
+          if (bootstrapAttempts === 1) {
+            return {
+              exitCode: 5,
+              signal: null,
+              stderr: "Bootstrap failed: 5: Input/output error",
+              stdout: "",
+              timedOut: false,
+            };
+          }
+        }
+        return {
+          exitCode: 0,
+          signal: null,
+          stderr: "",
+          stdout: "",
+          timedOut: false,
+        };
+      },
+      async () => undefined,
+    );
+
+    expect(bootstrapAttempts).toBe(2);
+    expect(invocations).toEqual([
+      "bootout",
+      "bootstrap",
+      "bootstrap",
+      "kickstart",
+    ]);
   });
 
   it("builds a Linux user systemd unit without requiring root", () => {

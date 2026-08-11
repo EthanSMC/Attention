@@ -22,6 +22,7 @@ class ScriptedRpc implements CodexResidentRpc {
   restartFailures = 0;
   statusFailure = false;
   startCount = 0;
+  threadStartFailures = 0;
   turnReplies = ["first reply", "second reply"];
   autoCompleteTurns = true;
   #listener: ((event: CodexRpcNotification) => void) | null = null;
@@ -31,6 +32,7 @@ class ScriptedRpc implements CodexResidentRpc {
   #turnStarts = 0;
 
   async start(): Promise<void> {
+    if (this.#phase === "running") return;
     this.startCount += 1;
     if (this.startCount > 1 && this.restartFailures > 0) {
       this.restartFailures -= 1;
@@ -76,6 +78,13 @@ class ScriptedRpc implements CodexResidentRpc {
       return { thread: { id: threadId } } as T;
     }
     if (method === "thread/start") {
+      if (this.threadStartFailures > 0) {
+        this.threadStartFailures -= 1;
+        throw new CodexAppServerRpcError(
+          "request_failed",
+          "Codex app-server rejected a thread start",
+        );
+      }
       this.#threadStarts += 1;
       return { thread: { id: `thread-${this.#threadStarts}` } } as T;
     }
@@ -202,6 +211,41 @@ describe("resident Codex brain", () => {
       sandboxPolicy: { networkAccess: false, type: "readOnly" },
       threadId: "thread-1",
     });
+    await brain.shutdown();
+  });
+
+  it("reuses a running app-server after a recoverable thread failure without reinitializing", async () => {
+    const rpc = new ScriptedRpc();
+    rpc.threadStartFailures = 1;
+    const brain = createCodexResidentBrain({
+      mcpUrl: "https://attention.example/mcp",
+      rpc,
+    });
+
+    const failed = await brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "first attempt",
+      sessionId: null,
+    });
+    const recovered = await brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "retry",
+      sessionId: null,
+    });
+
+    expect(failed).toMatchObject({ ok: false });
+    expect(recovered).toMatchObject({
+      ok: true,
+      reply: "first reply",
+      sessionId: "thread-1",
+    });
+    expect(rpc.startCount).toBe(1);
+    expect(
+      rpc.methods().filter((method) => method === "initialize"),
+    ).toHaveLength(1);
+    expect(
+      rpc.methods().filter((method) => method === "mcpServerStatus/list"),
+    ).toHaveLength(1);
     await brain.shutdown();
   });
 

@@ -28,6 +28,12 @@ export interface BrainSession {
   readonly updatedAt: string;
 }
 
+export interface AccountVerificationCheckpoint {
+  readonly hostId: "codex" | "claude-code";
+  readonly mcpUrl: string;
+  readonly verifiedAt: string;
+}
+
 /** Stable phases persisted independently of the resident brain implementation. */
 export type RuntimePhase =
   | "starting"
@@ -72,6 +78,7 @@ export interface PendingOutboundMessage {
 }
 
 export interface ChannelState {
+  accountVerification: AccountVerificationCheckpoint | null;
   token: string | null;
   accountId: string;
   baseUrl: string;
@@ -103,6 +110,7 @@ export function defaultRuntimeCheckpoint(): RuntimeCheckpoint {
 
 export function defaultChannelState(): ChannelState {
   return {
+    accountVerification: null,
     accountId: "",
     baseUrl: ILINK_BASE_URL,
     brainSession: null,
@@ -137,6 +145,9 @@ function normalizeState(raw: unknown): ChannelState {
   if (raw === null || typeof raw !== "object") return base;
   const record = raw as Record<string, unknown>;
   return {
+    accountVerification: normalizeAccountVerification(
+      record.accountVerification,
+    ),
     accountId: typeof record.accountId === "string" ? record.accountId : "",
     baseUrl: normalizeBaseUrl(record.baseUrl),
     brainSession:
@@ -223,6 +234,47 @@ function normalizeState(raw: unknown): ChannelState {
     token: typeof record.token === "string" && record.token
       ? record.token
       : null,
+  };
+}
+
+function normalizeAccountVerification(
+  raw: unknown,
+): AccountVerificationCheckpoint | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  if (
+    (record.hostId !== "codex" && record.hostId !== "claude-code") ||
+    typeof record.mcpUrl !== "string"
+  ) {
+    return null;
+  }
+  const verifiedAt = nullableIsoTimestamp(record.verifiedAt);
+  if (!verifiedAt) return null;
+  let mcpUrl: URL;
+  try {
+    mcpUrl = new URL(record.mcpUrl);
+  } catch {
+    return null;
+  }
+  const loopback =
+    mcpUrl.hostname === "127.0.0.1" ||
+    mcpUrl.hostname === "localhost" ||
+    mcpUrl.hostname === "[::1]";
+  if (
+    (mcpUrl.protocol !== "https:" &&
+      !(mcpUrl.protocol === "http:" && loopback)) ||
+    mcpUrl.username ||
+    mcpUrl.password ||
+    mcpUrl.hash ||
+    mcpUrl.search ||
+    mcpUrl.pathname !== "/mcp"
+  ) {
+    return null;
+  }
+  return {
+    hostId: record.hostId,
+    mcpUrl: mcpUrl.toString(),
+    verifiedAt,
   };
 }
 

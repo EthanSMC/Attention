@@ -188,6 +188,44 @@ describe("channel state persistence", () => {
     expect(loaded).toEqual(state);
   });
 
+  it("round-trips only a bounded account-verification checkpoint", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    Object.assign(state, {
+      accountVerification: {
+        hostId: "codex",
+        mcpUrl: "https://attention.example/mcp",
+        verifiedAt: "2026-08-11T07:00:00.000Z",
+      },
+    });
+
+    await saveChannelState(state, base);
+
+    expect(
+      Reflect.get(await loadChannelState(base), "accountVerification"),
+    ).toEqual({
+      hostId: "codex",
+      mcpUrl: "https://attention.example/mcp",
+      verifiedAt: "2026-08-11T07:00:00.000Z",
+    });
+  });
+
+  it("drops malformed account-verification checkpoints", async () => {
+    const base = await makeTempBase();
+    await saveChannelState(defaultChannelState(), base);
+    const raw = JSON.parse(
+      await readFile(channelStatePath(base), "utf8"),
+    ) as Record<string, unknown>;
+    raw.accountVerification = {
+      hostId: "codex",
+      mcpUrl: "https://attention.example/mcp?credential=secret",
+      verifiedAt: "2099-08-11T07:00:00.000Z",
+    };
+    await writeFile(channelStatePath(base), JSON.stringify(raw), "utf8");
+
+    expect((await loadChannelState(base)).accountVerification).toBeNull();
+  });
+
   it("migrates and validates opaque Runtime reporter identifiers", async () => {
     const base = await makeTempBase();
     await saveChannelState(defaultChannelState(), base);

@@ -98,7 +98,7 @@ describe("channel subcommands", () => {
     expect(lines.join("")).not.toContain("扫码");
   });
 
-  it("installs the background bridge only after a persisted iLink login exists", async () => {
+  it("installs a background bridge without starting a duplicate Agent preflight", async () => {
     const base = await makeTempBase();
     const state = defaultChannelState();
     state.token = "local-ilink-token";
@@ -110,24 +110,17 @@ describe("channel subcommands", () => {
 
     expect(
       await channelStart("claude-code", {
-        accountVerifier: async () => ({
-          attentionId: "filter-demo",
-          displayName: "Filter Demo",
-          isFilter: true,
-          isMember: true,
-        }),
+        accountVerifier: async () => {
+          throw new Error("background activation must defer account verification to the service");
+        },
         background: true,
         backgroundInstaller: async (input) => {
           installs.push(input);
         },
         baseDirectory: base,
-        brainFactory: () => ({
-          ...brainLifecycle(),
-          hostId: "claude-code",
-          invoke: async () => {
-            throw new Error("background activation must not invoke the brain loop");
-          },
-        }),
+        brainFactory: () => {
+          throw new Error("background activation must not start a duplicate Agent runtime");
+        },
         fetchImpl: async () => {
           throw new Error("background activation must not poll iLink");
         },
@@ -141,6 +134,102 @@ describe("channel subcommands", () => {
     ]);
     expect(lines.join("")).toContain("后台");
     expect(process.listenerCount("SIGINT")).toBe(signalListenersBefore);
+  });
+
+  it("completes first-time iLink login before installing without starting an Agent preflight", async () => {
+    const base = await makeTempBase();
+    const installs: Array<{ hostId: string; origin: string }> = [];
+
+    expect(
+      await channelStart("codex", {
+        accountVerifier: async () => {
+          throw new Error("background activation must defer account verification to the service");
+        },
+        background: true,
+        backgroundInstaller: async (input) => {
+          installs.push(input);
+        },
+        baseDirectory: base,
+        brainFactory: () => {
+          throw new Error("background activation must not start a duplicate Agent runtime");
+        },
+        fetchImpl: async (input) => {
+          const url = String(input);
+          if (url.includes("get_bot_qrcode")) {
+            return new Response(
+              JSON.stringify({
+                qrcode: "qr-1",
+                qrcode_img_content: "https://weixin.qq.com/x/qr-1",
+              }),
+            );
+          }
+          if (url.includes("get_qrcode_status")) {
+            return new Response(
+              JSON.stringify({
+                bot_token: "local-ilink-token",
+                ilink_bot_id: "local-account",
+                status: "confirmed",
+              }),
+            );
+          }
+          throw new Error(`unexpected iLink request: ${url}`);
+        },
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        writeOutput: () => undefined,
+      }),
+    ).toBe(0);
+
+    expect(installs).toEqual([
+      { hostId: "codex", origin: "https://attention.example" },
+    ]);
+    const persisted = await loadChannelState(base);
+    expect(persisted.token).toBe("local-ilink-token");
+    expect(persisted.accountId).toBe("local-account");
+  });
+
+  it("restores a background bridge from a recent account verification without another LLM preflight", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    state.token = "local-ilink-token";
+    state.accountId = "local-account";
+    Object.assign(state, {
+      accountVerification: {
+        hostId: "codex",
+        mcpUrl: "https://attention.example/mcp",
+        verifiedAt: new Date().toISOString(),
+      },
+    });
+    await saveChannelState(state, base);
+    let verificationAttempts = 0;
+    const lines: string[] = [];
+
+    expect(
+      await channelStart("codex", {
+        accountVerifier: async () => {
+          verificationAttempts += 1;
+          return null;
+        },
+        baseDirectory: base,
+        brainFactory: () => ({
+          ...brainLifecycle(),
+          hostId: "codex",
+          invoke: async () => {
+            throw new Error("not reached");
+          },
+        }),
+        fetchImpl: async () =>
+          new Response(JSON.stringify({ errcode: -14 })),
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        runtimeCredentialLoader: async () => false,
+        service: true,
+        writeOutput: (text) => lines.push(text),
+      }),
+    ).toBe(0);
+
+    expect(verificationAttempts).toBe(0);
+    expect(lines.join("")).toContain("最近已验收");
   });
 
   it("uses a disposable preflight while preserving the persisted Channel thread", async () => {
@@ -166,8 +255,6 @@ describe("channel subcommands", () => {
           isFilter: true,
           isMember: true,
         }),
-        background: true,
-        backgroundInstaller: async () => undefined,
         baseDirectory: base,
         brainFactory: (_hostId, options) => {
           receivedCodexHome = options.codexHomeDirectory;
@@ -190,8 +277,12 @@ describe("channel subcommands", () => {
           };
         },
         codexHomePreparer: async () => "/tmp/isolated-codex-home",
+        fetchImpl: async () =>
+          new Response(JSON.stringify({ errcode: -14 })),
         hostCliCheck: async () => true,
         origin: "https://attention.example",
+        runtimeCredentialLoader: async () => false,
+        service: true,
         writeOutput: () => undefined,
       }),
     ).toBe(0);
@@ -214,8 +305,6 @@ describe("channel subcommands", () => {
 
     expect(
       await channelStart("codex", {
-        background: true,
-        backgroundInstaller: async () => undefined,
         baseDirectory: base,
         brainFactory: () => ({
           ...brainLifecycle(),
@@ -232,8 +321,12 @@ describe("channel subcommands", () => {
             };
           },
         }),
+        fetchImpl: async () =>
+          new Response(JSON.stringify({ errcode: -14 })),
         hostCliCheck: async () => true,
         origin: "https://attention.example",
+        runtimeCredentialLoader: async () => false,
+        service: true,
         writeOutput: () => undefined,
       }),
     ).toBe(0);
@@ -810,6 +903,7 @@ describe("channel subcommands", () => {
         },
         hostCliCheck: async () => true,
         origin: "https://attention.example",
+        runtimeCredentialLoader: async () => false,
         service: true,
         writeOutput: () => undefined,
       }),
