@@ -1,19 +1,8 @@
 import { apiKeyScopes } from "@attention/auth";
-import type * as AttentionAuth from "@attention/auth";
 import type { AttentionDatabase } from "@attention/db";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import * as accountServer from "./account";
 import { loadConnectionOverview } from "./account";
-
-const authMocks = vi.hoisted(() => ({
-  revokeOAuthConnection: vi.fn(),
-}));
-
-vi.mock("@attention/auth", async (importOriginal) => ({
-  ...(await importOriginal<typeof AttentionAuth>()),
-  revokeOAuthConnection: authMocks.revokeOAuthConnection,
-}));
 
 function connectionDatabase(input: {
   oauth?: object[];
@@ -224,75 +213,6 @@ describe("loadConnectionOverview logical MCP OAuth projection", () => {
     expect(JSON.stringify(result.mcpOAuthConnections)).not.toMatch(
       /Runtime|installation|deviceName|clientId|token|hash/u,
     );
-  });
-});
-
-describe("MCP OAuth group revocation", () => {
-  it("selects only current-account MCP connections with the normalized client name", async () => {
-    authMocks.revokeOAuthConnection.mockClear();
-    const candidate = Reflect.get(
-      accountServer,
-      "revokeMcpOAuthConnectionGroup",
-    ) as ((
-      db: AttentionDatabase,
-      input: { accountId: string; clientName: string },
-    ) => Promise<number>) | undefined;
-    expect(candidate).toBeTypeOf("function");
-    if (!candidate) return;
-
-    const rows = [
-      {
-        accountId: "account-1",
-        audience: "attention-mcp",
-        clientName: "Codex",
-        id: "10000000-0000-4000-8000-000000000001",
-        kind: "mcp",
-      },
-      {
-        accountId: "account-1",
-        audience: "attention-mcp",
-        clientName: "Ｃｏｄｅｘ",
-        id: "10000000-0000-4000-8000-000000000002",
-        kind: "mcp",
-      },
-      {
-        accountId: "account-1",
-        audience: "attention-mcp",
-        clientName: "Claude",
-        id: "10000000-0000-4000-8000-000000000003",
-        kind: "mcp",
-      },
-      {
-        accountId: "account-1",
-        audience: "attention-channel-runtime",
-        clientName: "Codex",
-        id: "20000000-0000-4000-8000-000000000001",
-        kind: "runtime",
-      },
-      {
-        accountId: "account-2",
-        audience: "attention-mcp",
-        clientName: "Codex",
-        id: "10000000-0000-4000-8000-000000000009",
-        kind: "mcp",
-      },
-    ];
-    const db = {
-      select: () => ({
-        from: () => ({
-          innerJoin: () => ({ where: async () => rows }),
-        }),
-      }),
-    } as unknown as AttentionDatabase;
-
-    await expect(candidate(db, {
-      accountId: "account-1",
-      clientName: "  codex  ",
-    })).resolves.toBe(2);
-    expect(authMocks.revokeOAuthConnection.mock.calls).toEqual([
-      [db, "account-1", "10000000-0000-4000-8000-000000000001"],
-      [db, "account-1", "10000000-0000-4000-8000-000000000002"],
-    ]);
   });
 });
 

@@ -133,4 +133,63 @@ describe("ConnectionManager", () => {
     expect(markup).toContain("撤销 Codex 的 3 个连接？");
     expect(markup).toContain("这 3 个连接会立即停止访问 Attention");
   });
+
+  it("submits the exact logical connection snapshot that supplied the confirmation count", async () => {
+    const candidate = Reflect.get(
+      connectionManagerModule,
+      "requestOAuthGroupSnapshotRevoke",
+    ) as ((
+      group: (typeof mcpGroups)[number],
+      request: typeof fetch,
+    ) => Promise<string>) | undefined;
+    expect(candidate).toBeTypeOf("function");
+    if (!candidate) return;
+    let requestBody: unknown;
+
+    const result = await candidate(mcpGroups[0]!, async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ revoked_count: 3 }), { status: 200 });
+    });
+
+    expect(requestBody).toEqual({
+      client_name: "Codex",
+      connection_ids: [
+        "10000000-0000-4000-8000-000000000001",
+        "10000000-0000-4000-8000-000000000002",
+        "10000000-0000-4000-8000-000000000003",
+      ],
+    });
+    expect(result).toBe("revoked");
+  });
+
+  it("distinguishes a stale confirmed snapshot from an ambiguous server failure", async () => {
+    const candidate = Reflect.get(
+      connectionManagerModule,
+      "requestOAuthGroupSnapshotRevoke",
+    ) as ((
+      group: (typeof mcpGroups)[number],
+      request: typeof fetch,
+    ) => Promise<string>) | undefined;
+    expect(candidate).toBeTypeOf("function");
+    if (!candidate) return;
+
+    await expect(candidate(mcpGroups[0]!, async () => new Response(
+      JSON.stringify({ error: { code: "oauth_connection_snapshot_stale" } }),
+      { status: 409 },
+    ))).resolves.toBe("stale");
+
+    const feedbackCandidate = Reflect.get(
+      connectionManagerModule,
+      "oauthGroupRevokeFailureMessage",
+    ) as ((outcome: string) => string) | undefined;
+    expect(feedbackCandidate).toBeTypeOf("function");
+    if (!feedbackCandidate) return;
+    expect(feedbackCandidate("stale")).toBe("连接列表已变化，请刷新后重试。");
+    await expect(candidate(mcpGroups[0]!, async () => {
+      throw new Error("connection_lost");
+    })).resolves.toBe("unknown");
+    expect(feedbackCandidate("unknown")).toBe(
+      "网络连接中断，撤销结果无法确认。请刷新连接列表后再操作。",
+    );
+  });
 });

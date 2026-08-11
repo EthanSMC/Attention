@@ -7,6 +7,7 @@ import {
   eq,
   gte,
   gt,
+  inArray,
   isNull,
   lte,
   oauthAccessTokens,
@@ -107,6 +108,9 @@ const codeTtlMs = 10 * 60 * 1_000;
 const accessTtlMs = 60 * 60 * 1_000;
 const refreshTtlMs = 30 * 24 * 60 * 60 * 1_000;
 const oauthLastUsedTouchIntervalMs = 5 * 60 * 1_000;
+const maxOAuthConnectionSnapshotSize = 100;
+const oauthConnectionIdPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 function runtimeInstallationHmacSecret(): string {
   const secret = process.env.ATTENTION_HMAC_SECRET?.trim();
@@ -403,16 +407,22 @@ async function issueTokenPair(
 async function revokeConnectionCredentials(
   db: AttentionTransaction,
   accountId: string,
-  connectionId: string,
+  connectionIds: readonly string[],
   now: Date,
 ): Promise<void> {
+  const accessConnectionCondition = connectionIds.length === 1
+    ? eq(oauthAccessTokens.connectionId, connectionIds[0]!)
+    : inArray(oauthAccessTokens.connectionId, [...connectionIds]);
+  const refreshConnectionCondition = connectionIds.length === 1
+    ? eq(oauthRefreshTokens.connectionId, connectionIds[0]!)
+    : inArray(oauthRefreshTokens.connectionId, [...connectionIds]);
   await db
     .update(oauthAccessTokens)
     .set({ revokedAt: now, status: "revoked" })
     .where(
       and(
         eq(oauthAccessTokens.accountId, accountId),
-        eq(oauthAccessTokens.connectionId, connectionId),
+        accessConnectionCondition,
         eq(oauthAccessTokens.status, "active"),
       ),
     );
@@ -422,7 +432,7 @@ async function revokeConnectionCredentials(
     .where(
       and(
         eq(oauthRefreshTokens.accountId, accountId),
-        eq(oauthRefreshTokens.connectionId, connectionId),
+        refreshConnectionCondition,
         eq(oauthRefreshTokens.status, "active"),
       ),
     );
@@ -485,7 +495,7 @@ export async function exchangeAuthorizationCode(
           throw new OAuthError("invalid_grant");
         }
         connectionId = existing.id;
-        await revokeConnectionCredentials(tx, code.accountId, connectionId, now);
+        await revokeConnectionCredentials(tx, code.accountId, [connectionId], now);
         await tx
           .update(oauthConnections)
           .set({
@@ -526,7 +536,7 @@ export async function exchangeAuthorizationCode(
             .update(oauthConnections)
             .set({ revokedAt: now, updatedAt: now })
             .where(eq(oauthConnections.id, replacement.id));
-          await revokeConnectionCredentials(tx, code.accountId, replacement.id, now);
+          await revokeConnectionCredentials(tx, code.accountId, [replacement.id], now);
         }
         const [created] = await tx
           .insert(oauthConnections)
@@ -734,6 +744,146 @@ export async function revokeOAuthToken(
     .where(eq(oauthRefreshTokens.tokenHash, tokenHash));
 }
 
+export class OAuthConnectionSnapshotConflictError extends Error {
+  constructor() {
+    super("oauth_connection_snapshot_stale");
+    this.name = "OAuthConnectionSnapshotConflictError";
+  }
+}
+
+function normalizeOAuthClientGroupKey(value: string): string {
+  const normalized = value
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/gu, " ")
+    .toLocaleLowerCase("en-US");
+  if (
+    !normalized ||
+    normalized.length > 100 ||
+    /[\p{Cc}\p{Cf}]/u.test(normalized)
+  ) {
+    throw new RangeError("invalid_oauth_client_name");
+  }
+  return normalized;
+}
+
+function validateOAuthConnectionIdSnapshot(connectionIds: readonly string[]): Set<string> {
+  const uniqueIds = new Set(connectionIds);
+  if (
+    connectionIds.length < 1 ||
+    connectionIds.length > maxOAuthConnectionSnapshotSize ||
+    uniqueIds.size !== connectionIds.length ||
+    connectionIds.some((connectionId) => !oauthConnectionIdPattern.test(connectionId))
+  ) {
+    throw new RangeError("invalid_oauth_connection_snapshot");
+  }
+  return uniqueIds;
+}
+
+async function revokeLockedOAuthConnections(
+  tx: AttentionTransaction,
+  accountId: string,
+  connectionIds: readonly string[],
+  now: Date,
+): Promise<void> {
+  await tx
+    .update(oauthConnections)
+    .set({ revokedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(oauthConnections.accountId, accountId),
+        inArray(oauthConnections.id, [...connectionIds]),
+        isNull(oauthConnections.revokedAt),
+      ),
+    );
+  await revokeConnectionCredentials(tx, accountId, connectionIds, now);
+}
+
+export async function revokeMcpOAuthConnectionSnapshot(
+  db: AttentionDatabase,
+  input: {
+    accountId: string;
+    clientName: string;
+    connectionIds: readonly string[];
+  },
+  now = new Date(),
+): Promise<number> {
+  const normalizedClientName = normalizeOAuthClientGroupKey(input.clientName);
+  const requestedIds = validateOAuthConnectionIdSnapshot(input.connectionIds);
+  return db.transaction(async (tx) => {
+    const requestedRows = await tx
+      .select({
+        accountId: oauthConnections.accountId,
+        audience: oauthConnections.audience,
+        clientName: oauthClients.name,
+        id: oauthConnections.id,
+        kind: oauthConnections.kind,
+        revokedAt: oauthConnections.revokedAt,
+      })
+      .from(oauthConnections)
+      .innerJoin(oauthClients, eq(oauthClients.clientId, oauthConnections.clientId))
+      .where(inArray(oauthConnections.id, [...requestedIds]))
+      .for("update");
+    if (
+      requestedRows.length !== requestedIds.size ||
+      requestedRows.some((row) =>
+        !requestedIds.has(row.id) ||
+        row.accountId !== input.accountId ||
+        row.audience !== "attention-mcp" ||
+        row.kind !== "mcp" ||
+        row.revokedAt !== null ||
+        normalizeOAuthClientGroupKey(row.clientName) !== normalizedClientName
+      )
+    ) {
+      throw new OAuthConnectionSnapshotConflictError();
+    }
+    const activeGroupRows = await tx
+      .select({
+        accountId: oauthConnections.accountId,
+        audience: oauthConnections.audience,
+        clientName: oauthClients.name,
+        id: oauthConnections.id,
+        kind: oauthConnections.kind,
+        revokedAt: oauthConnections.revokedAt,
+      })
+      .from(oauthConnections)
+      .innerJoin(oauthClients, eq(oauthClients.clientId, oauthConnections.clientId))
+      .where(
+        and(
+          eq(oauthConnections.accountId, input.accountId),
+          eq(oauthConnections.audience, "attention-mcp"),
+          eq(oauthConnections.kind, "mcp"),
+          isNull(oauthConnections.revokedAt),
+        ),
+      )
+      .for("update");
+    const activeMatchingIds = new Set(
+      activeGroupRows
+        .filter((row) =>
+          row.accountId === input.accountId &&
+          row.audience === "attention-mcp" &&
+          row.kind === "mcp" &&
+          row.revokedAt === null &&
+          normalizeOAuthClientGroupKey(row.clientName) === normalizedClientName
+        )
+        .map((row) => row.id),
+    );
+    if (
+      activeMatchingIds.size !== requestedIds.size ||
+      [...requestedIds].some((connectionId) => !activeMatchingIds.has(connectionId))
+    ) {
+      throw new OAuthConnectionSnapshotConflictError();
+    }
+    await revokeLockedOAuthConnections(
+      tx,
+      input.accountId,
+      input.connectionIds,
+      now,
+    );
+    return input.connectionIds.length;
+  });
+}
+
 export async function revokeOAuthConnection(
   db: AttentionDatabase,
   accountId: string,
@@ -754,11 +904,7 @@ export async function revokeOAuthConnection(
       .for("update")
       .limit(1);
     if (!connection) return;
-    await tx
-      .update(oauthConnections)
-      .set({ revokedAt: now, updatedAt: now })
-      .where(eq(oauthConnections.id, connection.id));
-    await revokeConnectionCredentials(tx, accountId, connection.id, now);
+    await revokeLockedOAuthConnections(tx, accountId, [connection.id], now);
   });
 }
 

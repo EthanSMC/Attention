@@ -1,6 +1,6 @@
 import "server-only";
 
-import { apiKeyScopes, revokeOAuthConnection } from "@attention/auth";
+import { apiKeyScopes } from "@attention/auth";
 import {
   getAgentIntegration,
   type RuntimeCheckpointReport,
@@ -431,50 +431,6 @@ export interface McpOAuthConnectionGroupOverview {
 
 function normalizedOAuthClientName(value: string): string {
   return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase("en-US");
-}
-
-export async function revokeMcpOAuthConnectionGroup(
-  db: AttentionDatabase,
-  input: { accountId: string; clientName: string },
-): Promise<number> {
-  const normalizedClientName = normalizedOAuthClientName(input.clientName);
-  if (
-    !normalizedClientName ||
-    normalizedClientName.length > 100 ||
-    /[\p{Cc}\p{Cf}]/u.test(normalizedClientName)
-  ) {
-    throw new RangeError("invalid_oauth_client_name");
-  }
-  const rows = await db
-    .select({
-      accountId: oauthConnections.accountId,
-      audience: oauthConnections.audience,
-      clientName: oauthClients.name,
-      id: oauthConnections.id,
-      kind: oauthConnections.kind,
-    })
-    .from(oauthConnections)
-    .innerJoin(oauthClients, eq(oauthClients.clientId, oauthConnections.clientId))
-    .where(
-      and(
-        eq(oauthConnections.accountId, input.accountId),
-        eq(oauthConnections.audience, "attention-mcp"),
-        eq(oauthConnections.kind, "mcp"),
-        isNull(oauthConnections.revokedAt),
-      ),
-    );
-  const connectionIds = rows
-    .filter((row) =>
-      row.accountId === input.accountId &&
-      row.audience === "attention-mcp" &&
-      row.kind === "mcp" &&
-      normalizedOAuthClientName(row.clientName) === normalizedClientName
-    )
-    .map((row) => row.id);
-  for (const connectionId of connectionIds) {
-    await revokeOAuthConnection(db, input.accountId, connectionId);
-  }
-  return connectionIds.length;
 }
 
 function projectMcpOAuthConnections(

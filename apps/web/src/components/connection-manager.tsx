@@ -29,6 +29,44 @@ interface McpOAuthConnectionGroup {
   connections: McpOAuthConnection[];
 }
 
+type OAuthGroupRevokeOutcome = "failed" | "revoked" | "stale" | "unknown";
+
+export async function requestOAuthGroupSnapshotRevoke(
+  group: McpOAuthConnectionGroup,
+  request: typeof fetch = fetch,
+): Promise<OAuthGroupRevokeOutcome> {
+  const connectionIds = group.connections.map(({ id }) => id);
+  try {
+    const response = await request("/api/account/oauth/group", {
+      body: JSON.stringify({
+        client_name: group.clientName,
+        connection_ids: connectionIds,
+      }),
+      headers: { "Content-Type": "application/json" },
+      method: "DELETE",
+    });
+    if (response.status === 409) return "stale";
+    const result = (await response.json().catch(() => ({}))) as {
+      revoked_count?: number;
+    };
+    return response.ok && result.revoked_count === connectionIds.length
+      ? "revoked"
+      : "failed";
+  } catch {
+    return "unknown";
+  }
+}
+
+export function oauthGroupRevokeFailureMessage(
+  outcome: OAuthGroupRevokeOutcome,
+): string {
+  if (outcome === "stale") return "连接列表已变化，请刷新后重试。";
+  if (outcome === "unknown") {
+    return "网络连接中断，撤销结果无法确认。请刷新连接列表后再操作。";
+  }
+  return "批量撤销没有完成，请刷新页面后重试。";
+}
+
 interface LocalChannelRuntime {
   deviceName: string;
   hostName: string;
@@ -294,21 +332,14 @@ export function ConnectionManager({
     setRevokingOAuthGroup(true);
     clearFeedback();
     try {
-      const response = await fetch("/api/account/oauth/group", {
-        body: JSON.stringify({ client_name: group.clientName }),
-        headers: { "Content-Type": "application/json" },
-        method: "DELETE",
-      });
-      const result = (await response.json().catch(() => ({}))) as {
-        revoked_count?: number;
-      };
-      if (response.ok && result.revoked_count === group.connections.length) {
+      const outcome = await requestOAuthGroupSnapshotRevoke(group);
+      if (outcome === "revoked") {
         window.location.reload();
       } else {
-        showFeedback("批量撤销没有完成，请刷新页面后重试。", "error");
+        showFeedback(oauthGroupRevokeFailureMessage(outcome), "error");
       }
     } catch {
-      showFeedback("网络连接失败，批量撤销没有完成。请重试。", "error");
+      showFeedback(oauthGroupRevokeFailureMessage("unknown"), "error");
     } finally {
       revokeRequestInFlight.current = false;
       setRevokingOAuthGroup(false);

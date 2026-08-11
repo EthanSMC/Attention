@@ -10,6 +10,7 @@ import {
 } from "@attention/db";
 
 import { apiKeyScopes } from "./api-credentials";
+import * as oauthModule from "./oauth";
 import {
   createAuthorizationCode,
   exchangeAuthorizationCode,
@@ -564,6 +565,147 @@ describe("OAuth connection-aware authorization", () => {
     expect(db.state.accessTokens).toHaveLength(1);
     expect(db.state.refreshTokens).toHaveLength(1);
   });
+
+  describe("atomic MCP connection snapshot revocation", () => {
+    const firstConnectionId = "20000000-0000-4000-8000-000000000002";
+    const secondConnectionId = "20000000-0000-4000-8000-000000000003";
+    const thirdConnectionId = "20000000-0000-4000-8000-000000000004";
+
+    function candidate() {
+      const value = Reflect.get(oauthModule, "revokeMcpOAuthConnectionSnapshot") as
+        | ((
+            db: AttentionDatabase,
+            input: {
+              accountId: string;
+              clientName: string;
+              connectionIds: string[];
+            },
+            revokedAt?: Date,
+          ) => Promise<number>)
+        | undefined;
+      expect(value).toBeTypeOf("function");
+      return value;
+    }
+
+    function revokeState(
+      connections: ConnectionRow[],
+      options: { failRefreshTokenRevoke?: boolean } = {},
+    ): OAuthStateDatabase {
+      return new OAuthStateDatabase({
+        accessTokens: connections.map((row, index) => credential({
+          accountId: row.accountId,
+          audience: row.audience,
+          clientId: row.clientId,
+          connectionId: row.id,
+          id: `30000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+        })),
+        connections,
+        ...options,
+        refreshTokens: connections.map((row, index) => credential({
+          accountId: row.accountId,
+          audience: row.audience,
+          clientId: row.clientId,
+          connectionId: row.id,
+          id: `40000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+        })),
+      });
+    }
+
+    it("rejects an added matching connection without revoking the confirmed snapshot", async () => {
+      const db = revokeState([
+        connection({ id: firstConnectionId, clientName: "Codex" }),
+        connection({ id: secondConnectionId, clientName: "Codex" }),
+        connection({ id: thirdConnectionId, clientName: "Codex" }),
+      ]);
+      const revoke = candidate();
+      if (!revoke) return;
+
+      await expect(revoke(db.database, {
+        accountId,
+        clientName: "Codex",
+        connectionIds: [firstConnectionId, secondConnectionId],
+      }, now)).rejects.toMatchObject({ message: "oauth_connection_snapshot_stale" });
+
+      expect(db.state.connections.every(({ revokedAt }) => revokedAt === null)).toBe(true);
+      expect(db.state.accessTokens.every(({ status }) => status === "active")).toBe(true);
+      expect(db.state.refreshTokens.every(({ status }) => status === "active")).toBe(true);
+    });
+
+    it.each([
+      ["foreign", connection({ accountId: otherAccountId, id: secondConnectionId })],
+      ["already revoked", connection({ id: secondConnectionId, revokedAt: now })],
+      ["another client group", connection({ clientName: "Claude", id: secondConnectionId })],
+    ])("rejects one %s ID and leaves every connection unchanged", async (_case, invalid) => {
+      const db = revokeState([
+        connection({ id: firstConnectionId, clientName: "Codex" }),
+        invalid,
+      ]);
+      const revoke = candidate();
+      if (!revoke) return;
+
+      await expect(revoke(db.database, {
+        accountId,
+        clientName: "Codex",
+        connectionIds: [firstConnectionId, secondConnectionId],
+      }, now)).rejects.toMatchObject({ message: "oauth_connection_snapshot_stale" });
+
+      expect(db.state.connections.find(({ id }) => id === firstConnectionId)?.revokedAt)
+        .toBeNull();
+      expect(db.state.accessTokens.every(({ status }) => status === "active")).toBe(true);
+      expect(db.state.refreshTokens.every(({ status }) => status === "active")).toBe(true);
+    });
+
+    it("rolls back every connection and credential when a late revoke write fails", async () => {
+      const db = revokeState([
+        connection({ id: firstConnectionId, clientName: "Codex" }),
+        connection({ id: secondConnectionId, clientName: "Codex" }),
+      ], { failRefreshTokenRevoke: true });
+      const revoke = candidate();
+      if (!revoke) return;
+
+      await expect(revoke(db.database, {
+        accountId,
+        clientName: "Codex",
+        connectionIds: [firstConnectionId, secondConnectionId],
+      }, now)).rejects.toThrow("injected_refresh_revoke_failure");
+
+      expect(db.state.connections.every(({ revokedAt }) => revokedAt === null)).toBe(true);
+      expect(db.state.accessTokens.every(({ status }) => status === "active")).toBe(true);
+      expect(db.state.refreshTokens.every(({ status }) => status === "active")).toBe(true);
+    });
+
+    it("revokes the exact confirmed set and no other logical connection", async () => {
+      const db = revokeState([
+        connection({ id: firstConnectionId, clientName: "Codex" }),
+        connection({ id: secondConnectionId, clientName: "Codex" }),
+        connection({ clientName: "Claude", id: thirdConnectionId }),
+      ]);
+      const revoke = candidate();
+      if (!revoke) return;
+
+      await expect(revoke(db.database, {
+        accountId,
+        clientName: "Ｃｏｄｅｘ",
+        connectionIds: [firstConnectionId, secondConnectionId],
+      }, now)).resolves.toBe(2);
+
+      expect(db.state.connections.map(({ id, revokedAt }) => [id, revokedAt])).toEqual([
+        [firstConnectionId, now],
+        [secondConnectionId, now],
+        [thirdConnectionId, null],
+      ]);
+      expect(db.state.accessTokens.map(({ status }) => status)).toEqual([
+        "revoked",
+        "revoked",
+        "active",
+      ]);
+      expect(db.state.refreshTokens.map(({ status }) => status)).toEqual([
+        "revoked",
+        "revoked",
+        "active",
+      ]);
+    });
+  });
 });
 
 describe("API key scope boundary", () => {
@@ -634,6 +776,7 @@ interface ConnectionRow {
   accountId: string;
   audience: string;
   clientId: string;
+  clientName: string;
   createdAt: Date;
   id: string;
   kind: "mcp" | "runtime";
@@ -700,6 +843,7 @@ function connection(overrides: Partial<ConnectionRow> = {}): ConnectionRow {
     accountId,
     audience: "attention-mcp",
     clientId,
+    clientName: "Attention Test Client",
     createdAt: new Date("2026-08-10T10:00:00.000Z"),
     id: "20000000-0000-4000-8000-000000000002",
     kind: "mcp",
@@ -734,10 +878,14 @@ class OAuthStateDatabase {
   state: OAuthState;
   readonly database: AttentionDatabase;
   private readonly failRefreshTokenInsert: boolean;
+  private readonly failRefreshTokenRevoke: boolean;
   private transactionTail: Promise<void> = Promise.resolve();
   private nextId = 10;
 
-  constructor(input: Partial<OAuthState> & { failRefreshTokenInsert?: boolean }) {
+  constructor(input: Partial<OAuthState> & {
+    failRefreshTokenInsert?: boolean;
+    failRefreshTokenRevoke?: boolean;
+  }) {
     this.state = {
       accessTokens: input.accessTokens ?? [],
       authorizationCodes: input.authorizationCodes ?? [],
@@ -745,6 +893,7 @@ class OAuthStateDatabase {
       refreshTokens: input.refreshTokens ?? [],
     };
     this.failRefreshTokenInsert = input.failRefreshTokenInsert ?? false;
+    this.failRefreshTokenRevoke = input.failRefreshTokenRevoke ?? false;
     this.database = {
       transaction: <T>(callback: (tx: AttentionDatabase) => Promise<T>) =>
         this.transaction(callback),
@@ -785,27 +934,35 @@ class OAuthStateDatabase {
   private select(state: OAuthState) {
     let table: unknown;
     let condition: unknown;
+    const execute = () => {
+      const strings = sqlParameterStrings(condition);
+      if (table === oauthAuthorizationCodes) {
+        return state.authorizationCodes.filter((row) => strings.includes(row.codeHash));
+      }
+      if (table === oauthRefreshTokens) {
+        return state.refreshTokens
+          .filter((row) => strings.includes(row.tokenHash) || strings.includes(row.id));
+      }
+      if (table === oauthConnections) {
+        const hasSpecificId = state.connections.some((row) => strings.includes(row.id));
+        return hasSpecificId
+          ? state.connections.filter((row) => strings.includes(row.id))
+          : state.connections;
+      }
+      return [];
+    };
     const query = {
       for: () => query,
       from: (value: unknown) => {
         table = value;
         return query;
       },
-      limit: async () => {
-        const strings = sqlParameterStrings(condition);
-        if (table === oauthAuthorizationCodes) {
-          return state.authorizationCodes.filter((row) => strings.includes(row.codeHash)).slice(0, 1);
-        }
-        if (table === oauthRefreshTokens) {
-          return state.refreshTokens
-            .filter((row) => strings.includes(row.tokenHash) || strings.includes(row.id))
-            .slice(0, 1);
-        }
-        if (table === oauthConnections) {
-          return state.connections.filter((row) => strings.includes(row.id)).slice(0, 1);
-        }
-        return [];
-      },
+      innerJoin: () => query,
+      limit: async () => execute().slice(0, 1),
+      then: <TResult1 = unknown, TResult2 = never>(
+        onfulfilled?: ((value: unknown[]) => TResult1 | PromiseLike<TResult1>) | null,
+        onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+      ) => Promise.resolve(execute()).then(onfulfilled, onrejected),
       where: (value: unknown) => {
         condition = value;
         return query;
@@ -886,6 +1043,13 @@ class OAuthStateDatabase {
         if (strings.includes(row.id)) Object.assign(row, value);
       }
       return;
+    }
+    if (
+      table === oauthRefreshTokens &&
+      value.status === "revoked" &&
+      this.failRefreshTokenRevoke
+    ) {
+      throw new Error("injected_refresh_revoke_failure");
     }
     const rows = table === oauthAccessTokens ? state.accessTokens : state.refreshTokens;
     for (const row of rows) {
