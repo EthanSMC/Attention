@@ -115,7 +115,9 @@ Attention MCP 是 `app-server` 在隔离配置中加载的唯一 MCP，不是 Br
 - reasoning effort：`medium`；
 - verbosity：`low`；
 - 仅加载 Attention MCP；
-- 仅开放 Channel 所需的 Attention 工具；
+- 仅开放 Channel 所需的 Attention 工具；用户已批准账号范围内的收藏创建、
+  候选确认和收藏修改等 Attention MCP 写操作，服务端仍按用户权益、
+  可见性和审计规则执行；
 - 不开放 Shell、文件写入、浏览器或用户其他 MCP。
 
 这些是每位 Codex Channel 用户的默认值，不依赖开发者本机配置。

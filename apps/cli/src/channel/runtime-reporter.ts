@@ -72,6 +72,7 @@ export interface RuntimeReporterOptions {
   ) => void;
   readonly onBindingInvalidated?: () => void;
   readonly onBindingVerified?: (bindingId: string) => void;
+  readonly onInstallationInvalidated?: () => void;
   readonly onPairingVerificationFailed?: () => void;
   readonly onStatusChange?: (status: RuntimeReporterStatus) => void;
   readonly requestTimeoutMs?: number;
@@ -106,9 +107,13 @@ export interface RuntimeReporter {
   renewPairing(): void;
   snapshot(): RuntimeReporterState;
   start(): void;
-  stop(): Promise<void>;
+  stop(options?: RuntimeReporterStopOptions): Promise<void>;
   transition(snapshot: RuntimeReporterSnapshot): void;
   verifyPairing(input: RuntimePairingVerification): void;
+}
+
+export interface RuntimeReporterStopOptions {
+  readonly discardPending?: boolean;
 }
 
 export function createRuntimeReporter(
@@ -129,6 +134,7 @@ class LocalRuntimeReporter implements RuntimeReporter {
     | undefined;
   readonly #onBindingInvalidated: (() => void) | undefined;
   readonly #onBindingVerified: ((bindingId: string) => void) | undefined;
+  readonly #onInstallationInvalidated: (() => void) | undefined;
   readonly #onPairingVerificationFailed: (() => void) | undefined;
   readonly #onStatusChange:
     | ((status: RuntimeReporterStatus) => void)
@@ -144,6 +150,7 @@ class LocalRuntimeReporter implements RuntimeReporter {
   #bindingId: string | null;
   #currentSnapshot: RuntimeReporterSnapshot;
   #heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  #installationInvalidated = false;
   #lastErrorCode: string | null = null;
   #registered = false;
   #stoppingDeliveryOpen = false;
@@ -167,6 +174,7 @@ class LocalRuntimeReporter implements RuntimeReporter {
     this.#onBindingChallenge = options.onBindingChallenge;
     this.#onBindingInvalidated = options.onBindingInvalidated;
     this.#onBindingVerified = options.onBindingVerified;
+    this.#onInstallationInvalidated = options.onInstallationInvalidated;
     this.#onPairingVerificationFailed =
       options.onPairingVerificationFailed;
     this.#onStatusChange = options.onStatusChange;
@@ -197,12 +205,20 @@ class LocalRuntimeReporter implements RuntimeReporter {
 
   transition(snapshot: RuntimeReporterSnapshot): void {
     this.#currentSnapshot = snapshot;
-    if (!this.#started || !this.#accepting) return;
+    if (
+      !this.#started ||
+      !this.#accepting ||
+      this.#installationInvalidated
+    ) return;
     this.#enqueueHeartbeat(snapshot);
   }
 
   activity(): void {
-    if (!this.#started || !this.#accepting) return;
+    if (
+      !this.#started ||
+      !this.#accepting ||
+      this.#installationInvalidated
+    ) return;
     const bindingId = this.#bindingId;
     if (!bindingId) return;
     this.#enqueue(async () => {
@@ -226,7 +242,11 @@ class LocalRuntimeReporter implements RuntimeReporter {
   }
 
   renewPairing(): void {
-    if (!this.#started || !this.#accepting) return;
+    if (
+      !this.#started ||
+      !this.#accepting ||
+      this.#installationInvalidated
+    ) return;
     this.#enqueue(async () => {
       this.#invalidateBinding();
       await this.#ensureRegistered();
@@ -234,7 +254,11 @@ class LocalRuntimeReporter implements RuntimeReporter {
   }
 
   verifyPairing(input: RuntimePairingVerification): void {
-    if (!this.#started || !this.#accepting) return;
+    if (
+      !this.#started ||
+      !this.#accepting ||
+      this.#installationInvalidated
+    ) return;
     const bindingId = input.bindingId ?? this.#bindingId;
     if (!bindingId) return;
     this.#enqueue(async () => {
@@ -273,7 +297,7 @@ class LocalRuntimeReporter implements RuntimeReporter {
     };
   }
 
-  async stop(): Promise<void> {
+  async stop(options: RuntimeReporterStopOptions = {}): Promise<void> {
     if (!this.#started) {
       this.#accepting = false;
       this.#setStatus("stopped", null);
@@ -282,6 +306,12 @@ class LocalRuntimeReporter implements RuntimeReporter {
     if (!this.#accepting) return;
     this.#accepting = false;
     if (this.#heartbeatTimer) clearInterval(this.#heartbeatTimer);
+    if (options.discardPending) {
+      for (const controller of this.#activeRequests) controller.abort();
+      await boundedWait(this.#tail, this.#stopTimeoutMs);
+      this.#setStatus("stopped", this.#lastErrorCode);
+      return;
+    }
     this.#stoppingDeliveryOpen = true;
     const stoppingSnapshot: RuntimeReporterSnapshot = {
       ...this.#currentSnapshot,
@@ -319,6 +349,8 @@ class LocalRuntimeReporter implements RuntimeReporter {
       if (!result.ok && result.status === 404) {
         this.#registered = false;
         await this.#ensureRegistered();
+      } else if (!result.ok && result.status === 409) {
+        this.#invalidateInstallation();
       }
     }, duringStop);
   }
@@ -329,6 +361,7 @@ class LocalRuntimeReporter implements RuntimeReporter {
   ): void {
     const run = async (): Promise<void> => {
       if (
+        this.#installationInvalidated ||
         !this.#accepting &&
         (!duringStop || !this.#stoppingDeliveryOpen)
       ) {
@@ -361,7 +394,10 @@ class LocalRuntimeReporter implements RuntimeReporter {
         tool_contract_version: this.#identity.toolContractVersion,
       });
       const registered = await this.#post("/installations", registration);
-      if (!registered.ok) return false;
+      if (!registered.ok) {
+        if (registered.status === 409) this.#invalidateInstallation();
+        return false;
+      }
       this.#registered = true;
     }
 
@@ -391,12 +427,29 @@ class LocalRuntimeReporter implements RuntimeReporter {
     this.#onBindingInvalidated?.();
   }
 
+  #invalidateInstallation(): void {
+    if (this.#installationInvalidated) return;
+    this.#installationInvalidated = true;
+    this.#registered = false;
+    this.#bindingId = null;
+    if (this.#heartbeatTimer) clearInterval(this.#heartbeatTimer);
+    this.#setStatus("degraded", "runtime_installation_conflict");
+    try {
+      this.#onInstallationInvalidated?.();
+    } catch {
+      // The reporter is already terminal for this immutable installation.
+    }
+  }
+
   async #post(path: string, payload: unknown): Promise<DeliveryResult> {
     const body = JSON.stringify(payload);
     let refreshed = false;
     let token: string | null = null;
     for (let attempt = 0; ; attempt += 1) {
-      if (!this.#accepting && !this.#stoppingDeliveryOpen) {
+      if (
+        this.#installationInvalidated ||
+        !this.#accepting && !this.#stoppingDeliveryOpen
+      ) {
         return { body: null, ok: false, status: null };
       }
       try {
@@ -407,6 +460,12 @@ class LocalRuntimeReporter implements RuntimeReporter {
         });
         if (!token) {
           this.#setStatus("degraded", "runtime_auth_required");
+          return { body: null, ok: false, status: null };
+        }
+        if (
+          this.#installationInvalidated ||
+          !this.#accepting && !this.#stoppingDeliveryOpen
+        ) {
           return { body: null, ok: false, status: null };
         }
         let response = await this.#send(path, body, token);
@@ -420,6 +479,12 @@ class LocalRuntimeReporter implements RuntimeReporter {
           });
           if (!token) {
             this.#setStatus("degraded", "runtime_auth_required");
+            return { body: null, ok: false, status: null };
+          }
+          if (
+            this.#installationInvalidated ||
+            !this.#accepting && !this.#stoppingDeliveryOpen
+          ) {
             return { body: null, ok: false, status: null };
           }
           response = await this.#send(path, body, token);
@@ -443,7 +508,10 @@ class LocalRuntimeReporter implements RuntimeReporter {
       } catch {
         // Network and token-provider failures share the bounded retry policy.
       }
-      if (!this.#accepting && !this.#stoppingDeliveryOpen) {
+      if (
+        this.#installationInvalidated ||
+        !this.#accepting && !this.#stoppingDeliveryOpen
+      ) {
         return { body: null, ok: false, status: null };
       }
       const delay = this.#retryBackoffMs[attempt];

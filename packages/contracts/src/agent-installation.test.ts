@@ -130,6 +130,7 @@ describe("Agent installation manifests", () => {
     );
     expect(getAgentInstallationProfile("codex").compatibility).toMatchObject({
       command_checks: [
+        { args: ["app-server", "--help"], executable: "codex" },
         { args: ["mcp", "add", "--help"], executable: "codex" },
         { args: ["mcp", "get", "--help"], executable: "codex" },
       ],
@@ -140,13 +141,34 @@ describe("Agent installation manifests", () => {
       .toHaveLength(3);
   });
 
-  it("keeps Runtime OAuth separate from MCP OAuth without claiming it shipped", () => {
-    for (const id of [
-      "openclaw",
-      "hermes",
-      "codex",
-      "claude-code",
-    ] as const) {
+  it("publishes the Codex Runtime reporter without claiming unverified pairing", () => {
+    const codex = getAgentInstallationProfile("codex");
+    expect(codex.mcp.oauth_client).toBe("dedicated_mcp_client");
+    expect(codex.runtime_reporting).toEqual({
+      availability: "available",
+      heartbeat: "runtime",
+      mode: "attention_runtime_oauth",
+      oauth_client_boundary: "separate_from_mcp",
+      pairing_reports: true,
+      resource_url_template: "{attention_origin}/api/runtime",
+      scopes: CHANNEL_RUNTIME_SCOPES,
+    });
+    expect(codex.claims).toMatchObject({
+      can_confirm_channel_pairing: false,
+      can_confirm_runtime: false,
+    });
+    expect(codex.install_steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          availability: "available",
+          id: "authorize_runtime",
+        }),
+      ]),
+    );
+  });
+
+  it("keeps unshipped host Runtime reporters contract-only", () => {
+    for (const id of ["openclaw", "hermes", "claude-code"] as const) {
       const profile = getAgentInstallationProfile(id);
       expect(profile.mcp.oauth_client).toBe("dedicated_mcp_client");
       expect(profile.runtime_reporting).toEqual({
@@ -352,6 +374,7 @@ describe("Agent installation manifests", () => {
     }
     expect(getAgentInstallationProfile("codex").compatibility).toEqual({
       command_checks: [
+        { args: ["app-server", "--help"], executable: "codex" },
         { args: ["mcp", "add", "--help"], executable: "codex" },
         { args: ["mcp", "get", "--help"], executable: "codex" },
       ],

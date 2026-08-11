@@ -17,6 +17,7 @@ import {
   type BrainAdapter,
   type BrainInvokeInput,
   type BrainOutcome,
+  type BrainRuntimeSnapshot,
   execBrain,
 } from "../brain";
 import { BRAIN_TIMEOUT_MS } from "../limits";
@@ -56,8 +57,12 @@ export function createClaudeCodeBrain(
   options: ClaudeCodeBrainOptions,
 ): BrainAdapter {
   const execImpl = options.execImpl ?? execBrain;
+  let phase: BrainRuntimeSnapshot["phase"] = "healthy";
   return {
     hostId: "claude-code",
+    async start(): Promise<void> {
+      phase = "healthy";
+    },
     async invoke(input: BrainInvokeInput): Promise<BrainOutcome> {
       const args = [
         "-p",
@@ -132,6 +137,12 @@ export function createClaudeCodeBrain(
         sessionId,
         timedOut: false,
       };
+    },
+    runtimeSnapshot(): BrainRuntimeSnapshot {
+      return { lastErrorCode: null, phase, retryAttempt: 0 };
+    },
+    async shutdown(): Promise<void> {
+      phase = "stopped";
     },
   };
 }

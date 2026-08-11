@@ -10,7 +10,7 @@ import {
 } from "@attention/contracts";
 
 import { defaultChannelState, saveChannelState } from "./channel/state";
-import type { CommandRunner } from "./command-runner";
+import type { CommandInvocation, CommandRunner } from "./command-runner";
 import { doctorExitCode, runDoctor } from "./doctor";
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
@@ -18,6 +18,78 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 }
 
 describe("doctor", () => {
+  it("verifies the local Codex resident app-server command with exact argv", async () => {
+    const invocations: CommandInvocation[] = [];
+    const checks = await runDoctor({
+      compatibilityInvocations: [
+        { args: ["app-server", "--help"], executable: "codex" },
+      ],
+      fetchImpl: (async () => jsonResponse({})) as typeof fetch,
+      hostId: "codex",
+      loginInvocation: null,
+      mcpUrl: "https://attention.example/mcp",
+      minimumVersion: null,
+      probe: false,
+      probeEvidence: "none",
+      probeInvocation: null,
+      runner: async (invocation) => {
+        invocations.push(invocation);
+        return {
+          exitCode: 0,
+          signal: null,
+          stderr: "",
+          stdout: "Usage: codex app-server",
+          timedOut: false,
+        };
+      },
+      versionInvocation: null,
+    });
+
+    expect(invocations).toEqual([
+      { args: ["app-server", "--help"], executable: "codex" },
+    ]);
+    expect(checks.find((check) => check.id === "host_capabilities")).toEqual(
+      expect.objectContaining({
+        status: "pass",
+        title: "Host command capabilities",
+      }),
+    );
+  });
+
+  it("fails with an actionable diagnostic when Codex lacks app-server", async () => {
+    const checks = await runDoctor({
+      compatibilityInvocations: [
+        { args: ["app-server", "--help"], executable: "codex" },
+      ],
+      fetchImpl: (async () => jsonResponse({})) as typeof fetch,
+      hostId: "codex",
+      loginInvocation: null,
+      mcpUrl: "https://attention.example/mcp",
+      minimumVersion: null,
+      probe: false,
+      probeEvidence: "none",
+      probeInvocation: null,
+      runner: async () => ({
+        exitCode: 2,
+        signal: null,
+        stderr: "error: unrecognized subcommand 'app-server'",
+        stdout: "",
+        timedOut: false,
+      }),
+      versionInvocation: null,
+    });
+
+    expect(checks.find((check) => check.id === "host_capabilities")).toEqual(
+      expect.objectContaining({
+        detail: expect.stringMatching(
+          /Update Codex.*resident app-server runtime.*attention doctor codex/us,
+        ),
+        status: "fail",
+      }),
+    );
+    expect(doctorExitCode(checks)).toBe(1);
+  });
+
   it("does not accept a config-only Codex probe as live MCP evidence", async () => {
     const invocations: string[] = [];
     const runner: CommandRunner = async (invocation) => {

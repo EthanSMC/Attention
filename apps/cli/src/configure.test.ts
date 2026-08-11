@@ -432,13 +432,14 @@ describe("Skill staging and apply", () => {
     });
 
     expect(events).toEqual([
+      "codex app-server --help",
       "codex mcp add --help",
       "codex mcp get --help",
       "fetch-skill",
       "codex mcp add attention --url https://attention.example/mcp",
     ]);
     expect(results.filter((result) => result.id.startsWith("compatibility_check_")))
-      .toHaveLength(2);
+      .toHaveLength(3);
   });
 
   it("leaves Skill and host configuration untouched when a compatibility check fails", async () => {
@@ -470,7 +471,7 @@ describe("Skill staging and apply", () => {
       },
     });
 
-    expect(invocations).toEqual(["codex mcp add --help"]);
+    expect(invocations).toEqual(["codex app-server --help"]);
     expect(fetched).toBe(false);
     expect(results).toEqual([
       expect.objectContaining({
@@ -577,6 +578,7 @@ describe("Skill staging and apply", () => {
       runner,
     });
     expect(invocations).toEqual([
+      "codex\0app-server\0--help",
       "codex\0mcp\0add\0--help",
       "codex\0mcp\0get\0--help",
       "codex\0mcp\0add\0attention\0--url\0https://attention.example/mcp",

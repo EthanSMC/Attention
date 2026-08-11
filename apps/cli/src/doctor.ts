@@ -62,8 +62,15 @@ async function checkHostCapabilities(
   for (const invocation of invocations) {
     const result = await runner(invocation, { timeoutMs: 10_000 });
     if (result.exitCode !== 0) {
+      const isCodexAppServer =
+        invocation.executable === "codex" &&
+        invocation.args.length === 2 &&
+        invocation.args[0] === "app-server" &&
+        invocation.args[1] === "--help";
       return {
-        detail: `${formatInvocation(invocation)} is unavailable: ${commandFailureDetail(result)}`,
+        detail: isCodexAppServer
+          ? `${formatInvocation(invocation)} is unavailable: ${commandFailureDetail(result)} Update Codex to a release that supports the resident app-server runtime, then retry \`attention doctor codex\` before starting the Channel.`
+          : `${formatInvocation(invocation)} is unavailable: ${commandFailureDetail(result)}`,
         id: "host_capabilities",
         status: "fail",
         title: "Host command capabilities",

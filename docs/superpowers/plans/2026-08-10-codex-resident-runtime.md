@@ -13,6 +13,12 @@
 - Bridge and all iLink credentials remain on the user's device.
 - Product default is `gpt-5.6-luna`, reasoning effort `medium`, verbosity `low` for every Codex Channel user.
 - Codex receives only the current Attention MCP Channel tool allowlist; Shell, filesystem writes, browser, other MCP servers, and unknown approvals are denied.
+- The user has approved account-scoped Attention collection writes for this
+  resident Channel. The allowlist therefore includes collection creation,
+  candidate selection, and collection update in addition to the required read
+  tools. Server-side account entitlements and visibility rules still apply;
+  this approval does not authorize local filesystem writes or any non-Attention
+  tool.
 - One Bridge processes one Codex turn at a time; inbound and outbound queues remain durable.
 - Resume the persisted thread ID first; if resume fails, replay the local last 20 user/assistant exchanges into a new thread.
 - The resident protocol is mandatory for supported Codex versions; do not silently fall back to per-message `codex exec`.
@@ -63,7 +69,10 @@ acceptance; this plan does not claim those unfinished pieces are deployed.
 - Modify `apps/cli/src/channel/channel-command.test.ts`: signal, queue, and restart integration tests.
 - Modify `apps/cli/src/channel/doctor.ts` and `doctor.test.ts`: app-server compatibility and local phase checks.
 - Modify `apps/cli/src/channel/limits.ts`: restart/backoff constants.
-- Modify `apps/web/public/cli/attention-0.1.0.mjs` and `manifest.json`: generated release artifact only.
+- Modify `apps/cli/package.json`: bump the public CLI version before publishing
+  changed runtime behavior.
+- Modify `apps/web/public/cli/attention-<version>.mjs` and `manifest.json`:
+  generated release artifacts only; never hand-edit either file.
 - Modify channel runtime docs and public installation artifacts only where observable behavior changed.
 
 ---
@@ -89,7 +98,7 @@ it("correlates responses while forwarding notifications", async () => {
   const seen: string[] = [];
   rpc.onNotification((event) => seen.push(event.method));
   const pending = rpc.request<{ ok: true }>("initialize", {
-    clientInfo: { name: "attention-channel", title: "Attention", version: "0.1.0" },
+    clientInfo: { name: "attention-channel", title: "Attention", version: "0.2.0" },
     capabilities: null,
   });
   child.stdout.write('{"method":"thread/started","params":{"thread":{"id":"t-1"}}}\n');
@@ -329,10 +338,24 @@ git commit -m "feat: recover resident channel turns without message loss"
 **Files:**
 - Modify: `apps/cli/src/doctor.ts`
 - Modify: `apps/cli/src/doctor.test.ts`
+- Modify: `packages/contracts/src/agent-integration.ts` only when a capability
+  has actually crossed its release gate.
+- Modify: `packages/contracts/src/agent-installation.ts` for the Codex
+  app-server compatibility probe and any manifest projection change.
+- Modify: `packages/contracts/src/agent-integration.test.ts`
+- Modify: `packages/contracts/src/agent-installation.test.ts`
+- Modify: `apps/cli/package.json` with the new public CLI version.
 - Modify: `apps/web/public/skills/attention/INSTALL.md`
-- Modify: relevant public Codex installation manifest generated from contracts
-- Modify: `apps/web/public/cli/attention-0.1.0.mjs`
-- Modify: `apps/web/public/cli/manifest.json`
+- Modify: `apps/web/src/server/agent-connection-projection.ts` and its tests
+  only when the released Runtime reporting state changes the `/doc`/connection
+  copy.
+- Generate: `apps/web/public/skills/attention/installations/v1/index.json`
+- Generate: every file under
+  `apps/web/public/skills/attention/installations/v1/agents/`
+- Generate:
+  `apps/web/public/skills/attention/installations/v1/templates/restricted-profile.json`
+- Generate: `apps/web/public/cli/attention-<version>.mjs`
+- Generate: `apps/web/public/cli/manifest.json`
 - Modify: `docs/local-agent-wechat-device-acceptance.md`
 
 **Interfaces:**
@@ -351,34 +374,142 @@ Run: `pnpm vitest run apps/cli/src/doctor.test.ts apps/cli/src/main.test.ts`
 
 Describe resident behavior, local status commands, the 20-exchange recovery rule, and the no-cloud-fallback boundary. Keep the public installation command source-free and do not expose runtime internals in Web setup copy.
 
-- [ ] **Step 4: Synchronize generated artifacts**
+- [ ] **Step 4: Promote release truth deliberately**
+
+Use this source-to-output map; do not edit generated public JSON or the public
+CLI bundle by hand:
+
+| Release truth | Authoritative source | Generated output |
+|---|---|---|
+| Codex/Channel capability, Runtime reporter availability, claims | `packages/contracts/src/agent-integration.ts` | projected through `agent-installation.ts` into the public catalog/host JSON |
+| Codex minimum version and `codex app-server --help` compatibility probe | `packages/contracts/src/agent-installation.ts` | `installations/v1/agents/codex.json` |
+| Attention-only restricted profile | `restrictedAgentProfileTemplate` in `packages/contracts/src/agent-installation.ts` | `installations/v1/templates/restricted-profile.json` |
+| User-facing current/candidate wording and offline/privacy boundary | `apps/web/public/skills/attention/INSTALL.md` | none; this file is hand-authored and is **not** changed by either sync command |
+| `/doc` and connection-page setup/status copy | `apps/web/src/server/agent-connection-projection.ts` plus manifest-driven components | rendered Web UI; not changed by either sync command |
+| Public CLI version and Node requirement | `apps/cli/package.json` | `/cli/manifest.json` plus versioned bundle filename |
+| Resident Bridge implementation | `apps/cli/src/**` | versioned single-file bundle under `apps/web/public/cli/` |
+
+Promote the two capabilities independently:
+
+1. **Resident Codex release without Reporter:** add the app-server compatibility
+   probe, update INSTALL from “candidate” to “published”, and publish a new CLI
+   artifact. Keep `runtime_reporting.availability: "contract_only"` and both
+   Runtime/pairing claims `false`.
+2. **Reporter release:** only after Runtime OAuth, heartbeat, binding and the
+   privacy/offline device gate pass, change Codex Runtime reporting to
+   `available` and `can_confirm_runtime` to `true`. Change
+   `can_confirm_channel_pairing` only after the pairing challenge itself has
+   passed end to end. Do not promote Claude Code or native hosts from the Codex
+   evidence.
+
+Do not invent a Codex `minimum_version` until a lowest passing release has been
+tested. Until then retain `policy: "verify_at_install"` and require the real
+`codex app-server --help`/protocol probe.
+
+- [ ] **Step 5: Bump the CLI version and synchronize generated artifacts**
+
+Before synchronization, bump `apps/cli/package.json` from the previously
+published version. A runtime behavior change must not overwrite a cacheable
+artifact at the same URL. The old versioned artifact may remain available for
+already pinned installers; `/cli/manifest.json` must point to the new one.
 
 Run:
 
 ```bash
+pnpm vitest run \
+  packages/contracts/src/agent-integration.test.ts \
+  packages/contracts/src/agent-installation.test.ts
 pnpm agent-installations:sync
 pnpm cli-artifact:sync
 ```
 
-- [ ] **Step 5: Run the full gate**
+`agent-installations:sync` rewrites the catalog, all five host manifests and the
+restricted profile from contracts; it does not update `INSTALL.md`.
+`cli-artifact:sync` builds `apps/cli/dist/index.js`, writes the new versioned
+`.mjs`, and recalculates `/cli/manifest.json` (`version`, `node`,
+`artifact_path`, `sha256`).
+
+Inspect the generated diff before running checks:
+
+```bash
+git diff --name-status -- \
+  apps/web/public/skills/attention/INSTALL.md \
+  apps/web/public/skills/attention/installations/v1 \
+  apps/web/public/cli
+git diff -- apps/web/public/skills/attention/installations/v1/agents/codex.json
+git diff -- apps/web/public/cli/manifest.json
+```
+
+Expected resident-only promotion: INSTALL changes, Codex compatibility data
+changes, a new versioned CLI bundle appears, and the CLI manifest points to its
+new SHA. Runtime availability/claims remain unchanged unless Reporter passed its
+separate gate. Changes to unrelated host manifests require an explicit contracts
+explanation, even though the generator rewrites all of them.
+
+- [ ] **Step 6: Run the full generated-artifact and release gate**
 
 Run:
 
 ```bash
 pnpm --filter @attention/cli typecheck
 pnpm vitest run apps/cli/src/channel apps/cli/src/doctor.test.ts apps/cli/src/main.test.ts
+pnpm vitest run \
+  packages/contracts/src/agent-integration.test.ts \
+  packages/contracts/src/agent-installation.test.ts \
+  apps/web/src/server/agent-installation-manifest.test.ts \
+  apps/web/src/server/attention-cli-artifact.test.ts
 pnpm lint
 pnpm agent-installations:check
 pnpm cli-artifact:check
+pnpm capabilities:check
 git diff --check
 ```
 
 Expected: all commands PASS and generated artifacts are clean.
 
-- [ ] **Step 6: Commit the release-facing changes**
+- [ ] **Step 7: Smoke the exact public artifact**
+
+Read the path and checksum from `apps/web/public/cli/manifest.json`, hash the
+referenced file, then execute that file rather than `apps/cli/dist/index.js`:
 
 ```bash
-git add apps/cli/src/doctor.ts apps/cli/src/doctor.test.ts apps/web/public/skills/attention apps/web/public/cli docs/local-agent-wechat-device-acceptance.md
+attention_public_cli_path="$(node -e 'const m=require("./apps/web/public/cli/manifest.json"); process.stdout.write(`apps/web/public${m.artifact_path}`)')"
+attention_public_cli_sha="$(node -e 'const m=require("./apps/web/public/cli/manifest.json"); process.stdout.write(m.sha256)')"
+attention_public_cli_actual_sha="$(node -e 'const c=require("node:crypto"),f=require("node:fs");process.stdout.write(c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex"))' "$attention_public_cli_path")"
+test "$attention_public_cli_actual_sha" = "$attention_public_cli_sha"
+node "$attention_public_cli_path" --help
+node "$attention_public_cli_path" channel status --json
+unset attention_public_cli_path attention_public_cli_sha attention_public_cli_actual_sha
+```
+
+The JSON output must contain no iLink/Codex/MCP token, Codex thread/session ID,
+message ID or text, URL, reply, contact, or raw WeChat identifier. Real iLink
+and app-server failure acceptance remains Task 6 and cannot be replaced by
+these smoke commands.
+
+After deployment, verify that the public origin serves the reviewed artifact
+and manifest rather than merely passing the container-local health check:
+
+```bash
+./deploy/staging/smoke-test.sh --public
+```
+
+- [ ] **Step 8: Commit the reviewed release-facing set**
+
+```bash
+git add \
+  apps/cli/package.json \
+  apps/cli/src/doctor.ts \
+  apps/cli/src/doctor.test.ts \
+  packages/contracts/src/agent-integration.ts \
+  packages/contracts/src/agent-integration.test.ts \
+  packages/contracts/src/agent-installation.ts \
+  packages/contracts/src/agent-installation.test.ts \
+  apps/web/src/server/agent-connection-projection.ts \
+  apps/web/src/server/agent-connection-projection.test.ts \
+  apps/web/public/skills/attention \
+  apps/web/public/cli \
+  docs/local-agent-wechat-device-acceptance.md
 git commit -m "docs: publish resident Codex channel runtime"
 ```
 

@@ -65,11 +65,13 @@ function oauthHarness(options: {
   const registrationBodies: Array<Record<string, unknown>> = [];
   const tokenForms: URLSearchParams[] = [];
   const requestedUrls: string[] = [];
+  const userAgents: string[] = [];
   const close = vi.fn(async () => undefined);
 
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = requestUrl(input);
     requestedUrls.push(url);
+    userAgents.push(new Headers(init?.headers).get("user-agent") ?? "");
     if (url === protectedResourceMetadataUrl) {
       return json({
         authorization_servers: [authorizationServer],
@@ -162,6 +164,7 @@ function oauthHarness(options: {
     registrationBodies,
     requestedUrls,
     tokenForms,
+    userAgents,
   };
 }
 
@@ -189,6 +192,9 @@ describe("dedicated Runtime OAuth", () => {
       authorizationServerMetadataUrl,
       registrationEndpoint,
     ]);
+    expect(new Set(harness.userAgents)).toEqual(
+      new Set(["attention-cli/0.2.0"]),
+    );
     expect(harness.registrationBodies).toEqual([{
       application_type: "native",
       client_name: "Attention Local Channel Runtime",
@@ -198,7 +204,7 @@ describe("dedicated Runtime OAuth", () => {
       response_types: ["code"],
       scope: runtimeScope,
       software_id: "attention-channel-runtime",
-      software_version: "0.1.0",
+      software_version: "0.2.0",
       token_endpoint_auth_method: "none",
     }]);
     const authorizeUrl = harness.openedAuthorizationUrl();

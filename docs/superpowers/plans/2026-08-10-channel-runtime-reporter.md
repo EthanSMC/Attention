@@ -278,16 +278,31 @@ git commit -m "feat: show last local channel checkpoint"
 - Consumes: completed Tasks 1–5 and the resident-runtime plan.
 - Produces: deployable Reporter and verified privacy/availability behavior.
 
+**Manifest promotion rule:** follow the source/output and generated-artifact
+checklist in Task 5 of
+[`2026-08-10-codex-resident-runtime.md`](./2026-08-10-codex-resident-runtime.md).
+The Reporter implementation alone does not change a public claim. For Codex,
+set Runtime reporting to `available` and `can_confirm_runtime` to `true` only
+after the Runtime OAuth/heartbeat/privacy/offline gate below passes. Set
+`can_confirm_channel_pairing` to `true` only after the real pairing challenge
+passes. Keep Claude Code and every native host unchanged unless each has its
+own release evidence. `INSTALL.md` is hand-authored and must be promoted
+separately; the installation sync command will not edit it.
+
 - [ ] **Step 1: Run contract, DB, CLI, Web, and artifact gates**
 
 ```bash
+pnpm vitest run \
+  packages/contracts/src/agent-integration.test.ts \
+  packages/contracts/src/agent-installation.test.ts
+pnpm agent-installations:sync
+pnpm cli-artifact:sync
 pnpm typecheck
 pnpm test
 pnpm lint
-pnpm agent-installations:sync
-pnpm cli-artifact:sync
 pnpm agent-installations:check
 pnpm cli-artifact:check
+pnpm capabilities:check
 git diff --check
 ```
 

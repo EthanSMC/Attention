@@ -12,6 +12,7 @@ import {
 
 import { runCommand } from "./command-runner";
 import { normalizeAttentionOrigin } from "./origin";
+import { ATTENTION_CLI_VERSION } from "./version";
 
 const RUNTIME_CREDENTIAL_VERSION = 1 as const;
 const RUNTIME_CREDENTIAL_MAXIMUM_BYTES = 65_536;
@@ -20,7 +21,6 @@ const RUNTIME_OAUTH_TIMEOUT_MS = 15_000;
 const RUNTIME_CALLBACK_TIMEOUT_MS = 5 * 60 * 1_000;
 const RUNTIME_ACCESS_TOKEN_SKEW_MS = 30_000;
 const RUNTIME_CLIENT_NAME = "Attention Local Channel Runtime";
-const RUNTIME_SOFTWARE_VERSION = "0.1.0";
 const RUNTIME_SCOPE = CHANNEL_RUNTIME_SCOPES.join(" ");
 const activeRefreshes = new Map<string, Promise<string>>();
 
@@ -206,7 +206,7 @@ async function fetchJson(
       ...init,
       headers: {
         Accept: "application/json",
-        "User-Agent": "attention-cli/0.1",
+        "User-Agent": `attention-cli/${ATTENTION_CLI_VERSION}`,
         ...init.headers,
       },
       redirect: "manual",
@@ -313,7 +313,7 @@ async function registerRuntimeClient(
         response_types: ["code"],
         scope: RUNTIME_SCOPE,
         software_id: CHANNEL_RUNTIME_RESOURCE,
-        software_version: RUNTIME_SOFTWARE_VERSION,
+        software_version: ATTENTION_CLI_VERSION,
         token_endpoint_auth_method: "none",
       }),
       headers: { "Content-Type": "application/json" },

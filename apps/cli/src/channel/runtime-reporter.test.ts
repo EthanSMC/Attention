@@ -360,9 +360,122 @@ describe("RuntimeReporter bootstrap", () => {
     ]);
     await reporter.stop();
   });
+
+  it("invalidates a conflicted installation once and stops stale delivery", async () => {
+    const paths: string[] = [];
+    const invalidations: number[] = [];
+    let registrations = 0;
+    const reporter = createRuntimeReporter(reporterOptions({
+      fetchImpl: async (url) => {
+        const path = new URL(String(url)).pathname;
+        paths.push(path);
+        if (path.endsWith("/installations")) {
+          registrations += 1;
+          return registrations === 1
+            ? jsonResponse({ installation }, 201)
+            : jsonResponse(
+                { error: { code: "installation_conflict" } },
+                409,
+              );
+        }
+        if (path.endsWith("/heartbeat")) {
+          return jsonResponse(
+            { error: { code: "installation_conflict" } },
+            409,
+          );
+        }
+        return jsonResponse({ installation });
+      },
+      onInstallationInvalidated: () => invalidations.push(1),
+    }));
+
+    reporter.start();
+    await vi.waitFor(() => expect(reporter.snapshot().status).toBe("active"));
+    reporter.transition(snapshot);
+    reporter.activity();
+    await vi.waitFor(() => expect(invalidations).toEqual([1]));
+
+    reporter.transition(snapshot);
+    reporter.activity();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(paths).toEqual([
+      "/api/runtime/installations",
+      `/api/runtime/installations/${installationId}/heartbeat`,
+    ]);
+    expect(registrations).toBe(1);
+    expect(reporter.snapshot()).toEqual({
+      bindingId: null,
+      lastErrorCode: "runtime_installation_conflict",
+      status: "degraded",
+    });
+    await reporter.stop();
+  });
+
+  it("invalidates an installation when registration receives a persistent conflict", async () => {
+    const paths: string[] = [];
+    const invalidations: number[] = [];
+    const reporter = createRuntimeReporter(reporterOptions({
+      fetchImpl: async (url) => {
+        paths.push(new URL(String(url)).pathname);
+        return jsonResponse(
+          { error: { code: "installation_conflict" } },
+          409,
+        );
+      },
+      onInstallationInvalidated: () => invalidations.push(1),
+    }));
+
+    reporter.start();
+    await vi.waitFor(() => expect(invalidations).toEqual([1]));
+
+    reporter.transition(snapshot);
+    reporter.activity();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(paths).toEqual(["/api/runtime/installations"]);
+    expect(reporter.snapshot()).toEqual({
+      bindingId: null,
+      lastErrorCode: "runtime_installation_conflict",
+      status: "degraded",
+    });
+    await reporter.stop();
+  });
 });
 
 describe("RuntimeReporter scheduling and delivery", () => {
+  it("discards pending delivery before switched credentials can report a stale installation", async () => {
+    const paths: string[] = [];
+    let resolveToken: ((token: string) => void) | undefined;
+    let tokenRequested: (() => void) | undefined;
+    const requested = new Promise<void>((resolve) => {
+      tokenRequested = resolve;
+    });
+    const reporter = createRuntimeReporter(reporterOptions({
+      accessTokenProvider: {
+        accessToken: async () => {
+          tokenRequested?.();
+          return await new Promise<string>((resolve) => {
+            resolveToken = resolve;
+          });
+        },
+      },
+      fetchImpl: async (url) => {
+        paths.push(new URL(String(url)).pathname);
+        return jsonResponse({ installation }, 201);
+      },
+    }));
+
+    reporter.start();
+    await requested;
+    const stopping = reporter.stop({ discardPending: true });
+    resolveToken?.("token-for-new-runtime-account");
+    await stopping;
+
+    expect(paths).toEqual([]);
+    expect(reporter.snapshot().status).toBe("stopped");
+  });
+
   it("keeps transition non-throwing when event construction fails", async () => {
     const reporter = createRuntimeReporter(reporterOptions({
       eventId: () => {

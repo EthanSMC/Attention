@@ -40,6 +40,7 @@ describe("agent integration capability manifest", () => {
         engine: "attention_channel_bridge",
       },
       interactive: { availability: "available", mcp: "available" },
+      runtime_reporting: { availability: "available" },
     });
   });
 

@@ -73,7 +73,7 @@ placeholders.
 |---|---|---|---|---|
 | OpenClaw | available | external Tencent `openclaw-weixin` plugin | host-native, OpenClaw `>= 2026.5.12` for the current plugin | MCP only; Runtime reporter is contract-only |
 | Hermes Agent | available | native Hermes Gateway | host-native gateway | MCP only; Runtime reporter is contract-only |
-| Codex | available in CLI/Desktop | local `attention-channel` bridge shipped with the Attention CLI | the published bridge polls iLink and invokes Codex in a restricted profile; a resident app-server candidate is still in integration/release acceptance | MCP only; the bridge does not report to the Runtime in this release |
+| Codex | available in CLI/Desktop | local `attention-channel` bridge shipped with the Attention CLI | the published bridge polls iLink and invokes one resident Codex app-server in a restricted profile | MCP plus optional privacy-safe Runtime health/checkpoints; real-device pairing remains unconfirmed until device acceptance |
 | Claude Code | available in Code/Desktop surfaces | local `attention-channel` bridge shipped with the Attention CLI | the bridge polls iLink and invokes headless Claude Code in a restricted profile | MCP only; the bridge does not report to the Runtime in this release |
 | WorkBuddy | Skill bundle and MCP available in `>= 4.8.2` | WorkBuddy UI | host-managed | MCP only; channel state is unverifiable |
 
@@ -241,27 +241,34 @@ attention channel start codex --origin {attention_origin} --background
 ```
 
 The bridge runs on the user's machine, owns iLink polling after a one-time
-QR scan, and invokes `codex exec` in a restricted profile that allows only
-the Attention MCP. It is a local process, not an Attention-hosted service:
+QR scan, and keeps one `codex app-server` process resident in a restricted
+profile that allows only the Attention MCP. It is a local process, not an
+Attention-hosted service:
 `--background` installs a current-user service after the explicit first QR
 scan, so closing the terminal does not stop inbound delivery. An inbound
 message is not guaranteed to appear as a visible Desktop conversation. A future Codex SDK
 companion remains a separate `contract_only` design alternative.
 
-The approved next Codex runtime keeps the same local bridge as the sole iLink
-owner but keeps one `codex app-server` resident. It first resumes the locally
+Attention CLI `0.2.0` keeps the same local bridge as the sole iLink owner and
+keeps one `codex app-server` resident. It first resumes the locally
 persisted thread ID; if that thread cannot be resumed, it creates a thread after
 replaying the local last 20 user/assistant exchanges. Its Channel defaults are
 `gpt-5.6-luna`, reasoning effort `medium`, and verbosity `low` for every user.
 It uses a dedicated Channel `CODEX_HOME` and fails closed unless app-server
-reports exactly one MCP server named `attention`. No iLink credential, Codex
-token, thread ID, message, URL, or reply is sent to Attention by this runtime.
+reports exactly one MCP server named `attention`. Its optional Runtime Reporter
+never sends an iLink credential, Codex token, thread ID, message, URL, or reply
+to Attention. Normal authenticated MCP collection does send the URL and
+collection metadata that the user explicitly asks Attention to save.
+Within that one MCP, the resident Channel may perform the account-scoped
+collection writes the user authorized, including collecting a link, selecting
+a candidate, and updating a collection. Attention still enforces the account's
+entitlements and visibility rules. This does not grant Shell, local filesystem
+write, browser automation, code execution, or access to another MCP server.
 
-This paragraph describes the verified candidate architecture, not the current
-published artifact. Do not claim resident behavior until the public CLI
-manifest points to an artifact that has passed Bridge integration, artifact
-checks, and real-device acceptance. The published manifest remains the source
-of truth for what users can install now.
+The published CLI manifest and its SHA-256 digest remain the source of truth
+for the exact artifact users install. Run `attention doctor codex` after
+installation; it fails with an upgrade instruction when the installed Codex
+does not expose the required `app-server` command.
 
 The restricted profile template is published at:
 
@@ -349,12 +356,12 @@ logout` stops/removes the background service and deletes the local iLink
 state. If iLink expires, the service exits without opening an unattended QR
 prompt; rerun the same `--background` command in a terminal.
 
-When the resident Codex candidate is eventually published, a Codex process
-failure does not transfer iLink ownership: the bridge keeps polling, queues
-normal messages, and can answer exact local status/help/retry/continue commands.
-If the whole device or bridge is offline, WeChat receives no Attention reply.
-After the separate Runtime reporter is shipped, Web may show only the last
-reported heartbeat and checkpoint; it never takes over iLink or Codex.
+In Attention CLI `0.2.0`, a Codex process failure does not transfer iLink
+ownership: the bridge keeps polling, queues normal messages, and can answer
+exact local status/help/retry/continue commands. If the whole device or bridge
+is offline, WeChat receives no Attention reply. When the optional Runtime
+reporter is authorized, Web can show only the last reported heartbeat and
+checkpoint; it never takes over iLink or Codex.
 
 Privacy boundary for the bridge:
 
@@ -364,12 +371,19 @@ Privacy boundary for the bridge:
 - The iLink bot identifier is not an Attention identity and is never used
   for login, entitlements, or global identity.
 - Bridge logs omit tokens and full message bodies.
-- The bridge does not register with the Local Channel Runtime in this
-  release, so the Attention service and Web cannot observe bridge state.
-- A future Runtime reporter may send stable status, timestamps, error codes,
-  and bounded queue counts only. It must never send iLink/Codex/MCP tokens,
-  Codex thread IDs, message identifiers or text, URLs, replies, contacts, or
-  raw WeChat identifiers.
+- CLI `0.2.0` can optionally authorize a separate Runtime OAuth client. Its
+  reporter sends privacy-safe runtime status, timestamps, bounded queue counts,
+  checkpoints, and device-pairing results only.
+- The reporter never sends iLink credentials, Codex credentials or thread IDs,
+  message identifiers or content, URLs, replies, contacts, or raw WeChat
+  identifiers.
+- This exclusion applies to the Runtime reporter, not to normal authenticated
+  Attention MCP operations. When a user asks to save something,
+  `attention_collect_content` necessarily sends the saved URL and associated
+  collection metadata to Attention so the item can be synchronized and
+  processed.
+- If the device or bridge is offline, the reporter is offline too: WeChat gets
+  no reply, and Web retains only the last heartbeat and checkpoint it received.
 
 ## Final acceptance
 
@@ -387,8 +401,9 @@ host manifest's `acceptance` object.
 
 ## Runtime OAuth boundary
 
-The backend exposes a separate Local Channel Runtime resource for future
-OpenClaw, Hermes, Codex, and Claude adapters:
+The backend exposes a separate Local Channel Runtime resource. Attention CLI
+`0.2.0` may authorize it for privacy-safe runtime reporting and device-pairing
+results:
 
 ```text
 Resource: {attention_origin}/api/runtime
@@ -397,17 +412,29 @@ Scopes:   runtime:register runtime:heartbeat channel:bind:report channel:disconn
 
 The Runtime and MCP clients have separate access tokens, refresh tokens,
 audiences, and revocation boundaries. An Attention API Key cannot replace the
-Runtime credential. Because no corresponding local reporter is shipped in
-this release, manifests label this axis `contract_only` and `claims` remain
-false.
+Runtime credential. Runtime OAuth is optional: declining it does not prevent
+the local bridge or MCP from working, but Attention Web cannot receive live
+runtime or pairing updates from that device.
+
+Runtime reporting is not remote channel hosting. Attention receives only
+privacy-safe state such as health, timestamps, bounded queue counts,
+checkpoints, and pairing outcomes. The iLink credential and Codex thread stay
+local; messages, URLs, replies, and raw provider identifiers are never part of
+the reporter payload. A normal authenticated MCP save is a separate business
+operation and necessarily sends its saved URL and collection metadata to
+Attention. When the device or bridge is offline, WeChat cannot
+receive a reply and Web can show only the last heartbeat and checkpoint.
 
 ## Credential and privacy boundary
 
 - iLink token, context token, sync cursor, contact data, and media keys remain
   local to the Channel Owner.
-- Attention receives normal authenticated MCP calls. A future authorized
-  reporter may submit installation metadata, opaque fingerprints, pairing
-  results, and health timestamps—but never the channel credential.
+- Attention receives normal authenticated MCP calls. The optional CLI `0.2.0`
+  Runtime reporter may submit installation metadata, opaque fingerprints,
+  pairing results, health timestamps, bounded queue counts, and checkpoints—but
+  never the channel credential, Codex thread, message, URL, or reply. Normal MCP
+  collection is outside that reporter boundary and sends the URL and collection
+  metadata that the user explicitly asked Attention to save.
 - The Skill is a workflow contract. It is not a listener, a background
   service, a login identity, or proof that Tencent verified the user's real
   identity.
@@ -488,9 +515,11 @@ Claude Code. Consumers moving from `2.2.0` should:
   these two hosts;
 - read the bridge activation command from
   `channel.setup_command_templates`;
-- keep `claims.can_confirm_channel_pairing` false and `runtime_reporting`
-  unchanged: the bridge does not use the Runtime API in this release, so no
-  connection state is confirmable server-side;
+- read Codex `runtime_reporting.availability: "available"` as the shipped,
+  optional privacy-safe Reporter implementation. Keep
+  `claims.can_confirm_channel_pairing` and `claims.can_confirm_runtime` false:
+  implementation availability is not evidence that a real device completed
+  pairing or produced an accepted heartbeat;
 - note that the bridge restricted profile still denies shell, code
   execution, filesystem write, browser automation, and arbitrary MCP, and
   does not inherit the user's normal working directory or session history;

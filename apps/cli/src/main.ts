@@ -25,8 +25,7 @@ import {
 } from "./doctor";
 import { requireAttentionOrigin } from "./origin";
 import type { RuntimeAuthorizer } from "./runtime-oauth";
-
-const CLI_VERSION = "0.1.0";
+import { ATTENTION_CLI_VERSION } from "./version";
 
 interface OutputWriter {
   readonly error: (value: string) => void;
@@ -387,7 +386,7 @@ export async function runAttentionCli(
     return 0;
   }
   if (args.length === 1 && (args[0] === "--version" || args[0] === "-V")) {
-    output.log(CLI_VERSION);
+    output.log(ATTENTION_CLI_VERSION);
     return 0;
   }
 

@@ -39,6 +39,13 @@
     "command_checks": [
       {
         "args": [
+          "app-server",
+          "--help"
+        ],
+        "executable": "codex"
+      },
+      {
+        "args": [
           "mcp",
           "add",
           "--help"
@@ -115,14 +122,14 @@
       "requires_browser": false
     },
     {
-      "availability": "contract_only",
+      "availability": "available",
       "credential_target": "runtime_oauth",
       "executor": "user",
       "id": "authorize_runtime",
       "requires_browser": true
     },
     {
-      "availability": "contract_only",
+      "availability": "available",
       "credential_target": "runtime_oauth",
       "executor": "attention_installer",
       "id": "register_runtime",
@@ -143,7 +150,7 @@
       "requires_browser": false
     },
     {
-      "availability": "contract_only",
+      "availability": "available",
       "credential_target": "none",
       "executor": "host",
       "id": "verify_pairing",
@@ -211,7 +218,7 @@
     "template_path": "/skills/attention/installations/v1/templates/restricted-profile.json"
   },
   "runtime_reporting": {
-    "availability": "contract_only",
+    "availability": "available",
     "heartbeat": "runtime",
     "mode": "attention_runtime_oauth",
     "oauth_client_boundary": "separate_from_mcp",
