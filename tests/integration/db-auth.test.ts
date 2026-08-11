@@ -295,6 +295,18 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       'ALTER TABLE "oauth_authorization_codes" DROP COLUMN "normalized_connection_label"',
     );
     await handle.sql.unsafe(
+      'ALTER TABLE "oauth_clients" DROP CONSTRAINT "oauth_clients_runtime_identity_shape"',
+    );
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_clients" DROP COLUMN "connection_kind"',
+    );
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_clients" DROP COLUMN "device_name"',
+    );
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_clients" DROP COLUMN "installation_key_hash"',
+    );
+    await handle.sql.unsafe(
       'ALTER TABLE "oauth_access_tokens" DROP COLUMN "connection_id"',
     );
     await handle.sql.unsafe(
@@ -494,6 +506,36 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       .filter(Boolean)) {
       await handle.sql.unsafe(statement);
     }
+
+    const runtimeIdentityMigration = readFileSync(
+      resolve(root, "packages/db/drizzle/0030_runtime_device_registration.sql"),
+      "utf8",
+    );
+    for (const statement of runtimeIdentityMigration
+      .split("--> statement-breakpoint")
+      .map((part) => part.trim())
+      .filter(Boolean)) {
+      await handle.sql.unsafe(statement);
+    }
+    const restoredRuntimeIdentityColumns = await handle.sql<
+      { columnName: string }[]
+    >`
+      SELECT column_name AS "columnName"
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'oauth_clients'
+        AND column_name IN (
+          'connection_kind',
+          'device_name',
+          'installation_key_hash'
+        )
+      ORDER BY column_name
+    `;
+    expect(restoredRuntimeIdentityColumns).toEqual([
+      { columnName: "connection_kind" },
+      { columnName: "device_name" },
+      { columnName: "installation_key_hash" },
+    ]);
   });
 
   it("rejects duplicate active OAuth connection names after normalization", async () => {
