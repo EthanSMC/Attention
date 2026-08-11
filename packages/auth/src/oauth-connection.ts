@@ -39,7 +39,7 @@ export function normalizeOAuthConnectionLabel(
   const label = value.normalize("NFKC").trim().replace(/\s+/gu, " ");
   const normalizedLabel = label.toLowerCase();
   if (
-    /\p{Cc}/u.test(label) ||
+    /[\p{Cc}\p{Cf}]/u.test(label) ||
     [...label].length < 1 ||
     [...label].length > 80 ||
     [...normalizedLabel].length > 80

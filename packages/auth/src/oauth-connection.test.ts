@@ -24,6 +24,16 @@ describe("OAuth connection labels", () => {
     );
   });
 
+  it.each([
+    ["pure zero-width space", "\u200B"],
+    ["embedded bidi override", "Office\u202EMac"],
+    ["prefixed bidi isolate", "\u2066Office"],
+  ])("rejects Unicode format controls: %s", (_case, label) => {
+    expect(() => normalizeOAuthConnectionLabel(label)).toThrowError(
+      "invalid_connection_label",
+    );
+  });
+
   it("accepts one to eighty visible code points and rejects values outside the bound", () => {
     expect(normalizeOAuthConnectionLabel("😀").label).toBe("😀");
     expect(normalizeOAuthConnectionLabel("a".repeat(80)).label).toHaveLength(80);
