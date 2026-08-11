@@ -7,6 +7,7 @@ import {
 
 import type { SessionPrincipal } from "@attention/auth";
 import {
+  buildXiaohongshuAccessUrl,
   classifySourceUrl,
   extractLinkCandidates,
   findDangerousUrlParameters,
@@ -133,6 +134,14 @@ const temporaryFetcherErrorCodes = new Set([
   "timeout",
 ]);
 
+export function selectCandidateOutboundUrl(
+  identity: AdapterIdentity,
+  observedUrl: string,
+): string {
+  if (identity.adapter !== "xiaohongshu") return identity.normalizedUrl;
+  return buildXiaohongshuAccessUrl(observedUrl) ?? identity.normalizedUrl;
+}
+
 function fallbackDirectCandidate(
   url: string,
   match: NonNullable<ReturnType<typeof classifySourceUrl>>,
@@ -147,13 +156,13 @@ function fallbackDirectCandidate(
   if (!parsedInput) return null;
   const identity = match.adapter.identity(url);
   if (!identity) return null;
-  const outboundUrl = identity.normalizedUrl;
+  const outboundUrl = selectCandidateOutboundUrl(identity, url);
   const parsedOutbound = parseHttpUrl(outboundUrl);
   if (
     parsedOutbound === null ||
     hasUnsupportedHttpPort(parsedOutbound) ||
     clearlyUnsafeHostname(parsedOutbound.hostname) ||
-    findDangerousUrlParameters(parsedOutbound).length > 0
+    dangerousForAdapter(outboundUrl, identity.adapter, "content")
   ) {
     throw new CandidateUnsafeError("unsafe_outbound");
   }
@@ -348,13 +357,13 @@ async function resolveCandidate(rawUrl: string): Promise<ResolvedCandidate | nul
       ? null
       : genericWebAdapter.identity(currentUrl));
   if (!identity) return null;
-  const outboundUrl = identity.normalizedUrl;
+  const outboundUrl = selectCandidateOutboundUrl(identity, currentUrl);
   const parsedOutbound = parseHttpUrl(outboundUrl);
   if (
     parsedOutbound === null ||
     hasUnsupportedHttpPort(parsedOutbound) ||
     clearlyUnsafeHostname(parsedOutbound.hostname) ||
-    findDangerousUrlParameters(parsedOutbound).length > 0
+    dangerousForAdapter(outboundUrl, identity.adapter, "content")
   ) {
     throw new CandidateUnsafeError("unsafe_outbound");
   }
@@ -780,6 +789,21 @@ async function establishCollection(
       source: candidate.identity.adapter,
       sourceAdapter: candidate.identity.adapter,
     });
+    if (
+      candidate.identity.adapter === "xiaohongshu" &&
+      candidate.outboundUrl !== candidate.identity.normalizedUrl
+    ) {
+      await tx
+        .update(contents)
+        .set({ outboundUrl: candidate.outboundUrl, updatedAt: now })
+        .where(
+          and(
+            eq(contents.id, contentResult.content.id),
+            eq(contents.source, "xiaohongshu"),
+            eq(contents.normalizedUrl, candidate.identity.normalizedUrl),
+          ),
+        );
+    }
     const collectionResult = await upsertCollectionInTransaction(tx, {
       accountId: principal.accountId,
       contentId: contentResult.content.id,

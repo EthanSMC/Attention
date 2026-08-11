@@ -66,6 +66,31 @@ export function normalizeXiaohongshu(input: UrlInput): string | null {
   return `https://www.xiaohongshu.com/explore/${id}`;
 }
 
+/**
+ * Builds the browser-facing form of a public Xiaohongshu share URL. Identity
+ * stays query-free, but xsec_token is required to open some otherwise public
+ * notes. All unrelated share and attribution parameters are discarded.
+ */
+export function buildXiaohongshuAccessUrl(input: UrlInput): string | null {
+  const url = parseHttpUrl(input);
+  if (url === null || classifyXiaohongshu(url).kind !== "content") {
+    return null;
+  }
+  const normalizedUrl = normalizeXiaohongshu(url);
+  if (normalizedUrl === null) return null;
+
+  const token = url.searchParams.get("xsec_token")?.trim() ?? "";
+  if (!token || token.length > 2_048) return normalizedUrl;
+
+  const accessUrl = new URL(normalizedUrl);
+  const source = url.searchParams.get("xsec_source")?.trim() ?? "";
+  if (source && source.length <= 128) {
+    accessUrl.searchParams.set("xsec_source", source);
+  }
+  accessUrl.searchParams.set("xsec_token", token);
+  return accessUrl.href;
+}
+
 export function identifyXiaohongshu(input: UrlInput): AdapterIdentity | null {
   const classification = classifyXiaohongshu(input);
   if (

@@ -69,4 +69,21 @@ describe("Drizzle migration snapshot", () => {
       "ON CONFLICT (\"account_id\", \"source\") DO NOTHING",
     );
   });
+
+  it("repairs Xiaohongshu access URLs without making tracking part of identity", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const repairMigration = readFileSync(
+      resolve(root, "packages/db/drizzle/0027_xiaohongshu_outbound_repair.sql"),
+      "utf8",
+    );
+
+    expect(repairMigration).toContain('"contents"."normalized_url"');
+    expect(repairMigration).toContain("xsec_source");
+    expect(repairMigration).toContain("xsec_token");
+    expect(repairMigration).toContain("content.metadata.v1:");
+    expect(repairMigration).toContain("content.summary.v1:");
+    expect(repairMigration).toContain("小红书 - 你访问的页面不见了");
+    expect(repairMigration).not.toContain("app_platform");
+    expect(repairMigration).not.toContain("shareRedId");
+  });
 });
