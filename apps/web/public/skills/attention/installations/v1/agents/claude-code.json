@@ -57,7 +57,7 @@
     "availability": "available",
     "docs_url": null,
     "engine": "attention_channel_bridge",
-    "minimum_version": null,
+    "minimum_version": "2.1.226",
     "requires_byo_api_key": false,
     "requires_running_cli": true,
     "stable_alternative": null
@@ -99,14 +99,14 @@
       "requires_browser": false
     },
     {
-      "availability": "contract_only",
+      "availability": "available",
       "credential_target": "runtime_oauth",
       "executor": "user",
       "id": "authorize_runtime",
       "requires_browser": true
     },
     {
-      "availability": "contract_only",
+      "availability": "available",
       "credential_target": "runtime_oauth",
       "executor": "attention_installer",
       "id": "register_runtime",
@@ -127,7 +127,7 @@
       "requires_browser": false
     },
     {
-      "availability": "contract_only",
+      "availability": "available",
       "credential_target": "none",
       "executor": "host",
       "id": "verify_pairing",
@@ -197,7 +197,7 @@
     "template_path": "/skills/attention/installations/v1/templates/restricted-profile.json"
   },
   "runtime_reporting": {
-    "availability": "contract_only",
+    "availability": "available",
     "heartbeat": "runtime",
     "mode": "attention_runtime_oauth",
     "oauth_client_boundary": "separate_from_mcp",
@@ -217,7 +217,7 @@
     "bundle_skill_path": null,
     "delivery": "host_user_directory",
     "docs_url": "https://code.claude.com/docs/en/skills",
-    "document_sha256": "b642849b94e893159db6763885b3636d1810ee74641a5dc39b8f47443d8c98eb",
+    "document_sha256": "a10eee0bb10a3724a319fb0f968d2d1302e92abef134c63611588c2383f750ed",
     "format": "skill_md",
     "id": "attention",
     "install": "filesystem_directory",
@@ -232,6 +232,6 @@
     "source_kind": "local_directory",
     "source_path": "/skills/attention/SKILL.md",
     "tool_contract_version": "1.3.0",
-    "version": "1.4.0"
+    "version": "1.5.0"
   }
 }

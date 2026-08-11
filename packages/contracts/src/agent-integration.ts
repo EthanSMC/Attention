@@ -442,7 +442,7 @@ const manifestInput = [
     inbound: {
       availability: "available",
       engine: "attention_channel_bridge",
-      minimum_version: null,
+      minimum_version: "2.1.226",
       requires_byo_api_key: false,
       requires_running_cli: true,
       stable_alternative: null,
@@ -454,7 +454,7 @@ const manifestInput = [
     },
     platforms: ["macos", "linux", "windows"],
     runtime_reporting: {
-      availability: "contract_only",
+      availability: "available",
       heartbeat: "runtime",
       mode: "attention_runtime_oauth",
       pairing_reports: true,

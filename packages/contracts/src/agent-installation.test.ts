@@ -168,7 +168,7 @@ describe("Agent installation manifests", () => {
   });
 
   it("keeps unshipped host Runtime reporters contract-only", () => {
-    for (const id of ["openclaw", "hermes", "claude-code"] as const) {
+    for (const id of ["openclaw", "hermes"] as const) {
       const profile = getAgentInstallationProfile(id);
       expect(profile.mcp.oauth_client).toBe("dedicated_mcp_client");
       expect(profile.runtime_reporting).toEqual({
@@ -193,6 +193,25 @@ describe("Agent installation manifests", () => {
         ]),
       );
     }
+  });
+
+  it("ships the same optional Runtime reporter for Codex and Claude Code", () => {
+    const codex = getAgentInstallationProfile("codex");
+    const claude = getAgentInstallationProfile("claude-code");
+
+    expect(claude.runtime_reporting).toEqual(codex.runtime_reporting);
+    expect(claude.install_steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          availability: "available",
+          id: "authorize_runtime",
+        }),
+      ]),
+    );
+    expect(claude.claims).toMatchObject({
+      can_confirm_channel_pairing: false,
+      can_confirm_runtime: false,
+    });
   });
 
   it("publishes the WorkBuddy bundle without inventing Runtime or pairing events", () => {

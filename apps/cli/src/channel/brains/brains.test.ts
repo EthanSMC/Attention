@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { ATTENTION_MCP_TOOL_NAMES } from "@attention/contracts";
 
-import type { BrainInvocation, ExecBrainResult } from "../brain";
 import type {
   CodexAppServerRpcOptions,
   CodexRpcNotification,
 } from "../codex-app-server-rpc";
 import { createClaudeCodeBrain } from "./claude-code";
+import { buildClaudeResidentArgs } from "./claude-resident";
 import {
   ATTENTION_CHANNEL_APPROVED_WRITE_TOOLS,
   ATTENTION_CHANNEL_MCP_TOOL_NAMES,
@@ -15,43 +15,18 @@ import {
 } from "./codex";
 import type { CodexResidentRpc } from "./codex-resident";
 
-const execResult = (
-  partial: Partial<ExecBrainResult>,
-): ExecBrainResult => ({
-  exitCode: 0,
-  stderr: "",
-  stdout: "",
-  timedOut: false,
-  ...partial,
-});
-
 describe("claude-code brain", () => {
-  it("builds a restricted headless invocation with the prompt on stdin", async () => {
-    const captured: { invocation: BrainInvocation | null } = { invocation: null };
-    const brain = createClaudeCodeBrain({
-      execImpl: async (input) => {
-        captured.invocation = input;
-        return execResult({
-          stdout: JSON.stringify({
-            is_error: false,
-            result: "已收藏 ✓",
-            session_id: "s-1",
-          }),
-        });
-      },
-      mcpUrl: "https://attention.example/mcp",
-    });
-    const outcome = await brain.invoke({
-      cwd: "/tmp",
-      prompt: "收藏这个链接",
-      sessionId: null,
-    });
-    expect(captured.invocation?.executable).toBe("claude");
-    expect(captured.invocation?.args).toEqual([
+  it("builds a resident stream-json invocation restricted to the same six tools as Codex", () => {
+    expect(
+      buildClaudeResidentArgs("https://attention.example/mcp", null),
+    ).toEqual([
       "-p",
-      "--safe-mode",
+      "--input-format",
+      "stream-json",
       "--output-format",
-      "json",
+      "stream-json",
+      "--verbose",
+      "--safe-mode",
       "--strict-mcp-config",
       "--mcp-config",
       JSON.stringify({
@@ -65,112 +40,24 @@ describe("claude-code brain", () => {
       "--tools",
       "",
       "--allowedTools",
-      ...ATTENTION_MCP_TOOL_NAMES.map((name) => `mcp__attention__${name}`),
+      ...ATTENTION_CHANNEL_MCP_TOOL_NAMES.map(
+        (name) => `mcp__attention__${name}`,
+      ),
     ]);
-    expect(captured.invocation?.stdin).toBe("收藏这个链接");
-    expect(outcome).toMatchObject({
-      ok: true,
-      reply: "已收藏 ✓",
-      sessionId: "s-1",
-    });
   });
 
-  it("passes --resume when a session exists", async () => {
-    const captured: { invocation: BrainInvocation | null } = { invocation: null };
+  it("uses the resident lifecycle and appends --resume only for a stored session", async () => {
     const brain = createClaudeCodeBrain({
-      execImpl: async (input) => {
-        captured.invocation = input;
-        return execResult({
-          stdout: JSON.stringify({ result: "ok", session_id: "s-1" }),
-        });
-      },
       mcpUrl: "https://attention.example/mcp",
+      runtimeDirectory: "/tmp/channel",
     });
-    await brain.invoke({ cwd: "/tmp", prompt: "选 1", sessionId: "s-1" });
-    expect(captured.invocation?.args.slice(-2)).toEqual(["--resume", "s-1"]);
-  });
-
-  it("flags a failed resume so the pipeline can replay history", async () => {
-    const brain = createClaudeCodeBrain({
-      execImpl: async () =>
-        execResult({
-          exitCode: 1,
-          stderr: "No conversation found with session ID: stale",
-          stdout: "",
-        }),
-      mcpUrl: "https://attention.example/mcp",
-    });
-    const outcome = await brain.invoke({
-      cwd: "/tmp",
-      prompt: "hello",
-      sessionId: "stale",
-    });
-    expect(outcome.resumeFailed).toBe(true);
-    expect(outcome.ok).toBe(false);
-  });
-
-  it("treats is_error results with text as failure but keeps the session", async () => {
-    const brain = createClaudeCodeBrain({
-      execImpl: async () =>
-        execResult({
-          stdout: JSON.stringify({
-            is_error: true,
-            result: "MCP unavailable",
-            session_id: "s-2",
-          }),
-        }),
-      mcpUrl: "https://attention.example/mcp",
-    });
-    const outcome = await brain.invoke({
-      cwd: "/tmp",
-      prompt: "hi",
-      sessionId: null,
-    });
-    expect(outcome.ok).toBe(false);
-    expect(outcome.sessionId).toBe("s-2");
-  });
-
-  it("survives non-JSON output", async () => {
-    const brain = createClaudeCodeBrain({
-      execImpl: async () => execResult({ stdout: "something exploded" }),
-      mcpUrl: "https://attention.example/mcp",
-    });
-    const outcome = await brain.invoke({
-      cwd: "/tmp",
-      prompt: "hi",
-      sessionId: null,
-    });
-    expect(outcome.ok).toBe(false);
-    expect(outcome.resumeFailed).toBe(false);
-  });
-
-  it("reports timeouts", async () => {
-    const brain = createClaudeCodeBrain({
-      execImpl: async () => execResult({ timedOut: true }),
-      mcpUrl: "https://attention.example/mcp",
-    });
-    const outcome = await brain.invoke({
-      cwd: "/tmp",
-      prompt: "hi",
-      sessionId: null,
-    });
-    expect(outcome.timedOut).toBe(true);
-    expect(outcome.ok).toBe(false);
-  });
-
-  it("provides a uniform no-op lifecycle for the subprocess adapter", async () => {
-    const brain = createClaudeCodeBrain({
-      execImpl: async () => execResult({}),
-      mcpUrl: "https://attention.example/mcp",
-    });
-    await brain.start();
-    expect(brain.runtimeSnapshot()).toEqual({
-      lastErrorCode: null,
-      phase: "healthy",
-      retryAttempt: 0,
-    });
-    await brain.shutdown();
-    expect(brain.runtimeSnapshot().phase).toBe("stopped");
+    expect(brain.hostId).toBe("claude-code");
+    expect(
+      buildClaudeResidentArgs(
+        "https://attention.example/mcp",
+        "stored-session",
+      ).slice(-2),
+    ).toEqual(["--resume", "stored-session"]);
   });
 });
 

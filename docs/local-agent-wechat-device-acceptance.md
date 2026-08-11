@@ -65,24 +65,27 @@ Filter 新收藏默认公开，Member 新收藏默认私密；用户在消息中
    `--background` 命令扫码后恢复。
 7. 第二个桥实例必须被本地锁拒绝；崩溃留下的旧锁必须可自动恢复。
 
-### Codex 常驻候选产物附加门槛
+### Codex / Claude Code 常驻 Runtime 附加门槛
 
 以下项目只在公开 CLI manifest 已切换到常驻候选产物后执行，不得用
 设计文档代替发布证据：
 
-1. 同一 Bridge 生命周期只有一个 `codex app-server`，连续两轮复用同一
-   thread，模型为 `gpt-5.6-luna`、effort 为 `medium`、verbosity 为 `low`。
-2. 通道用的隔离 `CODEX_HOME` 只加载 Attention MCP；初始化后的
+1. Codex 在同一 Bridge 生命周期只有一个 `codex app-server`，连续两轮复用
+   同一 thread；Claude Code 只有一个 `claude -p` stream-json 进程，连续两轮
+   复用同一 session。结束宿主进程后，两者都优先恢复原 ID。
+2. Codex 的隔离 `CODEX_HOME` 只加载 Attention MCP；初始化后的
    `mcpServerStatus/list` 必须恰好只有 `attention`，否则拒绝 turn。
-3. 杀死 app-server 但保持 Bridge 在线：精确的“状态”命令立即本地回复，
+   Claude Code 必须使用 strict MCP config、空 built-in tool set 和与 Codex
+   相同的 6 个 Attention Channel 工具。
+3. 杀死宿主 Runtime 但保持 Bridge 在线：精确的“状态”命令立即本地回复，
    普通消息安全排队；重启后优先恢复原 thread。
-4. 伪造失效 thread ID 后，Bridge 回放本地最近 20 轮 user/assistant 对话
-   创建新 thread，后续问题仍能正确使用上下文。
+4. 伪造失效 thread/session ID 后，Bridge 回放本地最近 20 轮
+   user/assistant 对话创建新会话，后续问题仍能正确使用上下文。
 5. 普通聊天不发送通用“收到，正在处理”；只有已识别的收藏链接可给
    简短进度回执。
 6. 整台设备或 Bridge 离线后，微信不得出现伪造的云端回复；设备恢复后
    再从本地队列与断点继续。
-7. 若 Runtime Reporter 一同候选发布，服务端记录只含脱敏状态、时间、错误码
+7. 两个宿主的 Runtime Reporter 服务端记录都只含脱敏状态、时间、错误码
    与队列数；不含 iLink/Codex/MCP token、thread/message ID、聊天、URL、
    回复、联系人或原始微信标识。Web 只能显示最后心跳与最后断点。
 

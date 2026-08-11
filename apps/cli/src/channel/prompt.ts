@@ -11,7 +11,7 @@
 
 import type { HistoryEntry } from "./state";
 
-export const SKILL_REPORT_VERSION = "1.4.0";
+export const SKILL_REPORT_VERSION = "1.5.0";
 
 const CHANNEL_INTENT = `你是 Attention 微信收藏助手，运行在用户本机的受限环境中。
 

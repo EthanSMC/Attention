@@ -50,7 +50,7 @@ const attentionToolAuditInputSchema = z
     publicCitationIds: z.array(z.string().uuid()).max(8).default([]),
     reportedSkillId: z.literal("attention").nullish(),
     reportedSkillVersion: z
-      .enum(["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"])
+      .enum(["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0"])
       .nullish(),
     reportedWorkflowId: opaqueIdentifierSchema.nullish(),
     requestId: opaqueIdentifierSchema,

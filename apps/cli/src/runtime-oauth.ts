@@ -65,7 +65,9 @@ export interface RuntimeCallbackServer {
 }
 
 export interface AuthorizeRuntimeInput {
-  readonly createCallbackServer?: () => Promise<RuntimeCallbackServer>;
+  readonly createCallbackServer?: (
+    expectedState: string,
+  ) => Promise<RuntimeCallbackServer>;
   readonly credentialPath?: string;
   readonly deviceName: string;
   readonly fetchImpl?: typeof fetch;
@@ -615,7 +617,91 @@ function closeServer(server: Server): Promise<void> {
   });
 }
 
-async function createLoopbackCallbackServer(): Promise<RuntimeCallbackServer> {
+export type RuntimeOAuthCallbackPageState =
+  | "received"
+  | "cancelled"
+  | "invalid"
+  | "not_found";
+
+const CALLBACK_PAGE_COPY: Readonly<
+  Record<
+    RuntimeOAuthCallbackPageState,
+    { readonly detail: string; readonly eyebrow: string; readonly title: string }
+  >
+> = {
+  cancelled: {
+    detail: "没有保存设备状态同步凭证。你可以关闭此页面，返回终端继续。",
+    eyebrow: "授权已结束",
+    title: "授权已取消",
+  },
+  invalid: {
+    detail: "请关闭此页面，返回终端重新发起授权。",
+    eyebrow: "请求无效",
+    title: "无法完成授权",
+  },
+  not_found: {
+    detail: "请关闭此页面，返回终端检查授权流程。",
+    eyebrow: "地址无效",
+    title: "页面不存在",
+  },
+  received: {
+    detail: "请返回终端完成凭据交换和保存。在终端确认成功前，设备状态同步尚未启用。",
+    eyebrow: "授权已返回",
+    title: "已收到授权结果",
+  },
+};
+
+export function renderRuntimeOAuthCallbackPage(
+  state: RuntimeOAuthCallbackPageState,
+): string {
+  const copy = CALLBACK_PAGE_COPY[state];
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${copy.title} · Attention</title>
+  <style>
+    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; background: #ffffff; color: #1d1d1f; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #ffffff; }
+    main { width: min(100%, 520px); border: 1px solid #e5e5e7; border-radius: 16px; padding: clamp(28px, 7vw, 48px); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.06); }
+    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 56px; font-size: 18px; font-weight: 650; letter-spacing: -0.02em; }
+    .mark { width: 32px; height: 32px; border-radius: 10px; background: #1d1d1f; display: grid; grid-template-columns: 1fr 1fr; place-items: center; padding: 7px; gap: 3px; }
+    .mark::before, .mark::after { content: ""; width: 7px; height: 7px; border-radius: 999px; background: #0066ff; }
+    .mark::before { background: #ff6b61; }
+    .eyebrow { margin: 0 0 12px; color: #6e6e73; font-size: 14px; font-weight: 600; }
+    h1 { margin: 0; font-size: clamp(32px, 8vw, 48px); line-height: 1.04; letter-spacing: -0.055em; }
+    p { margin: 24px 0 0; color: #6e6e73; font-size: 17px; line-height: 1.6; }
+    .signal { width: 40px; height: 3px; margin-top: 40px; border-radius: 999px; background: #0066ff; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand"><span class="mark" aria-hidden="true"></span>Attention</div>
+    <div class="eyebrow">${copy.eyebrow}</div>
+    <h1>${copy.title}</h1>
+    <p>${copy.detail}</p>
+    <div class="signal" aria-hidden="true"></div>
+  </main>
+</body>
+</html>`;
+}
+
+export function runtimeOAuthCallbackHeaders(): Record<string, string> {
+  return {
+    "Cache-Control": "no-store",
+    "Content-Security-Policy":
+      "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    "Content-Type": "text/html; charset=utf-8",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+  };
+}
+
+async function createLoopbackCallbackServer(
+  expectedState: string,
+): Promise<RuntimeCallbackServer> {
   let resolveCallback: (url: URL) => void = () => undefined;
   let rejectCallback: (error: Error) => void = () => undefined;
   const callback = new Promise<URL>((resolve, reject) => {
@@ -625,18 +711,33 @@ async function createLoopbackCallbackServer(): Promise<RuntimeCallbackServer> {
   let redirectUri = "";
   const server = createServer((request, response) => {
     if (!request.url || !redirectUri) {
-      response.writeHead(400).end("Invalid OAuth callback.");
+      response.writeHead(400, runtimeOAuthCallbackHeaders()).end(
+        renderRuntimeOAuthCallbackPage("invalid"),
+      );
       return;
     }
     const callbackUrl = new URL(request.url, redirectUri);
     if (callbackUrl.pathname !== "/oauth/callback") {
-      response.writeHead(404).end("Not found.");
+      response.writeHead(404, runtimeOAuthCallbackHeaders()).end(
+        renderRuntimeOAuthCallbackPage("not_found"),
+      );
       return;
     }
-    response.writeHead(200, {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "no-store",
-    }).end("Attention Runtime authorization received. Return to the terminal.");
+    const states = callbackUrl.searchParams.getAll("state");
+    const stateMatches =
+      states.length === 1 && secureStringEqual(states[0] ?? "", expectedState);
+    const pageState: RuntimeOAuthCallbackPageState = !stateMatches
+      ? "invalid"
+      : callbackUrl.searchParams.has("error")
+      ? "cancelled"
+      : callbackUrl.searchParams.getAll("code").length === 1
+      ? "received"
+      : "invalid";
+    response.writeHead(
+      pageState === "invalid" ? 400 : 200,
+      runtimeOAuthCallbackHeaders(),
+    )
+      .end(renderRuntimeOAuthCallbackPage(pageState));
     resolveCallback(callbackUrl);
   });
   server.once("error", (error) => rejectCallback(error));
@@ -717,9 +818,10 @@ export const authorizeRuntime: RuntimeAuthorizer = async (
   input,
 ): Promise<RuntimeCredential> => {
   const fetchImpl = input.fetchImpl ?? fetch;
+  const state = randomBytes(32).toString("base64url");
   const callbackServer = await (
     input.createCallbackServer ?? createLoopbackCallbackServer
-  )();
+  )(state);
   try {
     const protectedResource = await discoverProtectedResource(
       runtimeMetadataUrl(input.origin),
@@ -740,7 +842,6 @@ export const authorizeRuntime: RuntimeAuthorizer = async (
     const challenge = createHash("sha256")
       .update(verifier)
       .digest("base64url");
-    const state = randomBytes(32).toString("base64url");
     const authorizationUrl = new URL(
       authorizationServer.authorizationEndpoint,
     );

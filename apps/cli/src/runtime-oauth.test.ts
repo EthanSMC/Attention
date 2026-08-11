@@ -11,6 +11,8 @@ import {
   authorizeRuntime,
   clearRuntimeCredential,
   loadRuntimeCredential,
+  renderRuntimeOAuthCallbackPage,
+  runtimeOAuthCallbackHeaders,
   runtimeAccessToken,
 } from "./runtime-oauth";
 
@@ -28,6 +30,42 @@ const redirectUri = "http://127.0.0.1:49152/oauth/callback";
 const runtimeScope = CHANNEL_RUNTIME_SCOPES.join(" ");
 const installationId = "11111111-1111-4111-8111-111111111111";
 const deviceName = "Ethan MacBook Pro";
+
+describe("Runtime OAuth callback experience", () => {
+  it("uses strict no-store browser headers", () => {
+    expect(runtimeOAuthCallbackHeaders()).toMatchObject({
+      "Cache-Control": "no-store",
+      "Content-Type": "text/html; charset=utf-8",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+    });
+    expect(runtimeOAuthCallbackHeaders()["Content-Security-Policy"]).toContain(
+      "default-src 'none'",
+    );
+  });
+
+  it.each([
+    ["received", "已收到授权结果", "设备状态同步尚未启用"],
+    ["cancelled", "授权已取消", "没有保存设备状态同步凭证"],
+    ["invalid", "无法完成授权", "返回终端重新发起"],
+    ["not_found", "页面不存在", "返回终端检查授权流程"],
+  ] as const)(
+    "renders the host-neutral %s state with Attention design tokens",
+    (state, title, detail) => {
+      const html = renderRuntimeOAuthCallbackPage(state);
+
+      expect(html).toContain("Attention");
+      expect(html).toContain(title);
+      expect(html).toContain(detail);
+      expect(html).toContain("#1d1d1f");
+      expect(html).toContain("#0066ff");
+      expect(html).toContain("border-radius: 16px");
+      expect(html).not.toMatch(/Codex|Claude/iu);
+      expect(html).not.toMatch(/code=|state=|access_token|refresh_token/iu);
+      expect(html).not.toMatch(/<script|https?:\/\//iu);
+    },
+  );
+});
 
 afterEach(async () => {
   await Promise.all(
@@ -197,7 +235,7 @@ describe("dedicated Runtime OAuth", () => {
       registrationEndpoint,
     ]);
     expect(new Set(harness.userAgents)).toEqual(
-      new Set(["attention-cli/0.2.1"]),
+      new Set(["attention-cli/0.3.0"]),
     );
     expect(harness.registrationBodies).toEqual([{
       application_type: "native",
@@ -211,7 +249,7 @@ describe("dedicated Runtime OAuth", () => {
       response_types: ["code"],
       scope: runtimeScope,
       software_id: "attention-channel-runtime",
-      software_version: "0.2.1",
+      software_version: "0.3.0",
       token_endpoint_auth_method: "none",
     }]);
     expect(harness.registrationBodies[0]).not.toHaveProperty("mac_address");

@@ -172,7 +172,7 @@ export async function handleInboundMessage(
       completed: true,
       controlCommand,
       processed: true,
-      replies: [buildControlReply(controlCommand, state)],
+      replies: [buildControlReply(controlCommand, state, input.brain.hostId)],
     };
   }
 
@@ -216,6 +216,7 @@ function canResumeInterruptedTurn(state: ChannelState): boolean {
 function buildControlReply(
   command: Exclude<ControlCommand, "reset">,
   state: ChannelState,
+  hostId: BrainAdapter["hostId"],
 ): string {
   switch (command) {
     case "help":
@@ -237,9 +238,10 @@ function buildControlReply(
       const retry = runtime.nextRetryAt
         ? `下次自动重试：${runtime.nextRetryAt}。`
         : "";
+      const runtimeName = hostId === "claude-code" ? "Claude Code" : "Codex";
       return [
         `${wechat}。`,
-        `Codex Runtime：${runtime.phase}。`,
+        `${runtimeName} Runtime：${runtime.phase}。`,
         `最近成功处理：${lastSuccess}。`,
         `${state.pendingInbound.length} 条消息等待处理，${state.pendingOutbound.length} 条待发送。`,
         retry,

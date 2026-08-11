@@ -44,7 +44,7 @@ describe("public Attention Skill contract", () => {
 
     expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe("1.3.0");
     expect(skill).toContain("Skill ID: `attention`");
-    expect(skill).toContain("Skill version: `1.4.0`");
+    expect(skill).toContain("Skill version: `1.5.0`");
     expect(skill).toContain(
       `Tool contract version: \`${ATTENTION_TOOL_CONTRACT_VERSION}\``,
     );
@@ -72,6 +72,10 @@ describe("public Attention Skill contract", () => {
     expect(skill).toMatch(/explicit_confirmation: true/u);
     expect(skill).toMatch(/do not transfer the old confirmation/u);
     expect(skill).toMatch(/Preserve values the user did not ask to change/u);
+    expect(skill).toMatch(/## Optional device status sync/u);
+    expect(skill).toMatch(/Only after the user explicitly agrees/u);
+    expect(skill).toMatch(/Codex and Claude Code follow this same workflow/u);
+    expect(skill).toMatch(/does not affect collection or WeChat/u);
     expect(skill).toMatch(/Do not retry through a public or anonymous endpoint to bypass it/u);
   });
 

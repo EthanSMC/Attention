@@ -136,9 +136,14 @@ describe("agent integration capability manifest", () => {
       inbound: {
         availability: "available",
         engine: "attention_channel_bridge",
-        minimum_version: null,
+        minimum_version: "2.1.226",
         requires_running_cli: true,
         stable_alternative: null,
+      },
+      runtime_reporting: {
+        availability: "available",
+        heartbeat: "runtime",
+        mode: "attention_runtime_oauth",
       },
     });
   });
