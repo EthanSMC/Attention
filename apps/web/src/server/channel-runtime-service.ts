@@ -1,6 +1,7 @@
 import "server-only";
 
 import {
+  createHash,
   createHmac,
   randomBytes,
   randomUUID,
@@ -11,6 +12,7 @@ import {
   ChannelBindingChallengeSchema,
   ChannelBindingViewSchema,
   InstallationViewSchema,
+  RuntimeCheckpointReportSchema,
   getAgentIntegration,
   isChannelProviderSupportedByAgent,
   type ChannelActivityReport,
@@ -305,6 +307,7 @@ function installationView(row: InstallationRow): InstallationView {
     disconnected_at: row.disconnectedAt?.toISOString() ?? null,
     installation_id: row.id,
     last_seen_at: row.lastSeenAt?.toISOString() ?? null,
+    runtime_checkpoint: row.runtimeCheckpoint,
     owner_kind: row.ownerKind,
     registered_at: row.registeredAt.toISOString(),
     revoked_at: row.revokedAt?.toISOString() ?? null,
@@ -943,6 +946,12 @@ export class ChannelRuntimeService {
   ): Promise<InstallationView> {
     const now = this.#now();
     assertObservedAtWithinSkew(input.observed_at, now);
+    const runtimeCheckpoint = RuntimeCheckpointReportSchema.parse(
+      input.runtime_checkpoint,
+    );
+    const runtimeCheckpointSha256 = createHash("sha256")
+      .update(JSON.stringify(runtimeCheckpoint), "utf8")
+      .digest("hex");
     return withPrincipalTransaction(this.#db, principal, async (tx) => {
       const installation = await principalInstallation(
         tx,
@@ -960,6 +969,7 @@ export class ChannelRuntimeService {
         eventType: "agent.installation.heartbeat.v1",
         metadata: {
           installation_id: input.installation_id,
+          runtime_checkpoint_sha256: runtimeCheckpointSha256,
           runtime_health: input.runtime_health,
         },
         now,
@@ -973,6 +983,7 @@ export class ChannelRuntimeService {
         .set({
           disconnectedAt: null,
           lastSeenAt: now,
+          runtimeCheckpoint,
           status: input.runtime_health,
           updatedAt: now,
         })

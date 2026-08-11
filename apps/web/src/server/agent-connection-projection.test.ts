@@ -160,6 +160,8 @@ describe("Agent connection public projection", () => {
       );
       expect(setup?.command).not.toMatch(/\{attention_origin\}/u);
       expect(setup?.prerequisites.length ?? 0).toBeGreaterThan(0);
+      expect(setup?.detail).toMatch(/Runtime Reporter/u);
+      expect(setup?.detail).toMatch(/不上传消息、链接或凭据/u);
     }
 
     for (const id of ["openclaw", "hermes"] as const) {

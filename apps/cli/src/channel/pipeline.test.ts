@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import type { BrainOutcome } from "./brain";
+import type { BrainAdapter, BrainOutcome } from "./brain";
 import { NON_TEXT_REPLY, RESET_REPLY } from "./limits";
-import { handleInboundMessage, splitReply } from "./pipeline";
+import {
+  buildMessageRef,
+  handleInboundMessage,
+  matchControlCommand,
+  splitReply,
+} from "./pipeline";
 import { defaultChannelState } from "./state";
 
 const textMessage = (
@@ -23,12 +28,27 @@ const okOutcome = (reply: string, sessionId = "session-1"): BrainOutcome => ({
   timedOut: false,
 });
 
+const fakeBrain = (
+  hostId: BrainAdapter["hostId"],
+  reply = "ok",
+): BrainAdapter => ({
+  hostId,
+  invoke: async () => okOutcome(reply),
+  runtimeSnapshot: () => ({
+    lastErrorCode: null,
+    phase: "healthy",
+    retryAttempt: 0,
+  }),
+  shutdown: async () => {},
+  start: async () => {},
+});
+
 describe("handleInboundMessage", () => {
   it("invokes the brain and records history plus session", async () => {
     const state = defaultChannelState();
     const invocations: Array<{ prompt: string; sessionId: string | null }> = [];
     const output = await handleInboundMessage({
-      brain: { hostId: "claude-code", invoke: async () => okOutcome("已收藏 ✓") },
+      brain: fakeBrain("claude-code", "已收藏 ✓"),
       cwd: "/tmp",
       invokeBrain: async (input) => {
         invocations.push(input);
@@ -55,7 +75,7 @@ describe("handleInboundMessage", () => {
     let calls = 0;
     const run = () =>
       handleInboundMessage({
-        brain: { hostId: "codex", invoke: async () => okOutcome("ok") },
+        brain: fakeBrain("codex"),
         cwd: "/tmp",
         invokeBrain: async () => {
           calls += 1;
@@ -69,11 +89,93 @@ describe("handleInboundMessage", () => {
     expect(calls).toBe(1);
   });
 
+  it("uses a SHA-256 reference derived from the complete message id", async () => {
+    const state = defaultChannelState();
+    let prompt = "";
+    await handleInboundMessage({
+      brain: fakeBrain("codex"),
+      cwd: "/tmp",
+      invokeBrain: async (input) => {
+        prompt = input.prompt;
+        return okOutcome("ok");
+      },
+      message: textMessage("hello", { client_id: "message-id-1" }),
+      state,
+    });
+
+    expect(prompt).toContain(
+      "msg-72cad190ed71ed0309138ac14e9982dbc21abd357ff0820d",
+    );
+    expect(prompt).not.toContain("msg-message-id-1");
+  });
+
+  it("handles exact status locally without invoking the brain", async () => {
+    const state = defaultChannelState();
+    state.runtimeState.phase = "degraded_runtime";
+    let calls = 0;
+    const output = await handleInboundMessage({
+      brain: fakeBrain("codex", "never"),
+      cwd: "/tmp",
+      invokeBrain: async () => {
+        calls += 1;
+        return okOutcome("never");
+      },
+      message: textMessage(" 状态 "),
+      state,
+    });
+
+    expect(calls).toBe(0);
+    expect(output.completed).toBe(true);
+    expect(output.replies.join("\n")).toContain("Codex");
+    expect(output.replies.join("\n")).toContain("最近成功处理：无");
+    expect(state.history).toEqual([]);
+  });
+
+  it("intercepts only the exact ephemeral Runtime pairing code", async () => {
+    const state = defaultChannelState();
+    let calls = 0;
+    const output = await handleInboundMessage({
+      brain: fakeBrain("codex"),
+      cwd: "/tmp",
+      invokeBrain: async () => {
+        calls += 1;
+        return okOutcome("never");
+      },
+      message: textMessage(" ABCD2345 "),
+      pairingCode: "ABCD2345",
+      state,
+    });
+
+    expect(calls).toBe(0);
+    expect(output.controlCommand).toBe("pairing_verification");
+    expect(output.replies).toEqual(["正在验证设备绑定…"]);
+    expect(state.history).toEqual([]);
+  });
+
+  it("passes ordinary text containing command words to the brain", async () => {
+    const state = defaultChannelState();
+    state.runtimeState.phase = "degraded_runtime";
+    state.runtimeState.activeTurnMessageRef = "msg-interrupted";
+    let calls = 0;
+    await handleInboundMessage({
+      brain: fakeBrain("codex"),
+      cwd: "/tmp",
+      invokeBrain: async () => {
+        calls += 1;
+        return okOutcome("ok");
+      },
+      message: textMessage("继续讨论这个方案"),
+      state,
+    });
+
+    expect(calls).toBe(1);
+  });
+
   it("pins the owner and ignores other senders", async () => {
     const state = defaultChannelState();
     state.ownerUserId = "owner";
     const output = await handleInboundMessage({
-      brain: { hostId: "codex", invoke: async () => okOutcome("ok") },
+      brain: fakeBrain("codex"),
       cwd: "/tmp",
       message: {
         contextToken: "",
@@ -90,7 +192,7 @@ describe("handleInboundMessage", () => {
   it("answers non-text messages with the canned reply", async () => {
     const state = defaultChannelState();
     const output = await handleInboundMessage({
-      brain: { hostId: "codex", invoke: async () => okOutcome("never") },
+      brain: fakeBrain("codex", "never"),
       cwd: "/tmp",
       invokeBrain: async () => okOutcome("never"),
       message: {
@@ -113,7 +215,7 @@ describe("handleInboundMessage", () => {
       updatedAt: "now",
     };
     const output = await handleInboundMessage({
-      brain: { hostId: "claude-code", invoke: async () => okOutcome("x") },
+      brain: fakeBrain("claude-code", "x"),
       cwd: "/tmp",
       invokeBrain: async () => okOutcome("x"),
       message: textMessage("/reset"),
@@ -137,7 +239,7 @@ describe("handleInboundMessage", () => {
     ];
     const invocations: Array<{ prompt: string; sessionId: string | null }> = [];
     await handleInboundMessage({
-      brain: { hostId: "claude-code", invoke: async () => okOutcome("ok") },
+      brain: fakeBrain("claude-code"),
       cwd: "/tmp",
       invokeBrain: async (input) => {
         invocations.push(input);
@@ -164,7 +266,7 @@ describe("handleInboundMessage", () => {
     ];
     const invocations: Array<{ prompt: string; sessionId: string | null }> = [];
     const output = await handleInboundMessage({
-      brain: { hostId: "claude-code", invoke: async () => okOutcome("ok") },
+      brain: fakeBrain("claude-code"),
       cwd: "/tmp",
       invokeBrain: async (input) => {
         invocations.push(input);
@@ -197,7 +299,7 @@ describe("handleInboundMessage", () => {
       updatedAt: "now",
     };
     await handleInboundMessage({
-      brain: { hostId: "codex", invoke: async () => okOutcome("ok") },
+      brain: fakeBrain("codex"),
       cwd: "/tmp",
       invokeBrain: async () => ({
         ok: true,
@@ -215,7 +317,7 @@ describe("handleInboundMessage", () => {
   it("answers with a failure reply when the brain errors", async () => {
     const state = defaultChannelState();
     const output = await handleInboundMessage({
-      brain: { hostId: "codex", invoke: async () => okOutcome("ok") },
+      brain: fakeBrain("codex"),
       cwd: "/tmp",
       invokeBrain: async () => ({
         ok: false,
@@ -236,7 +338,7 @@ describe("handleInboundMessage", () => {
   it("answers with a timeout reply when the brain times out", async () => {
     const state = defaultChannelState();
     const output = await handleInboundMessage({
-      brain: { hostId: "codex", invoke: async () => okOutcome("ok") },
+      brain: fakeBrain("codex"),
       cwd: "/tmp",
       invokeBrain: async () => ({
         ok: false,
@@ -257,7 +359,7 @@ describe("handleInboundMessage", () => {
     const state = defaultChannelState();
     let seenPrompt = "";
     await handleInboundMessage({
-      brain: { hostId: "codex", invoke: async () => okOutcome("ok") },
+      brain: fakeBrain("codex"),
       cwd: "/tmp",
       invokeBrain: async (input) => {
         seenPrompt = input.prompt;
@@ -268,6 +370,53 @@ describe("handleInboundMessage", () => {
     });
     expect(seenPrompt.length).toBeLessThan(35_000);
     expect(seenPrompt).toContain("内容过长已截断");
+  });
+});
+
+describe("buildMessageRef", () => {
+  it("is stable and uses the complete id even for long shared prefixes", () => {
+    expect(buildMessageRef("message-id-1")).toBe(
+      "msg-72cad190ed71ed0309138ac14e9982dbc21abd357ff0820d",
+    );
+    const prefix = "a".repeat(100);
+    expect(buildMessageRef(`${prefix}1`)).not.toBe(
+      buildMessageRef(`${prefix}2`),
+    );
+    expect(buildMessageRef(`${prefix}1`)).toMatch(/^msg-[a-f0-9]{48}$/u);
+  });
+});
+
+describe("matchControlCommand", () => {
+  it.each([
+    [" 状态 ", "status"],
+    ["连接状态", "status"],
+    ["/status", "status"],
+    ["帮助", "help"],
+    ["/help", "help"],
+    ["重试", "retry"],
+    ["重新连接", "retry"],
+    ["/retry", "retry"],
+    ["继续", "continue"],
+    ["/continue", "continue"],
+    ["重置会话", "reset_confirmation"],
+    ["/reset", "reset"],
+  ] as const)("matches exact local command %s", (text, expected) => {
+    expect(matchControlCommand(text, { degraded: true })).toBe(expected);
+  });
+
+  it.each([
+    "继续讨论",
+    "继续讨论这个方案",
+    "帮我查看状态",
+    "状态怎么样",
+    "/status please",
+  ])("does not intercept normal chat %s", (text) => {
+    expect(matchControlCommand(text, { degraded: true })).toBeNull();
+  });
+
+  it("passes continue through while there is no resumable interruption", () => {
+    expect(matchControlCommand("继续", { degraded: false })).toBeNull();
+    expect(matchControlCommand("/continue", { degraded: false })).toBeNull();
   });
 });
 

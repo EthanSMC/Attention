@@ -1,4 +1,5 @@
 import {
+  buildXiaohongshuAccessUrl,
   classifyDouyin,
   classifyWechatOfficialArticle,
   classifyXiaohongshu,
@@ -110,6 +111,19 @@ describe("xiaohongshu adapter", () => {
       identifyXiaohongshu(discovery)?.dedupeKey
     );
     expect(classifyXiaohongshu(explore).contentType).toBe("note");
+  });
+
+  it("keeps only the public parameters required to open a shared note", () => {
+    const shared =
+      "https://www.xiaohongshu.com/discovery/item/64abcdef1234" +
+      "?app_platform=ios&shareRedId=private-tracking" +
+      "&xsec_source=app_share&type=normal" +
+      "&xsec_token=public-access-token#tracking";
+
+    expect(buildXiaohongshuAccessUrl(shared)).toBe(
+      "https://www.xiaohongshu.com/explore/64abcdef1234" +
+        "?xsec_source=app_share&xsec_token=public-access-token"
+    );
   });
 });
 

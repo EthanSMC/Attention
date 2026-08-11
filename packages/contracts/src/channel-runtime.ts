@@ -78,6 +78,50 @@ export type RuntimeEventId = z.infer<typeof RuntimeEventIdSchema>;
 export const IsoDateTimeSchema = z.string().datetime({ offset: true });
 export type IsoDateTime = z.infer<typeof IsoDateTimeSchema>;
 
+export const RUNTIME_PHASES = [
+  "starting",
+  "healthy",
+  "restarting",
+  "recovering_thread",
+  "replaying_history",
+  "degraded_auth",
+  "degraded_runtime",
+  "stopped",
+] as const;
+export const RuntimePhaseSchema = z.enum(RUNTIME_PHASES);
+export type RuntimePhase = z.infer<typeof RuntimePhaseSchema>;
+
+export const BridgeRuntimeStatusSchema = z.enum([
+  "online",
+  "degraded",
+  "stopping",
+]);
+export const ILinkRuntimeStatusSchema = z.enum([
+  "connected",
+  "reconnecting",
+  "signed_out",
+]);
+const RuntimeErrorCodeSchema = z
+  .string()
+  .regex(/^[a-z][a-z0-9_]{0,99}$/u, "must be a stable error code");
+const RuntimeQueueCountSchema = z.number().int().min(0).max(10_000);
+
+export const RuntimeCheckpointReportSchema = z
+  .object({
+    bridge_status: BridgeRuntimeStatusSchema,
+    ilink_status: ILinkRuntimeStatusSchema,
+    codex_phase: RuntimePhaseSchema,
+    last_healthy_at: IsoDateTimeSchema.nullable(),
+    last_successful_message_at: IsoDateTimeSchema.nullable(),
+    last_error_code: RuntimeErrorCodeSchema.nullable(),
+    pending_inbound: RuntimeQueueCountSchema,
+    pending_outbound: RuntimeQueueCountSchema,
+  })
+  .strict();
+export type RuntimeCheckpointReport = z.infer<
+  typeof RuntimeCheckpointReportSchema
+>;
+
 /**
  * Server-visible channel identifiers are opaque digests, never provider
  * credentials or provider-issued account identifiers.
@@ -135,6 +179,7 @@ export const InstallationViewSchema = z
     status: InstallationStatusSchema,
     registered_at: IsoDateTimeSchema,
     last_seen_at: IsoDateTimeSchema.nullable(),
+    runtime_checkpoint: RuntimeCheckpointReportSchema.nullable(),
     disconnected_at: IsoDateTimeSchema.nullable(),
     revoked_at: IsoDateTimeSchema.nullable(),
   })
@@ -310,6 +355,7 @@ export const InstallationHeartbeatSchema = z
     event_id: RuntimeEventIdSchema,
     installation_id: InstallationIdSchema,
     runtime_health: z.enum(["active", "degraded"]),
+    runtime_checkpoint: RuntimeCheckpointReportSchema,
     observed_at: IsoDateTimeSchema,
   })
   .strict();

@@ -51,9 +51,26 @@ export interface BrainInvokeInput {
   readonly sessionId: string | null;
 }
 
+export interface BrainRuntimeSnapshot {
+  readonly phase:
+    | "starting"
+    | "healthy"
+    | "restarting"
+    | "recovering_thread"
+    | "replaying_history"
+    | "degraded_auth"
+    | "degraded_runtime"
+    | "stopped";
+  readonly lastErrorCode: string | null;
+  readonly retryAttempt: number;
+}
+
 export interface BrainAdapter {
   readonly hostId: "codex" | "claude-code";
+  start(): Promise<void>;
   invoke(input: BrainInvokeInput): Promise<BrainOutcome>;
+  shutdown(): Promise<void>;
+  runtimeSnapshot(): BrainRuntimeSnapshot;
 }
 
 /**
@@ -136,11 +153,19 @@ export async function execBrain(
 
 export function createBrainAdapter(
   hostId: "codex" | "claude-code",
-  options: { readonly mcpUrl: string },
+  options: {
+    readonly codexHomeDirectory?: string;
+    readonly mcpUrl: string;
+  },
 ): BrainAdapter {
   return hostId === "claude-code"
     ? createClaudeCodeBrain({ mcpUrl: options.mcpUrl })
-    : createCodexBrain({ mcpUrl: options.mcpUrl });
+    : createCodexBrain({
+        ...(options.codexHomeDirectory
+          ? { codexHomeDirectory: options.codexHomeDirectory }
+          : {}),
+        mcpUrl: options.mcpUrl,
+      });
 }
 
 export const BRAIN_DEFAULT_TIMEOUT_MS = BRAIN_TIMEOUT_MS;

@@ -24,20 +24,49 @@ interface OAuthConnection {
   scopes: string[];
 }
 
+interface LocalChannelRuntime {
+  deviceName: string;
+  hostName: string;
+  lastSeenAt: string | null;
+  lastSuccessfulMessageAt: string | null;
+  pendingInbound: number;
+  pendingOutbound: number;
+  status: "degraded" | "offline" | "online" | "stale";
+}
+
 type PatConnection = ApiKeyRow;
 
 function formatAccountDate(value: string): string {
   return new Date(value).toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" });
 }
 
+function formatAccountDateTime(value: string): string {
+  return new Date(value).toLocaleString("zh-CN", {
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    month: "short",
+    timeZone: "Asia/Shanghai",
+  });
+}
+
+const runtimeStatusLabels: Record<LocalChannelRuntime["status"], string> = {
+  degraded: "需要处理",
+  offline: "离线",
+  online: "在线",
+  stale: "久未在线",
+};
+
 export function ConnectionManager({
   agentConnectionPrompt,
   agentDocumentationUrl,
+  localChannelRuntimes,
   oauthConnections,
   pats,
 }: {
   agentConnectionPrompt: string;
   agentDocumentationUrl: string;
+  localChannelRuntimes: LocalChannelRuntime[];
   oauthConnections: OAuthConnection[];
   pats: PatConnection[];
 }) {
@@ -198,6 +227,56 @@ export function ConnectionManager({
           </a>
         </div>
       </section>
+
+      {localChannelRuntimes.length ? (
+        <section className="connection-card connection-card--runtime">
+          <div className="connection-card__intro">
+            <p className="settings-card__eyebrow">本地 Channel</p>
+            <h2>设备运行状态</h2>
+            <p>这里只显示设备运行与队列状态，不显示对话、链接或本地凭据。</p>
+          </div>
+          <ul className="channel-runtime-list">
+            {localChannelRuntimes.map((runtime, index) => (
+              <li key={`${runtime.deviceName}-${runtime.hostName}-${index}`}>
+                <div className="channel-runtime-list__identity">
+                  <strong>{runtime.deviceName}</strong>
+                  <span>{runtime.hostName}</span>
+                </div>
+                <span
+                  className={`channel-runtime-status channel-runtime-status--${runtime.status}`}
+                >
+                  <span aria-hidden="true" />
+                  {runtimeStatusLabels[runtime.status]}
+                </span>
+                <dl className="channel-runtime-facts">
+                  <div>
+                    <dt>最后在线</dt>
+                    <dd>
+                      {runtime.lastSeenAt
+                        ? formatAccountDateTime(runtime.lastSeenAt)
+                        : "暂无心跳"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>上次完成</dt>
+                    <dd>
+                      {runtime.lastSuccessfulMessageAt
+                        ? formatAccountDateTime(runtime.lastSuccessfulMessageAt)
+                        : "尚无记录"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>队列</dt>
+                    <dd>
+                      待处理 {runtime.pendingInbound} · 待回执 {runtime.pendingOutbound}
+                    </dd>
+                  </div>
+                </dl>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section className="connection-card">
         <p className="settings-card__eyebrow">已授权客户端</p>

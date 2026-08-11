@@ -33,6 +33,12 @@ export default async function ConnectionsPage() {
       <ConnectionManager
         agentConnectionPrompt={buildAgentConnectionPrompt(agentDocumentationUrl)}
         agentDocumentationUrl={agentDocumentationUrl}
+        localChannelRuntimes={connections.localChannelRuntimes.map((item) => ({
+          ...item,
+          lastSeenAt: item.lastSeenAt?.toISOString() ?? null,
+          lastSuccessfulMessageAt:
+            item.lastSuccessfulMessageAt?.toISOString() ?? null,
+        }))}
         oauthConnections={connections.oauth.map((item) => ({ ...item, createdAt: item.createdAt.toISOString() }))}
         pats={connections.pats.map((item) => ({
           ...item,

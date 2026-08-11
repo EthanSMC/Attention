@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import {
   Client,
@@ -1838,7 +1839,9 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
 
     const observedXiaohongshuUrl =
-      "https://www.xiaohongshu.com/explore/abc123?xsec_token=public-share&xsec_source=pc_share";
+      "https://www.xiaohongshu.com/explore/abc123" +
+      "?app_platform=ios&shareRedId=tracking" +
+      "&xsec_token=public-share&xsec_source=pc_share";
     const xiaohongshu = await collectFromWeb(handle.db, principal, {
       idempotency_key: "web-xhs-public-share",
       raw_input: observedXiaohongshuUrl,
@@ -1853,7 +1856,8 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       .from(contents)
       .where(eq(contents.id, xiaohongshu.content_id));
     expect(storedContent?.outboundUrl).toBe(
-      "https://www.xiaohongshu.com/explore/abc123"
+      "https://www.xiaohongshu.com/explore/abc123" +
+        "?xsec_source=pc_share&xsec_token=public-share"
     );
     const [storedObservation] = await handle.db
       .select()
@@ -1863,6 +1867,97 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       resolvedUrl: observedXiaohongshuUrl,
       safeSelectedUrl: observedXiaohongshuUrl
     });
+
+    const refreshedXiaohongshuUrl =
+      "https://www.xiaohongshu.com/discovery/item/abc123" +
+      "?xsec_source=pc_share&xsec_token=refreshed-public-share";
+    const refreshedXiaohongshu = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "web-xhs-public-share-refresh",
+      raw_input: refreshedXiaohongshuUrl,
+      visibility: "public"
+    });
+    expect(refreshedXiaohongshu).toMatchObject({
+      status: "already_collected",
+      source: "xiaohongshu"
+    });
+    const [refreshedContent] = await handle.db
+      .select()
+      .from(contents)
+      .where(eq(contents.id, xiaohongshu.content_id));
+    expect(refreshedContent?.outboundUrl).toBe(
+      "https://www.xiaohongshu.com/explore/abc123" +
+        "?xsec_source=pc_share&xsec_token=refreshed-public-share"
+    );
+
+    await handle.db
+      .update(contentLinks)
+      .set({ observedAt: new Date("2026-08-10T00:00:00.000Z") })
+      .where(eq(contentLinks.resolvedUrl, observedXiaohongshuUrl));
+    await handle.db
+      .update(contents)
+      .set({
+        aiSummary: "broken summary",
+        aiTags: ["broken"],
+        enrichmentStatus: "failed",
+        outboundUrl: "https://www.xiaohongshu.com/explore/abc123",
+        summaryStatus: "unavailable",
+        title: "小红书 - 你访问的页面不见了"
+      })
+      .where(eq(contents.id, xiaohongshu.content_id));
+    await handle.db
+      .insert(jobs)
+      .values({
+        idempotencyKey: `content.summary.v1:${xiaohongshu.content_id}`,
+        payload: { contentId: xiaohongshu.content_id },
+        queue: "content-enrichment",
+        status: "completed",
+        taskType: "content.summary.v1"
+      })
+      .onConflictDoNothing({ target: jobs.idempotencyKey });
+    await handle.db
+      .update(jobs)
+      .set({ attempts: 2, completedAt: new Date(), status: "completed" })
+      .where(
+        sql`${jobs.idempotencyKey} IN (${`content.metadata.v1:${xiaohongshu.content_id}`}, ${`content.summary.v1:${xiaohongshu.content_id}`})`
+      );
+
+    await handle.sql.unsafe(
+      readFileSync(
+        new URL(
+          "../../packages/db/drizzle/0027_xiaohongshu_outbound_repair.sql",
+          import.meta.url
+        ),
+        "utf8"
+      )
+    );
+
+    const [repairedContent] = await handle.db
+      .select()
+      .from(contents)
+      .where(eq(contents.id, xiaohongshu.content_id));
+    expect(repairedContent).toMatchObject({
+      aiSummary: null,
+      aiTags: [],
+      enrichmentStatus: "pending",
+      outboundUrl:
+        "https://www.xiaohongshu.com/explore/abc123" +
+        "?xsec_source=pc_share&xsec_token=refreshed-public-share",
+      summaryStatus: "pending",
+      title: null
+    });
+    const repairedJobs = await handle.db
+      .select()
+      .from(jobs)
+      .where(
+        sql`${jobs.idempotencyKey} IN (${`content.metadata.v1:${xiaohongshu.content_id}`}, ${`content.summary.v1:${xiaohongshu.content_id}`})`
+      );
+    expect(repairedJobs).toHaveLength(2);
+    expect(repairedJobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ attempts: 0, status: "pending" }),
+        expect.objectContaining({ attempts: 0, status: "pending" })
+      ])
+    );
 
     const unsupportedXiaohongshuPath = await collectFromWeb(handle.db, principal, {
       idempotency_key: "web-xhs-no-generic-fallback",

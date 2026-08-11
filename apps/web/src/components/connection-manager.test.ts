@@ -33,4 +33,20 @@ describe("ConnectionManager", () => {
     expect(componentSource).toContain('item.needsRotation ? "需轮换" : "当前完整"');
     expect(componentSource).not.toContain("所有 Key 类型相同，实际能力跟随账号实时变化");
   });
+
+  it("shows only privacy-safe local Channel runtime facts", () => {
+    const componentSource = readFileSync(
+      new URL("./connection-manager.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(componentSource).toContain("localChannelRuntimes");
+    expect(componentSource).toContain("本地 Channel");
+    expect(componentSource).toContain("最后在线");
+    expect(componentSource).toContain("上次完成");
+    expect(componentSource).toContain("待处理");
+    expect(componentSource).not.toMatch(
+      /threadId|messageRef|fingerprint|providerAccount|accessToken/u,
+    );
+  });
 });

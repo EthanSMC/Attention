@@ -830,6 +830,7 @@ const HOST_DETAILS = {
     inboundDocs: null,
     compatibilityMinimumVersion: null,
     compatibilityChecks: [
+      command("codex", "app-server", "--help"),
       command("codex", "mcp", "add", "--help"),
       command("codex", "mcp", "get", "--help"),
     ],

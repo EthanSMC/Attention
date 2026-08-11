@@ -406,7 +406,7 @@ const manifestInput = [
     },
     platforms: ["macos", "linux", "windows"],
     runtime_reporting: {
-      availability: "contract_only",
+      availability: "available",
       heartbeat: "runtime",
       mode: "attention_runtime_oauth",
       pairing_reports: true,

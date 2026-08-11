@@ -327,6 +327,7 @@ describe("staging database backup", () => {
     expect(restored.status, restored.stderr).toBe(0);
     const successLog = readFileSync(dockerLog, "utf8");
     expect(successLog).toContain("--network none");
+    expect(successLog).toContain("--command=SELECT 1");
     expect(successLog).toContain("container rm --force attention-staging-restore-drill-");
     expect(successLog).toContain("volume rm attention-staging-restore-drill-");
     expect(successLog).not.toMatch(/\b(?:prune|down)\b/u);

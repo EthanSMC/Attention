@@ -28,6 +28,41 @@ export interface BrainSession {
   readonly updatedAt: string;
 }
 
+export interface AccountVerificationCheckpoint {
+  readonly hostId: "codex" | "claude-code";
+  readonly mcpUrl: string;
+  readonly verifiedAt: string;
+}
+
+/** Stable phases persisted independently of the resident brain implementation. */
+export type RuntimePhase =
+  | "starting"
+  | "healthy"
+  | "restarting"
+  | "recovering_thread"
+  | "replaying_history"
+  | "degraded_auth"
+  | "degraded_runtime"
+  | "stopped";
+
+export interface RuntimeCheckpoint {
+  activeTurnMessageRef: string | null;
+  lastErrorCode: string | null;
+  lastHealthyAt: string | null;
+  lastSuccessfulMessageAt: string | null;
+  lastTransitionAt: string | null;
+  nextRetryAt: string | null;
+  phase: RuntimePhase;
+  retryAttempt: number;
+}
+
+/** Opaque control-plane identifiers; contains no provider or OAuth secret. */
+export interface RuntimeReporterLocalState {
+  bindingId: string | null;
+  installationId: string | null;
+  runtimeClientFingerprint: string | null;
+}
+
 export interface PendingInboundMessage {
   acknowledged: boolean;
   attempts: number;
@@ -43,6 +78,7 @@ export interface PendingOutboundMessage {
 }
 
 export interface ChannelState {
+  accountVerification: AccountVerificationCheckpoint | null;
   token: string | null;
   accountId: string;
   baseUrl: string;
@@ -55,10 +91,26 @@ export interface ChannelState {
   lastActivityAt: string | null;
   pendingInbound: PendingInboundMessage[];
   pendingOutbound: PendingOutboundMessage[];
+  runtimeReporter: RuntimeReporterLocalState;
+  runtimeState: RuntimeCheckpoint;
+}
+
+export function defaultRuntimeCheckpoint(): RuntimeCheckpoint {
+  return {
+    activeTurnMessageRef: null,
+    lastErrorCode: null,
+    lastHealthyAt: null,
+    lastSuccessfulMessageAt: null,
+    lastTransitionAt: null,
+    nextRetryAt: null,
+    phase: "stopped",
+    retryAttempt: 0,
+  };
 }
 
 export function defaultChannelState(): ChannelState {
   return {
+    accountVerification: null,
     accountId: "",
     baseUrl: ILINK_BASE_URL,
     brainSession: null,
@@ -69,6 +121,12 @@ export function defaultChannelState(): ChannelState {
     pendingInbound: [],
     pendingOutbound: [],
     processedMessageIds: [],
+    runtimeReporter: {
+      bindingId: null,
+      installationId: null,
+      runtimeClientFingerprint: null,
+    },
+    runtimeState: defaultRuntimeCheckpoint(),
     syncBuf: "",
     token: null,
   };
@@ -87,6 +145,9 @@ function normalizeState(raw: unknown): ChannelState {
   if (raw === null || typeof raw !== "object") return base;
   const record = raw as Record<string, unknown>;
   return {
+    accountVerification: normalizeAccountVerification(
+      record.accountVerification,
+    ),
     accountId: typeof record.accountId === "string" ? record.accountId : "",
     baseUrl: normalizeBaseUrl(record.baseUrl),
     brainSession:
@@ -167,11 +228,150 @@ function normalizeState(raw: unknown): ChannelState {
             typeof (item as PendingOutboundMessage).toUserId === "string",
         )
       : [],
+    runtimeReporter: normalizeRuntimeReporterState(record.runtimeReporter),
+    runtimeState: normalizeRuntimeCheckpoint(record.runtimeState),
     syncBuf: typeof record.syncBuf === "string" ? record.syncBuf : "",
     token: typeof record.token === "string" && record.token
       ? record.token
       : null,
   };
+}
+
+function normalizeAccountVerification(
+  raw: unknown,
+): AccountVerificationCheckpoint | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  if (
+    (record.hostId !== "codex" && record.hostId !== "claude-code") ||
+    typeof record.mcpUrl !== "string"
+  ) {
+    return null;
+  }
+  const verifiedAt = nullableIsoTimestamp(record.verifiedAt);
+  if (!verifiedAt) return null;
+  let mcpUrl: URL;
+  try {
+    mcpUrl = new URL(record.mcpUrl);
+  } catch {
+    return null;
+  }
+  const loopback =
+    mcpUrl.hostname === "127.0.0.1" ||
+    mcpUrl.hostname === "localhost" ||
+    mcpUrl.hostname === "[::1]";
+  if (
+    (mcpUrl.protocol !== "https:" &&
+      !(mcpUrl.protocol === "http:" && loopback)) ||
+    mcpUrl.username ||
+    mcpUrl.password ||
+    mcpUrl.hash ||
+    mcpUrl.search ||
+    mcpUrl.pathname !== "/mcp"
+  ) {
+    return null;
+  }
+  return {
+    hostId: record.hostId,
+    mcpUrl: mcpUrl.toString(),
+    verifiedAt,
+  };
+}
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+function normalizeRuntimeReporterState(
+  raw: unknown,
+): RuntimeReporterLocalState {
+  if (raw === null || typeof raw !== "object") {
+    return {
+      bindingId: null,
+      installationId: null,
+      runtimeClientFingerprint: null,
+    };
+  }
+  const record = raw as Record<string, unknown>;
+  return {
+    bindingId:
+      typeof record.bindingId === "string" &&
+      UUID_PATTERN.test(record.bindingId)
+        ? record.bindingId
+        : null,
+    installationId:
+      typeof record.installationId === "string" &&
+      UUID_PATTERN.test(record.installationId)
+        ? record.installationId
+        : null,
+    runtimeClientFingerprint:
+      typeof record.runtimeClientFingerprint === "string" &&
+      /^[a-f0-9]{64}$/u.test(record.runtimeClientFingerprint)
+        ? record.runtimeClientFingerprint
+        : null,
+  };
+}
+
+const RUNTIME_PHASES: ReadonlySet<RuntimePhase> = new Set([
+  "starting",
+  "healthy",
+  "restarting",
+  "recovering_thread",
+  "replaying_history",
+  "degraded_auth",
+  "degraded_runtime",
+  "stopped",
+]);
+
+function normalizeRuntimeCheckpoint(raw: unknown): RuntimeCheckpoint {
+  const fallback = defaultRuntimeCheckpoint();
+  if (raw === null || typeof raw !== "object") return fallback;
+  const record = raw as Record<string, unknown>;
+  if (
+    typeof record.phase !== "string" ||
+    !RUNTIME_PHASES.has(record.phase as RuntimePhase)
+  ) {
+    return fallback;
+  }
+  return {
+    activeTurnMessageRef: normalizeMessageRef(record.activeTurnMessageRef),
+    lastErrorCode: normalizeErrorCode(record.lastErrorCode),
+    lastHealthyAt: nullableIsoTimestamp(record.lastHealthyAt),
+    lastSuccessfulMessageAt: nullableIsoTimestamp(
+      record.lastSuccessfulMessageAt,
+    ),
+    lastTransitionAt: nullableIsoTimestamp(record.lastTransitionAt),
+    nextRetryAt: nullableIsoTimestamp(record.nextRetryAt),
+    phase: record.phase as RuntimePhase,
+    retryAttempt:
+      typeof record.retryAttempt === "number" &&
+      Number.isSafeInteger(record.retryAttempt) &&
+      record.retryAttempt >= 0
+        ? record.retryAttempt
+        : 0,
+  };
+}
+
+function normalizeMessageRef(value: unknown): string | null {
+  return typeof value === "string" && /^msg-[a-f0-9]{48}$/u.test(value)
+    ? value
+    : null;
+}
+
+function normalizeErrorCode(value: unknown): string | null {
+  return typeof value === "string" && /^[a-z][a-z0-9_]{0,99}$/u.test(value)
+    ? value
+    : null;
+}
+
+const ISO_TIMESTAMP_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/u;
+
+function nullableIsoTimestamp(value: unknown): string | null {
+  if (typeof value !== "string" || !ISO_TIMESTAMP_PATTERN.test(value)) {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? value : null;
 }
 
 function normalizeBaseUrl(value: unknown): string {
@@ -204,11 +404,23 @@ export async function saveChannelState(
 ): Promise<void> {
   const path = channelStatePath(baseDirectory);
   await mkdir(dirname(path), { mode: 0o700, recursive: true });
+  await chmod(dirname(path), 0o700);
   const temporaryPath = `${path}.tmp-${randomUUID()}`;
-  await writeFile(temporaryPath, JSON.stringify(state, null, 2), {
-    encoding: "utf8",
-    mode: 0o600,
-  });
+  await writeFile(
+    temporaryPath,
+    JSON.stringify(
+      {
+        ...state,
+        runtimeState: normalizeRuntimeCheckpoint(state.runtimeState),
+      },
+      null,
+      2,
+    ),
+    {
+      encoding: "utf8",
+      mode: 0o600,
+    },
+  );
   await rename(temporaryPath, path);
   // rename preserves the temp file mode; chmod keeps intent explicit.
   await chmod(path, 0o600);

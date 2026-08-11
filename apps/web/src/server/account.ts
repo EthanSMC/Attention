@@ -2,11 +2,17 @@ import "server-only";
 
 import { apiKeyScopes } from "@attention/auth";
 import {
+  getAgentIntegration,
+  type RuntimeCheckpointReport,
+} from "@attention/contracts";
+import {
   accounts,
+  agentInstallations,
   and,
   apiCredentials,
   desc,
   eq,
+  externalChannelBindings,
   filterProfiles,
   gt,
   isNull,
@@ -288,8 +294,120 @@ export async function updateDisplayName(
   return updated.displayName;
 }
 
+export type LocalChannelRuntimeStatus =
+  | "degraded"
+  | "offline"
+  | "online"
+  | "stale";
+
+export interface LocalChannelRuntimeOverview {
+  deviceName: string;
+  hostName: string;
+  lastSeenAt: Date | null;
+  lastSuccessfulMessageAt: Date | null;
+  pendingInbound: number;
+  pendingOutbound: number;
+  status: LocalChannelRuntimeStatus;
+}
+
+interface LocalChannelRuntimeRow {
+  agentIntegrationId: Parameters<typeof getAgentIntegration>[0];
+  bindingLastSeenAt: Date | null;
+  bindingStatus:
+    | "disconnected"
+    | "healthy"
+    | "reported"
+    | "revoked"
+    | "stale"
+    | "verified"
+    | null;
+  deviceName: string;
+  installationId: string;
+  installationLastSeenAt: Date | null;
+  installationStatus:
+    | "active"
+    | "degraded"
+    | "disconnected"
+    | "registered"
+    | "revoked"
+    | "stale";
+  runtimeCheckpoint: RuntimeCheckpointReport | null;
+}
+
+function latestDate(first: Date | null, second: Date | null): Date | null {
+  if (!first) return second;
+  if (!second) return first;
+  return first > second ? first : second;
+}
+
+function localChannelRuntimeStatus(
+  row: LocalChannelRuntimeRow,
+): LocalChannelRuntimeStatus {
+  const checkpoint = row.runtimeCheckpoint;
+  if (
+    row.installationStatus === "disconnected" ||
+    row.installationStatus === "revoked" ||
+    row.bindingStatus === "disconnected" ||
+    row.bindingStatus === "revoked" ||
+    checkpoint?.codex_phase === "stopped"
+  ) {
+    return "offline";
+  }
+  if (
+    row.installationStatus === "stale" ||
+    row.bindingStatus === "stale"
+  ) {
+    return "stale";
+  }
+  if (
+    row.installationStatus === "active" &&
+    row.bindingStatus === "healthy" &&
+    checkpoint?.bridge_status === "online" &&
+    checkpoint.ilink_status === "connected" &&
+    checkpoint.codex_phase === "healthy"
+  ) {
+    return "online";
+  }
+  if (
+    row.installationStatus === "degraded" ||
+    checkpoint ||
+    row.bindingStatus === "reported" ||
+    row.bindingStatus === "verified"
+  ) {
+    return "degraded";
+  }
+  return "offline";
+}
+
+function projectLocalChannelRuntimes(
+  rows: LocalChannelRuntimeRow[],
+): LocalChannelRuntimeOverview[] {
+  const seenInstallations = new Set<string>();
+  const runtimes: LocalChannelRuntimeOverview[] = [];
+  for (const row of rows) {
+    if (seenInstallations.has(row.installationId)) continue;
+    seenInstallations.add(row.installationId);
+    const checkpoint = row.runtimeCheckpoint;
+    runtimes.push({
+      deviceName: row.deviceName,
+      hostName: getAgentIntegration(row.agentIntegrationId).display_name,
+      lastSeenAt: latestDate(
+        row.installationLastSeenAt,
+        row.bindingLastSeenAt,
+      ),
+      lastSuccessfulMessageAt: checkpoint?.last_successful_message_at
+        ? new Date(checkpoint.last_successful_message_at)
+        : null,
+      pendingInbound: checkpoint?.pending_inbound ?? 0,
+      pendingOutbound: checkpoint?.pending_outbound ?? 0,
+      status: localChannelRuntimeStatus(row),
+    });
+  }
+  return runtimes;
+}
+
 export async function loadConnectionOverview(db: AttentionDatabase, accountId: string) {
-  const [oauth, pats] = await Promise.all([
+  const [oauth, pats, localChannelRuntimeRows] = await Promise.all([
     db
       .select({
         clientId: oauthRefreshTokens.clientId,
@@ -324,8 +442,33 @@ export async function loadConnectionOverview(db: AttentionDatabase, accountId: s
       .from(apiCredentials)
       .where(eq(apiCredentials.accountId, accountId))
       .orderBy(desc(apiCredentials.createdAt)),
+    db
+      .select({
+        agentIntegrationId: agentInstallations.agentIntegrationId,
+        bindingLastSeenAt: externalChannelBindings.lastSeenAt,
+        bindingStatus: externalChannelBindings.status,
+        deviceName: agentInstallations.deviceName,
+        installationId: agentInstallations.id,
+        installationLastSeenAt: agentInstallations.lastSeenAt,
+        installationStatus: agentInstallations.status,
+        runtimeCheckpoint: agentInstallations.runtimeCheckpoint,
+      })
+      .from(agentInstallations)
+      .leftJoin(
+        externalChannelBindings,
+        and(
+          eq(externalChannelBindings.installationId, agentInstallations.id),
+          eq(externalChannelBindings.accountId, accountId),
+        ),
+      )
+      .where(eq(agentInstallations.accountId, accountId))
+      .orderBy(
+        desc(agentInstallations.registeredAt),
+        desc(externalChannelBindings.updatedAt),
+      ),
   ]);
   return {
+    localChannelRuntimes: projectLocalChannelRuntimes(localChannelRuntimeRows),
     oauth,
     pats: pats.map((pat) => ({
       ...pat,

@@ -3,7 +3,15 @@ import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
+  agentInstallations,
+  eventLedger,
+  type AttentionDatabase,
+  type AttentionTransaction,
+} from "@attention/db";
+
+import {
   CHANNEL_PAIRING_CHALLENGE_TTL_MS,
+  ChannelRuntimeService,
   ChannelRuntimeServiceError,
   assertObservedAtWithinSkew,
   deriveInstallationRegistration,
@@ -18,8 +26,234 @@ import {
 const accountId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const clientId = "runtime-client-1";
 const installationId = "11111111-1111-4111-8111-111111111111";
+const runtimeCheckpoint = {
+  bridge_status: "online",
+  ilink_status: "connected",
+  codex_phase: "restarting",
+  last_healthy_at: "2026-08-10T10:00:00.000Z",
+  last_successful_message_at: "2026-08-10T09:59:00.000Z",
+  last_error_code: "codex_runtime_crashed",
+  pending_inbound: 2,
+  pending_outbound: 0,
+} as const;
+
+function sqlParameterValues(value: unknown): unknown[] {
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return [value];
+  }
+  if (!value || typeof value !== "object") return [];
+  const candidate = value as { queryChunks?: unknown[]; value?: unknown };
+  if (Array.isArray(candidate.queryChunks)) {
+    return candidate.queryChunks.flatMap(sqlParameterValues);
+  }
+  if (
+    Object.hasOwn(candidate, "value") &&
+    (typeof candidate.value === "string" ||
+      typeof candidate.value === "number" ||
+      typeof candidate.value === "boolean")
+  ) {
+    return [candidate.value];
+  }
+  return [];
+}
+
+function heartbeatDatabase() {
+  let currentAccountId = "";
+  let installation = {
+    accountId,
+    adapterVersion: "1.2.0",
+    agentIntegrationId: "codex" as const,
+    capabilities: {
+      heartbeat_mode: "runtime" as const,
+      pairing_verification: true as const,
+      restricted_profile: true,
+    },
+    deviceName: "Runtime Mac",
+    disconnectedAt: null,
+    id: installationId,
+    lastSeenAt: null as Date | null,
+    oauthClientId: clientId,
+    ownerKind: "bridge" as const,
+    registeredAt: new Date("2026-08-10T09:00:00.000Z"),
+    revokedAt: null,
+    runtimeCheckpoint: null as typeof runtimeCheckpoint | null,
+    skillVersion: "2.0.0",
+    status: "registered" as
+      | "registered"
+      | "active"
+      | "degraded"
+      | "stale"
+      | "disconnected"
+      | "revoked",
+    toolContractVersion: "2026-08-10",
+    updatedAt: new Date("2026-08-10T09:00:00.000Z"),
+  };
+  const events = new Map<string, {
+    eventType: string;
+    metadata: Record<string, unknown>;
+    requestId: string | null;
+  }>();
+
+  const installationRows = (condition: unknown) => {
+    const values = sqlParameterValues(condition);
+    return currentAccountId === installation.accountId &&
+        values.includes(installation.id) &&
+        values.includes(installation.accountId) &&
+        values.includes(installation.oauthClientId)
+      ? [installation]
+      : [];
+  };
+  const eventRows = (condition: unknown) => {
+    const values = sqlParameterValues(condition);
+    const dedupeKey = values.find(
+      (value): value is string =>
+        typeof value === "string" && value.startsWith("channel-runtime:"),
+    );
+    const stored = dedupeKey ? events.get(dedupeKey) : undefined;
+    return stored && currentAccountId === installation.accountId
+      ? [stored]
+      : [];
+  };
+
+  const transaction = {
+    execute: async (statement: unknown) => {
+      currentAccountId = sqlParameterValues(statement).find(
+        (value): value is string =>
+          typeof value === "string" &&
+          /^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(value),
+      ) ?? "";
+      return [];
+    },
+    insert: (table: unknown) => ({
+      values: (values: Record<string, unknown>) => ({
+        onConflictDoNothing: () => ({
+          returning: async () => {
+            if (table !== eventLedger) return [];
+            const dedupeKey = String(values.dedupeKey);
+            if (events.has(dedupeKey)) return [];
+            events.set(dedupeKey, {
+              eventType: String(values.eventType),
+              metadata: values.metadata as Record<string, unknown>,
+              requestId: String(values.requestId),
+            });
+            return [{ id: "99999999-9999-4999-8999-999999999999" }];
+          },
+        }),
+      }),
+    }),
+    select: () => ({
+      from: (table: unknown) => ({
+        where: (condition: unknown) => {
+          const rows = table === agentInstallations
+            ? installationRows(condition)
+            : table === eventLedger
+            ? eventRows(condition)
+            : [];
+          return {
+            for: () => ({ limit: async () => rows }),
+            limit: async () => rows,
+          };
+        },
+      }),
+    }),
+    update: (table: unknown) => ({
+      set: (values: Record<string, unknown>) => ({
+        where: (condition: unknown) => ({
+          returning: async () => {
+            if (
+              table !== agentInstallations ||
+              installationRows(condition).length === 0
+            ) {
+              return [];
+            }
+            installation = { ...installation, ...values } as typeof installation;
+            return [installation];
+          },
+        }),
+      }),
+    }),
+  } as unknown as AttentionTransaction;
+  const database = {
+    transaction: async <T>(
+      callback: (tx: AttentionTransaction) => Promise<T>,
+    ): Promise<T> => callback(transaction),
+  } as unknown as AttentionDatabase;
+
+  return { database, eventCount: () => events.size };
+}
 
 describe("local channel runtime service invariants", () => {
+  it("persists only accepted heartbeat checkpoints and leaves replays idempotent", async () => {
+    const fake = heartbeatDatabase();
+    let now = new Date("2026-08-10T10:00:00.000Z");
+    const service = new ChannelRuntimeService(fake.database, {
+      now: () => now,
+      pairingSecret: "runtime-pairing-secret-that-is-longer-than-32-characters",
+    });
+    const firstHeartbeat = {
+      api_version: "1",
+      event_id: "55555555-5555-4555-8555-555555555555",
+      installation_id: installationId,
+      observed_at: "2026-08-10T10:00:00.000Z",
+      runtime_checkpoint: runtimeCheckpoint,
+      runtime_health: "active",
+    } as const;
+
+    const first = await service.recordInstallationHeartbeat(
+      { accountId, clientId },
+      firstHeartbeat,
+    );
+    now = new Date("2026-08-10T10:01:00.000Z");
+    const replay = await service.recordInstallationHeartbeat(
+      { accountId, clientId },
+      firstHeartbeat,
+    );
+    const newerCheckpoint = {
+      ...runtimeCheckpoint,
+      codex_phase: "healthy" as const,
+      last_error_code: null,
+      pending_inbound: 0,
+    };
+    await expect(service.recordInstallationHeartbeat(
+      { accountId, clientId },
+      { ...firstHeartbeat, runtime_checkpoint: newerCheckpoint },
+    )).rejects.toMatchObject({ code: "event_replay_conflict", status: 409 });
+    now = new Date("2026-08-10T10:02:00.000Z");
+    const latest = await service.recordInstallationHeartbeat(
+      { accountId, clientId },
+      {
+        ...firstHeartbeat,
+        event_id: "66666666-6666-4666-8666-666666666666",
+        observed_at: "2026-08-10T10:02:00.000Z",
+        runtime_checkpoint: newerCheckpoint,
+      },
+    );
+
+    expect(first.runtime_checkpoint).toEqual(runtimeCheckpoint);
+    expect(replay).toEqual(first);
+    expect(latest.runtime_checkpoint).toEqual(newerCheckpoint);
+    expect(fake.eventCount()).toBe(2);
+  });
+
+  it("does not return another account's installation checkpoint", async () => {
+    const fake = heartbeatDatabase();
+    const service = new ChannelRuntimeService(fake.database, {
+      pairingSecret: "runtime-pairing-secret-that-is-longer-than-32-characters",
+    });
+
+    await expect(service.getInstallation(
+      {
+        accountId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        clientId,
+      },
+      installationId,
+    )).rejects.toMatchObject({ code: "installation_not_found", status: 404 });
+  });
+
   it("derives owner and capabilities from the Agent manifest", () => {
     expect(deriveInstallationRegistration({
       accountId,
@@ -98,6 +332,7 @@ describe("local channel runtime service invariants", () => {
       disconnectedAt: null,
       lastSeenAt: null,
       revokedAt: null,
+      runtimeCheckpoint: null,
       status: "registered" as const,
       updatedAt: registration.registeredAt,
     };

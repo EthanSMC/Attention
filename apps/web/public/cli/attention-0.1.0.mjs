@@ -27,7 +27,7 @@ var init_limits = __esm({
     MAXIMUM_REPLY_CHARS = 4e3;
     PROCESSED_MESSAGE_RING_SIZE = 1e3;
     MAXIMUM_PENDING_MESSAGES = 5;
-    PROCESSING_ACK_REPLY = "\u6536\u5230\uFF0C\u6B63\u5728\u5904\u7406\u2026";
+    PROCESSING_ACK_REPLY = "\u6B63\u5728\u6536\u85CF\u2026";
     NON_TEXT_REPLY = "\u6682\u65F6\u53EA\u652F\u6301\u6587\u5B57\u6D88\u606F\u54E6\u3002\u8BF7\u53D1\u9001\u94FE\u63A5\u6216\u5206\u4EAB\u6587\u6848\uFF0C\u6211\u6765\u5E2E\u4F60\u6536\u85CF\u3002";
     RESET_REPLY = "\u5BF9\u8BDD\u5386\u53F2\u5DF2\u91CD\u7F6E\u3002";
     BRAIN_FAILURE_REPLY = "\u5904\u7406\u5931\u8D25\u4E86\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5\u3002";
@@ -17408,7 +17408,47 @@ var ANSI_ESCAPE_RE = new RegExp(
   `${String.fromCodePoint(27)}\\[[0-9;]*[A-Za-z]`,
   "gu"
 );
-var ROLLOUT_UUID_RE = /rollout-\d{4}-\d{2}-\d{2}T[\d-]+-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/u;
+var ROLLOUT_FILE_RE = /rollout-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/u;
+var ATTENTION_CHANNEL_TOOL_NAMES = [
+  "attention_get_my_account",
+  "attention_list_collections",
+  "attention_collect_content",
+  "attention_select_collection_candidate",
+  "attention_get_collection_status",
+  "attention_update_collection"
+];
+var ATTENTION_CHANNEL_APPROVED_WRITE_TOOLS = [
+  "attention_collect_content",
+  "attention_select_collection_candidate",
+  "attention_update_collection"
+];
+function parseCodexJsonLines(output) {
+  let reply = "";
+  let sessionId = null;
+  for (const line of output.split("\n")) {
+    if (!line.trim()) continue;
+    let event;
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed === null || typeof parsed !== "object") continue;
+      event = parsed;
+    } catch {
+      continue;
+    }
+    if (event.type === "thread.started" && typeof event.thread_id === "string" && event.thread_id.length > 0) {
+      sessionId = event.thread_id;
+      continue;
+    }
+    if (event.type !== "item.completed") continue;
+    const item = event.item;
+    if (item === null || typeof item !== "object") continue;
+    const record2 = item;
+    if (record2.type === "agent_message" && typeof record2.text === "string" && record2.text.trim().length > 0) {
+      reply = record2.text.trim();
+    }
+  }
+  return { reply, sessionId };
+}
 function codexSessionsDirectory(homeDirectory) {
   return join(homeDirectory, ".codex", "sessions");
 }
@@ -17443,9 +17483,19 @@ async function findLatestCodexSessionId(input) {
             continue;
           }
           for (const file2 of files) {
-            const match = ROLLOUT_UUID_RE.exec(file2);
-            const uuid3 = match?.[1];
-            if (!uuid3) continue;
+            const match = ROLLOUT_FILE_RE.exec(file2);
+            const filenameTimestamp = match?.[1];
+            const uuid3 = match?.[2];
+            if (!filenameTimestamp || !uuid3) continue;
+            const sessionStartedAt = Date.parse(
+              filenameTimestamp.replace(
+                /T(\d{2})-(\d{2})-(\d{2})$/u,
+                "T$1:$2:$3"
+              )
+            );
+            if (Number.isFinite(sessionStartedAt) && sessionStartedAt < Math.floor(input.sinceMs / 1e3) * 1e3) {
+              continue;
+            }
             try {
               const info = await stat(join(dayPath, file2));
               if (info.mtimeMs >= input.sinceMs) {
@@ -17476,6 +17526,7 @@ function createCodexBrain(options) {
       const baseArgs = [
         "--ignore-user-config",
         "--ignore-rules",
+        "--json",
         "--skip-git-repo-check",
         "--sandbox",
         "read-only",
@@ -17484,7 +17535,6 @@ function createCodexBrain(options) {
           "browser_use",
           "browser_use_external",
           "browser_use_full_cdp_access",
-          "code_mode_host",
           "computer_use",
           "image_generation",
           "in_app_browser",
@@ -17502,6 +17552,18 @@ function createCodexBrain(options) {
         ].flatMap((feature) => ["--disable", feature]),
         "-c",
         `mcp_servers.attention.url=${JSON.stringify(options.mcpUrl)}`,
+        "-c",
+        `mcp_servers.attention.enabled_tools=${JSON.stringify(ATTENTION_CHANNEL_TOOL_NAMES)}`,
+        "-c",
+        `model=${JSON.stringify("gpt-5.6-luna")}`,
+        "-c",
+        `model_reasoning_effort=${JSON.stringify("medium")}`,
+        "-c",
+        `model_verbosity=${JSON.stringify("low")}`,
+        ...ATTENTION_CHANNEL_APPROVED_WRITE_TOOLS.flatMap((tool) => [
+          "-c",
+          `mcp_servers.attention.tools.${tool}.approval_mode=${JSON.stringify("approve")}`
+        ]),
         "--output-last-message",
         outFile
       ];
@@ -17510,13 +17572,12 @@ function createCodexBrain(options) {
         args,
         cwd: input.cwd,
         environment: {
-          CODEX_HOME: options.codexHomeDirectory ?? (options.homeDirectory ? join(options.homeDirectory, ".codex") : process.env.CODEX_HOME ?? join(homedir(), ".codex")),
-          HOME: input.cwd,
-          USERPROFILE: input.cwd
+          CODEX_HOME: options.codexHomeDirectory ?? (options.homeDirectory ? join(options.homeDirectory, ".codex") : process.env.CODEX_HOME ?? join(homedir(), ".codex"))
         },
         executable: "codex",
         timeoutMs: BRAIN_TIMEOUT_MS
       });
+      const parsedJsonLines = parseCodexJsonLines(result.stdout);
       if (result.timedOut) {
         return {
           ok: false,
@@ -17535,9 +17596,12 @@ function createCodexBrain(options) {
         await rm(outFile, { force: true }).catch(() => void 0);
       }
       if (!reply) {
+        reply = parsedJsonLines.reply;
+      }
+      if (!reply && parsedJsonLines.sessionId === null) {
         reply = result.stdout.replace(ANSI_ESCAPE_RE, "").trim();
       }
-      const sessionId = result.exitCode === 0 ? await findLatestCodexSessionId({
+      const sessionId = result.exitCode === 0 ? parsedJsonLines.sessionId ?? await findLatestCodexSessionId({
         ...options.homeDirectory ? { homeDirectory: options.homeDirectory } : {},
         sinceMs: startedAt
       }) : null;
@@ -17682,6 +17746,10 @@ function extractText(itemList) {
     nonTextOnly: sawNonText && !sawText,
     text: parts.join("\n").trim()
   };
+}
+var SHARED_LINK_RE = /(?:https?:\/\/|www\.)[^\s]+/iu;
+function shouldSendProcessingAcknowledgement(message) {
+  return SHARED_LINK_RE.test(extractText(message.itemList).text);
 }
 function messageIdentifier(message) {
   const explicit = [
@@ -19286,16 +19354,20 @@ async function processPendingInbound(runtime, brain, cwd, persist) {
       runtime.state.contextTokens[message.fromUserId] = message.contextToken;
     }
     if (!pending.acknowledged) {
-      enqueueOutbound(runtime.state, {
-        contextToken: message.contextToken,
-        id: outboundIdentifier({ inboundId: pending.id, kind: "ack" }),
-        text: PROCESSING_ACK_REPLY,
-        toUserId: message.fromUserId
-      });
+      if (shouldSendProcessingAcknowledgement(message)) {
+        enqueueOutbound(runtime.state, {
+          contextToken: message.contextToken,
+          id: outboundIdentifier({ inboundId: pending.id, kind: "ack" }),
+          text: PROCESSING_ACK_REPLY,
+          toUserId: message.fromUserId
+        });
+      }
       pending.acknowledged = true;
       await persist();
-      await flushPendingOutbound(runtime, persist);
-      if (!runtime.client.token) return;
+      if (runtime.state.pendingOutbound.length > 0) {
+        await flushPendingOutbound(runtime, persist);
+        if (!runtime.client.token) return;
+      }
     }
     const outcome = await handleInboundMessage({
       brain,
@@ -20395,7 +20467,7 @@ async function checkHostOAuthSession(hostId, mcpUrl, probe, runner) {
         title: "Host OAuth session"
       };
     }
-    if (attention.auth_status !== "oauth") {
+    if (attention.auth_status !== "oauth" && attention.auth_status !== "o_auth") {
       return {
         detail: attention.auth_status === "not_logged_in" ? "Codex reports that Attention OAuth is not logged in. Run `codex mcp login attention` and retry." : "Codex does not report an authenticated OAuth session for Attention.",
         id: "host_oauth_session",

@@ -4,7 +4,7 @@ import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ATTENTION_WORKBUDDY_SKILL_BUNDLE_PUBLIC_PATH,
@@ -186,6 +186,147 @@ describe("Agent configuration plans", () => {
 });
 
 describe("Skill staging and apply", () => {
+  it("authorizes the dedicated Runtime client after Codex MCP login", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "attention-cli-"));
+    temporaryDirectories.push(directory);
+    const events: string[] = [];
+    const plan = buildConfigurePlan({
+      hostId: "codex",
+      origin: "https://attention.example",
+      skillDirectory: directory,
+    });
+
+    const results = await applyConfigurePlan(plan, {
+      authorizeRuntime: async ({ origin }) => {
+        events.push(`runtime-oauth ${origin}`);
+        return {
+          access_token: "not-rendered",
+          access_token_expires_at: "2026-08-10T11:00:00.000Z",
+          audience: "attention-channel-runtime",
+          authorization_server: "https://attention.example",
+          client_id: "runtime-client",
+          protected_resource_metadata_url:
+            "https://attention.example/.well-known/oauth-protected-resource/api/runtime",
+          refresh_token: "not-rendered",
+          resource: "https://attention.example/api/runtime",
+          scopes: [
+            "runtime:register",
+            "runtime:heartbeat",
+            "channel:bind:report",
+            "channel:disconnect:report",
+          ],
+          token_type: "Bearer",
+          version: 1,
+        };
+      },
+      fetchImpl: async () => {
+        events.push("fetch-skill");
+        return new Response(validSkillDocument, { status: 200 });
+      },
+      login: true,
+      runner: async (invocation) => {
+        events.push([invocation.executable, ...invocation.args].join(" "));
+        return {
+          exitCode: 0,
+          signal: null,
+          stderr: "",
+          stdout: "ok",
+          timedOut: false,
+        };
+      },
+    });
+
+    expect(events.at(-2)).toMatch(/mcp login|mcp auth/u);
+    expect(events.at(-1)).toBe("runtime-oauth https://attention.example");
+    expect(results.at(-1)).toMatchObject({
+      id: "authorize_runtime",
+      status: "applied",
+    });
+    expect(JSON.stringify(results)).not.toContain("not-rendered");
+  });
+
+  it("does not open Runtime OAuth without the explicit login flag", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "attention-cli-"));
+    temporaryDirectories.push(directory);
+    const authorizeRuntime = vi.fn();
+    const plan = buildConfigurePlan({
+      hostId: "codex",
+      origin: "https://attention.example",
+      skillDirectory: directory,
+    });
+
+    const results = await applyConfigurePlan(plan, {
+      authorizeRuntime,
+      fetchImpl: async () => new Response(validSkillDocument, { status: 200 }),
+      login: false,
+      runner: async () => ({
+        exitCode: 0,
+        signal: null,
+        stderr: "",
+        stdout: "ok",
+        timedOut: false,
+      }),
+    });
+
+    expect(authorizeRuntime).not.toHaveBeenCalled();
+    expect(results.at(-1)).toMatchObject({
+      id: "authorize_runtime",
+      status: "manual",
+    });
+  });
+
+  it("does not start Runtime OAuth after MCP login failure or expose OAuth secrets", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "attention-cli-"));
+    temporaryDirectories.push(directory);
+    const plan = buildConfigurePlan({
+      hostId: "codex",
+      origin: "https://attention.example",
+      skillDirectory: directory,
+    });
+    const authorizeRuntime = vi.fn(async () => {
+      throw new Error("refresh_token=runtime-refresh-token-secret");
+    });
+    let failLogin = true;
+    const runner: CommandRunner = async (invocation) => ({
+      exitCode:
+        failLogin && invocation.args.includes("login") ? 1 : 0,
+      signal: null,
+      stderr: failLogin && invocation.args.includes("login")
+        ? "login failed"
+        : "",
+      stdout: "",
+      timedOut: false,
+    });
+
+    const failedLogin = await applyConfigurePlan(plan, {
+      authorizeRuntime,
+      fetchImpl: async () => new Response(validSkillDocument, { status: 200 }),
+      login: true,
+      runner,
+    });
+    expect(failedLogin.at(-1)).toMatchObject({
+      id: "authorize_mcp",
+      status: "failed",
+    });
+    expect(authorizeRuntime).not.toHaveBeenCalled();
+
+    failLogin = false;
+    const failedRuntime = await applyConfigurePlan(plan, {
+      authorizeRuntime,
+      fetchImpl: async () => new Response(validSkillDocument, { status: 200 }),
+      forceSkill: true,
+      login: true,
+      runner,
+    });
+    expect(failedRuntime.at(-1)).toMatchObject({
+      id: "authorize_runtime",
+      status: "failed",
+    });
+    expect(JSON.stringify(failedRuntime)).not.toContain(
+      "runtime-refresh-token-secret",
+    );
+  });
+
   it("stages a bounded, validated SKILL.md atomically", async () => {
     const directory = await mkdtemp(join(tmpdir(), "attention-cli-"));
     temporaryDirectories.push(directory);
@@ -291,13 +432,14 @@ describe("Skill staging and apply", () => {
     });
 
     expect(events).toEqual([
+      "codex app-server --help",
       "codex mcp add --help",
       "codex mcp get --help",
       "fetch-skill",
       "codex mcp add attention --url https://attention.example/mcp",
     ]);
     expect(results.filter((result) => result.id.startsWith("compatibility_check_")))
-      .toHaveLength(2);
+      .toHaveLength(3);
   });
 
   it("leaves Skill and host configuration untouched when a compatibility check fails", async () => {
@@ -329,7 +471,7 @@ describe("Skill staging and apply", () => {
       },
     });
 
-    expect(invocations).toEqual(["codex mcp add --help"]);
+    expect(invocations).toEqual(["codex app-server --help"]);
     expect(fetched).toBe(false);
     expect(results).toEqual([
       expect.objectContaining({
@@ -436,6 +578,7 @@ describe("Skill staging and apply", () => {
       runner,
     });
     expect(invocations).toEqual([
+      "codex\0app-server\0--help",
       "codex\0mcp\0add\0--help",
       "codex\0mcp\0get\0--help",
       "codex\0mcp\0add\0attention\0--url\0https://attention.example/mcp",

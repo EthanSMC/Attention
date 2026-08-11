@@ -15,9 +15,10 @@ export interface AgentConnectionCommand {
 }
 
 /**
- * Honest, setup-only channel guidance. The bridge runs on the user's device
- * and does not report to Attention, so this projection must never expose a
- * connection state — only commands, prerequisites, and boundaries.
+ * Honest, setup-only channel guidance. The bridge runs on the user's device.
+ * Its optional Runtime Reporter may send privacy-safe health and pairing
+ * outcomes, but this projection must not infer a live connection state from
+ * setup alone — it exposes only commands, prerequisites, and boundaries.
  */
 export interface AgentConnectionChannelSetup {
   command: string | null;
@@ -248,7 +249,7 @@ function profileChannelSetup(
     const template = profile.channel.setup_command_templates[0];
     return {
       command: template ? shellCommand(template, commandValues) : null,
-      detail: `本机运行的 attention-channel 桥代替 Attention 接收微信消息，并以受限配置调用 ${profile.display_name}（仅 Attention MCP，禁用 shell、代码执行、文件写入和其他 MCP）。iLink 凭据只保存在你的设备上；桥不向 Attention 上报，此页不展示连接状态。`,
+      detail: `本机运行的 attention-channel 桥代替 Attention 接收微信消息，并以受限配置调用 ${profile.display_name}（仅 Attention MCP，禁用 shell、代码执行、文件写入和其他 MCP）。iLink 凭据只保存在你的设备上；可选 Runtime Reporter 只向 Attention 上报隐私安全的运行状态与配对结果，不上传消息、链接或凭据。此设置页不会仅凭配置推断连接状态。`,
       prerequisites: [
         "手机微信 iOS ≥ 8.0.70 或 Android ≥ 8.0.69，并已启用 ClawBot（龙虾）插件",
         `已完成 attention configure ${profile.id} --apply --login（Skill、MCP、OAuth）`,
