@@ -410,6 +410,33 @@ describe("OAuth connection-aware authorization", () => {
     expect(db.state.refreshTokens[0]?.connectionId).toBe(pair.connectionId);
   });
 
+  it("materializes an isolated imported connection for a legacy authorization code", async () => {
+    const code = opaqueToken("legacy-create-code");
+    const db = new OAuthStateDatabase({
+      authorizationCodes: [await authorizationCode(code)],
+    });
+
+    const pair = await exchangeAuthorizationCode(db.database, exchangeInput(code));
+
+    expect(db.state.connections).toHaveLength(1);
+    expect(db.state.connections[0]).toMatchObject({
+      accountId,
+      audience: "attention-mcp",
+      clientId,
+      id: pair.connectionId,
+      kind: "mcp",
+      label: `Imported connection ${pair.connectionId}`,
+      normalizedLabel: `imported connection ${pair.connectionId}`,
+      revokedAt: null,
+    });
+    expect(db.state.authorizationCodes[0]).toMatchObject({
+      connectionId: pair.connectionId,
+      consumedAt: now,
+    });
+    expect(db.state.accessTokens[0]?.connectionId).toBe(pair.connectionId);
+    expect(db.state.refreshTokens[0]?.connectionId).toBe(pair.connectionId);
+  });
+
   it("refresh rotation carries the old logical connection ID unchanged", async () => {
     const connectionId = "20000000-0000-4000-8000-000000000002";
     const rawRefreshToken = opaqueToken("refresh-token");
@@ -442,6 +469,63 @@ describe("OAuth connection-aware authorization", () => {
     expect(pair.connectionId).toBe(connectionId);
     expect(db.state.accessTokens[0]?.connectionId).toBe(connectionId);
     expect(db.state.refreshTokens.at(-1)?.connectionId).toBe(connectionId);
+  });
+
+  it("materializes and atomically links an imported connection for a legacy refresh token", async () => {
+    const rawRefreshToken = opaqueToken("legacy-refresh-token");
+    const legacyRefreshId = "40000000-0000-4000-8000-000000000004";
+    const db = new OAuthStateDatabase({
+      refreshTokens: [credential({
+        connectionId: null,
+        consumedAt: null,
+        id: legacyRefreshId,
+        tokenHash: await hashOpaqueToken(rawRefreshToken),
+      })],
+    });
+
+    const pair = await rotateRefreshToken(db.database, {
+      clientId,
+      now,
+      refreshToken: rawRefreshToken,
+      resource: resources["attention-mcp"],
+      resources,
+    });
+
+    expect(db.state.connections).toHaveLength(1);
+    expect(db.state.connections[0]).toMatchObject({
+      accountId,
+      audience: "attention-mcp",
+      clientId,
+      id: pair.connectionId,
+      kind: "mcp",
+      label: `Imported connection ${pair.connectionId}`,
+      normalizedLabel: `imported connection ${pair.connectionId}`,
+    });
+    expect(db.state.refreshTokens.find(({ id }) => id === legacyRefreshId)).toMatchObject({
+      connectionId: pair.connectionId,
+      consumedAt: now,
+      revokedAt: now,
+      status: "revoked",
+    });
+    expect(db.state.accessTokens[0]?.connectionId).toBe(pair.connectionId);
+    expect(db.state.refreshTokens.at(-1)?.connectionId).toBe(pair.connectionId);
+  });
+
+  it("fails closed for a legacy Runtime code without trusted installation metadata", async () => {
+    const code = opaqueToken("legacy-untrusted-runtime-code");
+    const db = new OAuthStateDatabase({
+      authorizationCodes: [await authorizationCode(code, {
+        audience: "attention-channel-runtime",
+        scopes: ["runtime:register"],
+      })],
+    });
+
+    await expect(exchangeAuthorizationCode(db.database, {
+      ...exchangeInput(code),
+      resource: resources["attention-channel-runtime"],
+    })).rejects.toMatchObject({ code: "invalid_grant" });
+    expect(db.state.authorizationCodes[0]?.consumedAt).toBeNull();
+    expect(db.state.connections).toHaveLength(0);
   });
 
   it("replaces the locked matching connection and its credentials atomically", async () => {
@@ -985,7 +1069,9 @@ class OAuthStateDatabase {
             constraint_name: "oauth_connections_active_name_unique",
           });
         }
-        const id = `60000000-0000-4000-8000-${String(this.nextId++).padStart(12, "0")}`;
+        const id = typeof value.id === "string"
+          ? value.id
+          : `60000000-0000-4000-8000-${String(this.nextId++).padStart(12, "0")}`;
         state.connections.push({
           ...(value as unknown as ConnectionRow),
           createdAt: (value.createdAt as Date | undefined) ?? now,

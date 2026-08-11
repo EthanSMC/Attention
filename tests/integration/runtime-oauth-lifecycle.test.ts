@@ -6,6 +6,7 @@ import {
   createDatabase,
   eq,
   oauthAccessTokens,
+  oauthAuthorizationCodes,
   oauthClients,
   oauthConnections,
   oauthRefreshTokens,
@@ -249,6 +250,166 @@ describe.skipIf(!databaseUrl)("Runtime OAuth logical lifecycle on PostgreSQL", (
       ["runtime-client-old", "revoked"],
       ["runtime-client-new", "active"],
     ]);
+  });
+
+  it("routes a legacy Runtime authorization code through the trusted installation resolver", async () => {
+    const hash = auth.hashRuntimeInstallationId(installationId);
+    await registerRuntimeClient("runtime-client-aware", hash, "Legacy Runtime Mac");
+    const first = await createRuntimeCode(
+      accountId,
+      "runtime-client-aware",
+      "Legacy Runtime Mac",
+      new Date("2026-08-11T10:00:00.000Z"),
+    );
+    const firstPair = await exchangeRuntimeCode(
+      "runtime-client-aware",
+      first.code,
+      new Date("2026-08-11T10:01:00.000Z"),
+    );
+    await registerRuntimeClient(
+      "runtime-client-legacy-code",
+      hash,
+      "Legacy Runtime Mac",
+    );
+    const legacyCode = createHash("sha256")
+      .update("legacy-runtime-authorization-code")
+      .digest("base64url");
+    await handle.db.insert(oauthAuthorizationCodes).values({
+      accountId,
+      audience: "attention-channel-runtime",
+      clientId: "runtime-client-legacy-code",
+      codeChallenge: challenge,
+      codeHash: await auth.hashOpaqueToken(legacyCode),
+      createdAt: new Date("2026-08-11T11:00:00.000Z"),
+      expiresAt: new Date("2026-08-11T11:10:00.000Z"),
+      redirectUri: "http://127.0.0.1:43820/runtime-client-legacy-code",
+      scopes: [...runtimeScopes],
+    });
+
+    const legacyPair = await exchangeRuntimeCode(
+      "runtime-client-legacy-code",
+      legacyCode,
+      new Date("2026-08-11T11:01:00.000Z"),
+    );
+
+    expect(legacyPair.connectionId).toBe(firstPair.connectionId);
+    const [connection] = await handle.db
+      .select()
+      .from(oauthConnections)
+      .where(eq(oauthConnections.id, firstPair.connectionId));
+    expect(connection).toMatchObject({
+      clientId: "runtime-client-legacy-code",
+      deviceName: "Legacy Runtime Mac",
+      installationKeyHash: hash,
+      label: "Legacy Runtime Mac",
+    });
+    const [consumedCode] = await handle.db
+      .select()
+      .from(oauthAuthorizationCodes)
+      .where(eq(
+        oauthAuthorizationCodes.codeHash,
+        await auth.hashOpaqueToken(legacyCode),
+      ));
+    expect(consumedCode).toMatchObject({
+      connectionId: firstPair.connectionId,
+      consumedAt: new Date("2026-08-11T11:01:00.000Z"),
+    });
+  });
+
+  it("links a legacy Runtime refresh to the same trusted installation connection", async () => {
+    const hash = auth.hashRuntimeInstallationId(installationId);
+    await registerRuntimeClient("runtime-client-refresh-aware", hash, "Refresh Runtime Mac");
+    const first = await createRuntimeCode(
+      accountId,
+      "runtime-client-refresh-aware",
+      "Refresh Runtime Mac",
+      new Date("2026-08-11T10:30:00.000Z"),
+    );
+    const firstPair = await exchangeRuntimeCode(
+      "runtime-client-refresh-aware",
+      first.code,
+      new Date("2026-08-11T10:31:00.000Z"),
+    );
+    await registerRuntimeClient(
+      "runtime-client-legacy-refresh",
+      hash,
+      "Refresh Runtime Mac",
+    );
+    const legacyRefresh = createHash("sha256")
+      .update("legacy-runtime-refresh-token")
+      .digest("base64url");
+    const [legacyRow] = await handle.db.insert(oauthRefreshTokens).values({
+      accountId,
+      audience: "attention-channel-runtime",
+      clientId: "runtime-client-legacy-refresh",
+      connectionId: null,
+      createdAt: new Date("2026-08-11T11:00:00.000Z"),
+      expiresAt: new Date("2026-09-11T11:00:00.000Z"),
+      scopes: [...runtimeScopes],
+      tokenHash: await auth.hashOpaqueToken(legacyRefresh),
+    }).returning({ id: oauthRefreshTokens.id });
+    if (!legacyRow) throw new Error("legacy Runtime refresh fixture insert failed");
+
+    const refreshed = await auth.rotateRefreshToken(handle.db, {
+      clientId: "runtime-client-legacy-refresh",
+      now: new Date("2026-08-11T11:01:00.000Z"),
+      refreshToken: legacyRefresh,
+      resource: runtimeResource,
+      resources,
+    });
+
+    expect(refreshed.connectionId).toBe(firstPair.connectionId);
+    const [consumedLegacy] = await handle.db
+      .select()
+      .from(oauthRefreshTokens)
+      .where(eq(oauthRefreshTokens.id, legacyRow.id));
+    expect(consumedLegacy).toMatchObject({
+      connectionId: firstPair.connectionId,
+      consumedAt: new Date("2026-08-11T11:01:00.000Z"),
+      status: "revoked",
+    });
+    expect(await auth.resolveOAuthAccessToken(handle.db, firstPair.accessToken, {
+      audience: "attention-channel-runtime",
+      now: new Date("2026-08-11T11:01:30.000Z"),
+    })).not.toBeNull();
+  });
+
+  it("fails closed for a legacy Runtime code without trusted DCR metadata", async () => {
+    await handle.db.insert(oauthClients).values({
+      allowedScopes: [...runtimeScopes],
+      clientId: "runtime-client-untrusted-legacy",
+      name: "Generic runtime-shaped client",
+      redirectUris: ["http://127.0.0.1:43820/runtime-client-untrusted-legacy"],
+    });
+    const legacyCode = createHash("sha256")
+      .update("untrusted-legacy-runtime-authorization-code")
+      .digest("base64url");
+    await handle.db.insert(oauthAuthorizationCodes).values({
+      accountId,
+      audience: "attention-channel-runtime",
+      clientId: "runtime-client-untrusted-legacy",
+      codeChallenge: challenge,
+      codeHash: await auth.hashOpaqueToken(legacyCode),
+      createdAt: new Date("2026-08-11T11:00:00.000Z"),
+      expiresAt: new Date("2026-08-11T11:10:00.000Z"),
+      redirectUri: "http://127.0.0.1:43820/runtime-client-untrusted-legacy",
+      scopes: [...runtimeScopes],
+    });
+
+    await expect(exchangeRuntimeCode(
+      "runtime-client-untrusted-legacy",
+      legacyCode,
+      new Date("2026-08-11T11:01:00.000Z"),
+    )).rejects.toMatchObject({ code: "invalid_grant" });
+    const [unconsumed] = await handle.db
+      .select({ consumedAt: oauthAuthorizationCodes.consumedAt })
+      .from(oauthAuthorizationCodes)
+      .where(eq(
+        oauthAuthorizationCodes.codeHash,
+        await auth.hashOpaqueToken(legacyCode),
+      ));
+    expect(unconsumed?.consumedAt).toBeNull();
+    expect(await handle.db.select().from(oauthConnections)).toHaveLength(0);
   });
 
   it("atomically renames the same Runtime connection during rotate", async () => {

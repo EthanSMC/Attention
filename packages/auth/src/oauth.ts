@@ -30,6 +30,7 @@ import {
   isOAuthConnectionNameConflict,
   normalizeOAuthConnectionLabel,
   OAuthConnectionNameConflictError,
+  resolveRuntimeOAuthConnectionIntent,
   type OAuthConnectionIntent,
 } from "./oauth-connection";
 import { createOpaqueToken, hashOpaqueToken } from "./tokens";
@@ -437,6 +438,139 @@ async function revokeConnectionCredentials(
     );
 }
 
+interface TrustedRuntimeClientMetadata {
+  deviceName: string | null;
+  installationKeyHash: string | null;
+}
+
+function importedOAuthConnectionIdentity(): {
+  connectionId: string;
+  label: string;
+  normalizedLabel: string;
+} {
+  const connectionId = randomUUID();
+  const normalized = normalizeOAuthConnectionLabel(
+    `Imported connection ${connectionId}`,
+  );
+  return { connectionId, ...normalized };
+}
+
+async function materializeLegacyOAuthConnection(
+  tx: AttentionTransaction,
+  input: {
+    accountId: string;
+    audience: OAuthAudience;
+    authorizedAt: Date;
+    clientId: string;
+    now: Date;
+    reauthorize: boolean;
+    trustedRuntimeClient: TrustedRuntimeClientMetadata | null;
+  },
+): Promise<string> {
+  if (input.audience === CHANNEL_RUNTIME_RESOURCE) {
+    const trusted = input.trustedRuntimeClient;
+    if (
+      !trusted?.deviceName ||
+      !trusted.installationKeyHash ||
+      !/^[0-9a-f]{64}$/u.test(trusted.installationKeyHash)
+    ) {
+      throw new OAuthError("invalid_grant");
+    }
+    let intent: OAuthConnectionIntent;
+    try {
+      intent = await resolveRuntimeOAuthConnectionIntent(tx, {
+        accountId: input.accountId,
+        audience: CHANNEL_RUNTIME_RESOURCE,
+        clientId: input.clientId,
+        label: trusted.deviceName,
+      });
+    } catch (error) {
+      if (error instanceof OAuthConnectionNameConflictError) throw error;
+      throw new OAuthError("invalid_grant");
+    }
+    const normalized = normalizeOAuthConnectionLabel(intent.label);
+    if (intent.mode === "rotate") {
+      const [existing] = await tx
+        .select()
+        .from(oauthConnections)
+        .where(eq(oauthConnections.id, intent.connectionId))
+        .for("update")
+        .limit(1);
+      if (
+        !existing ||
+        existing.revokedAt ||
+        existing.accountId !== input.accountId ||
+        existing.audience !== input.audience ||
+        existing.kind !== "runtime" ||
+        existing.installationKeyHash !== trusted.installationKeyHash
+      ) {
+        throw new OAuthError("invalid_grant");
+      }
+      if (input.reauthorize) {
+        await revokeConnectionCredentials(
+          tx,
+          input.accountId,
+          [existing.id],
+          input.now,
+        );
+      }
+      await tx
+        .update(oauthConnections)
+        .set({
+          clientId: input.clientId,
+          deviceName: trusted.deviceName,
+          installationKeyHash: trusted.installationKeyHash,
+          label: normalized.label,
+          ...(input.reauthorize ? { lastAuthorizedAt: input.now } : {}),
+          normalizedLabel: normalized.normalizedLabel,
+          updatedAt: input.now,
+        })
+        .where(eq(oauthConnections.id, existing.id));
+      return existing.id;
+    }
+    if (intent.mode === "replace") {
+      throw new OAuthConnectionNameConflictError();
+    }
+    const connectionId = randomUUID();
+    const [created] = await tx
+      .insert(oauthConnections)
+      .values({
+        accountId: input.accountId,
+        audience: input.audience,
+        clientId: input.clientId,
+        deviceName: trusted.deviceName,
+        id: connectionId,
+        installationKeyHash: trusted.installationKeyHash,
+        kind: "runtime",
+        label: normalized.label,
+        lastAuthorizedAt: input.authorizedAt,
+        normalizedLabel: normalized.normalizedLabel,
+        updatedAt: input.now,
+      })
+      .returning({ id: oauthConnections.id });
+    if (!created) throw new OAuthError("invalid_grant");
+    return created.id;
+  }
+
+  const imported = importedOAuthConnectionIdentity();
+  const [created] = await tx
+    .insert(oauthConnections)
+    .values({
+      accountId: input.accountId,
+      audience: input.audience,
+      clientId: input.clientId,
+      id: imported.connectionId,
+      kind: "mcp",
+      label: imported.label,
+      lastAuthorizedAt: input.authorizedAt,
+      normalizedLabel: imported.normalizedLabel,
+      updatedAt: input.now,
+    })
+    .returning({ id: oauthConnections.id });
+  if (!created) throw new OAuthError("invalid_grant");
+  return created.id;
+}
+
 export async function exchangeAuthorizationCode(
   db: AttentionDatabase,
   input: {
@@ -502,12 +636,8 @@ export async function exchangeAuthorizationCode(
       ) {
         throw new OAuthError("invalid_grant");
       }
-      await tx
-        .update(oauthAuthorizationCodes)
-        .set({ consumedAt: now })
-        .where(eq(oauthAuthorizationCodes.id, code.id));
-
       let connectionId: string;
+      let legacyMaterialized = false;
       if (code.connectionId) {
         const [existing] = await tx
           .select()
@@ -563,6 +693,21 @@ export async function exchangeAuthorizationCode(
             updatedAt: now,
           })
           .where(eq(oauthConnections.id, connectionId));
+      } else if (
+        !code.connectionLabel &&
+        !code.normalizedConnectionLabel &&
+        !code.replacementConnectionId
+      ) {
+        connectionId = await materializeLegacyOAuthConnection(tx, {
+          accountId: code.accountId,
+          audience: requestedResource.audience,
+          authorizedAt: now,
+          clientId: code.clientId,
+          now,
+          reauthorize: true,
+          trustedRuntimeClient: trustedRuntimeClient ?? null,
+        });
+        legacyMaterialized = true;
       } else {
         if (!code.connectionLabel || !code.normalizedConnectionLabel) {
           throw new OAuthError("invalid_grant");
@@ -616,6 +761,13 @@ export async function exchangeAuthorizationCode(
         if (!created) throw new OAuthError("invalid_grant");
         connectionId = created.id;
       }
+      await tx
+        .update(oauthAuthorizationCodes)
+        .set({
+          ...(legacyMaterialized ? { connectionId } : {}),
+          consumedAt: now,
+        })
+        .where(eq(oauthAuthorizationCodes.id, code.id));
       return issueTokenPair(tx, {
         accountId: code.accountId,
         audience: code.audience,
@@ -628,12 +780,16 @@ export async function exchangeAuthorizationCode(
   } catch (error) {
     if (
       runtimeExchange &&
-      (isOAuthConnectionNameConflict(error) ||
+      (error instanceof OAuthConnectionNameConflictError ||
+        isOAuthConnectionNameConflict(error) ||
         isRuntimeInstallationConflict(error))
     ) {
       throw new OAuthRuntimeInstallationConflictError();
     }
-    if (isOAuthConnectionNameConflict(error)) {
+    if (
+      error instanceof OAuthConnectionNameConflictError ||
+      isOAuthConnectionNameConflict(error)
+    ) {
       throw new OAuthConnectionNameConflictError();
     }
     throw error;
@@ -680,63 +836,118 @@ export async function rotateRefreshToken(
   const requestedResource = resolveOAuthResource(input.resource, input.resources);
   let tokenHash: string;
   try { tokenHash = await hashOpaqueToken(input.refreshToken); } catch { throw new OAuthError("invalid_grant"); }
-  return db.transaction(async (tx) => {
-    const [candidate] = await tx
-      .select()
-      .from(oauthRefreshTokens)
-      .where(eq(oauthRefreshTokens.tokenHash, tokenHash))
-      .limit(1);
-    if (
-      !candidate || candidate.clientId !== input.clientId ||
-      candidate.status !== "active" || candidate.consumedAt ||
-      candidate.revokedAt || candidate.expiresAt <= now
-    ) throw new OAuthError("invalid_grant");
-    if (candidate.audience !== requestedResource.audience) {
-      throw new OAuthError("invalid_target");
-    }
-    if (!candidate.connectionId) throw new OAuthError("invalid_grant");
-    const [connection] = await tx
-      .select()
-      .from(oauthConnections)
-      .where(eq(oauthConnections.id, candidate.connectionId))
-      .for("update")
-      .limit(1);
-    if (
-      !connection || connection.revokedAt ||
-      connection.accountId !== candidate.accountId ||
-      connection.audience !== candidate.audience
-    ) {
-      throw new OAuthError("invalid_grant");
-    }
-    const [token] = await tx
-      .select()
-      .from(oauthRefreshTokens)
-      .where(eq(oauthRefreshTokens.id, candidate.id))
-      .for("update")
-      .limit(1);
-    if (
-      !token || token.connectionId !== connection.id ||
-      token.clientId !== input.clientId || token.status !== "active" ||
-      token.consumedAt || token.revokedAt || token.expiresAt <= now
-    ) throw new OAuthError("invalid_grant");
-    const requestedScopes = input.scope ? normalizeScopes(input.scope) : [...token.scopes].sort();
-    const existingScopes = [...token.scopes].sort();
-    if (requestedScopes.some((scope) => !existingScopes.includes(scope))) {
-      throw new OAuthError("invalid_scope");
-    }
-    await tx
-      .update(oauthRefreshTokens)
-      .set({ consumedAt: now, revokedAt: now, status: "revoked" })
-      .where(eq(oauthRefreshTokens.id, token.id));
-    return issueTokenPair(tx, {
-      accountId: token.accountId,
-      audience: token.audience,
-      clientId: token.clientId,
-      connectionId: token.connectionId,
-      now,
-      scopes: requestedScopes,
+  let runtimeRefresh = false;
+  try {
+    return await db.transaction(async (tx) => {
+      const [candidate] = await tx
+        .select()
+        .from(oauthRefreshTokens)
+        .where(eq(oauthRefreshTokens.tokenHash, tokenHash))
+        .limit(1);
+      if (
+        !candidate || candidate.clientId !== input.clientId ||
+        candidate.status !== "active" || candidate.consumedAt ||
+        candidate.revokedAt || candidate.expiresAt <= now
+      ) throw new OAuthError("invalid_grant");
+      if (candidate.audience !== requestedResource.audience) {
+        throw new OAuthError("invalid_target");
+      }
+      runtimeRefresh = candidate.audience === CHANNEL_RUNTIME_RESOURCE;
+
+      let connectionId = candidate.connectionId;
+      if (connectionId) {
+        const [connection] = await tx
+          .select()
+          .from(oauthConnections)
+          .where(eq(oauthConnections.id, connectionId))
+          .for("update")
+          .limit(1);
+        if (
+          !connection || connection.revokedAt ||
+          connection.accountId !== candidate.accountId ||
+          connection.audience !== candidate.audience
+        ) {
+          throw new OAuthError("invalid_grant");
+        }
+      } else {
+        const trustedRuntimeClient = runtimeRefresh
+          ? (await tx
+              .select({
+                deviceName: oauthClients.deviceName,
+                installationKeyHash: oauthClients.installationKeyHash,
+              })
+              .from(oauthClients)
+              .where(
+                and(
+                  eq(oauthClients.clientId, candidate.clientId),
+                  eq(oauthClients.active, true),
+                  eq(oauthClients.connectionKind, "runtime"),
+                ),
+              )
+              .limit(1))[0]
+          : null;
+        connectionId = await materializeLegacyOAuthConnection(tx, {
+          accountId: candidate.accountId,
+          audience: requestedResource.audience,
+          authorizedAt: candidate.createdAt,
+          clientId: candidate.clientId,
+          now,
+          reauthorize: false,
+          trustedRuntimeClient: trustedRuntimeClient ?? null,
+        });
+      }
+
+      const [token] = await tx
+        .select()
+        .from(oauthRefreshTokens)
+        .where(eq(oauthRefreshTokens.id, candidate.id))
+        .for("update")
+        .limit(1);
+      if (
+        !token || token.connectionId !== candidate.connectionId ||
+        token.clientId !== input.clientId || token.status !== "active" ||
+        token.consumedAt || token.revokedAt || token.expiresAt <= now
+      ) throw new OAuthError("invalid_grant");
+      const requestedScopes = input.scope ? normalizeScopes(input.scope) : [...token.scopes].sort();
+      const existingScopes = [...token.scopes].sort();
+      if (requestedScopes.some((scope) => !existingScopes.includes(scope))) {
+        throw new OAuthError("invalid_scope");
+      }
+      await tx
+        .update(oauthRefreshTokens)
+        .set({
+          connectionId,
+          consumedAt: now,
+          revokedAt: now,
+          status: "revoked",
+        })
+        .where(eq(oauthRefreshTokens.id, token.id));
+      return issueTokenPair(tx, {
+        accountId: token.accountId,
+        audience: token.audience,
+        clientId: token.clientId,
+        connectionId,
+        now,
+        scopes: requestedScopes,
+      });
     });
-  });
+  } catch (error) {
+    if (
+      runtimeRefresh &&
+      (error instanceof OAuthConnectionNameConflictError ||
+        isOAuthConnectionNameConflict(error) ||
+        isRuntimeInstallationConflict(error))
+    ) {
+      throw new OAuthRuntimeInstallationConflictError();
+    }
+    if (
+      error instanceof OAuthConnectionNameConflictError ||
+      isOAuthConnectionNameConflict(error)
+    ) {
+      throw new OAuthConnectionNameConflictError();
+    }
+    throw error;
+  }
 }
 
 export interface OAuthPrincipal {

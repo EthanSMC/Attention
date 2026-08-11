@@ -5,6 +5,7 @@ import {
   oauthClients,
   oauthConnections,
   type AttentionDatabase,
+  type AttentionTransaction,
 } from "@attention/db";
 import { CHANNEL_RUNTIME_RESOURCE } from "@attention/contracts";
 
@@ -87,7 +88,7 @@ export async function checkOAuthConnectionName(
  * never becomes the installation identity itself.
  */
 export async function resolveRuntimeOAuthConnectionIntent(
-  db: AttentionDatabase,
+  db: AttentionDatabase | AttentionTransaction,
   input: {
     accountId: string;
     audience: typeof CHANNEL_RUNTIME_RESOURCE;

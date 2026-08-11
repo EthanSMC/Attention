@@ -113,6 +113,7 @@ import {
   resolveChannelIdentity,
   resolveOAuthAccessToken,
   resolveSession,
+  rotateRefreshToken,
   revokeApiCredential,
   revokeOAuthConnection,
   reserveRenewalPoints,
@@ -154,7 +155,9 @@ import {
   moderationVotes,
   membershipGrants,
   oauthClients,
+  oauthAuthorizationCodes,
   oauthConnections,
+  oauthRefreshTokens,
   type ModerationRepositoryError,
   pendingCandidateSets,
   publicContentAttributionsCurrent,
@@ -1224,6 +1227,115 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     expect(await resolveSession(handle.db, verified.session.token, { touch: false })).not.toBeNull();
   });
 
+  it("lazily materializes distinct logical connections for legacy code and refresh rows", async () => {
+    const challenge = await createLoginChallenge(handle.db, {
+      email: "oauth-legacy-writer@example.com",
+    });
+    const verified = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: challenge.challengeId,
+      code: challenge.code,
+    });
+    const verifier = "oauth-legacy-writer-verifier-at-least-forty-three-characters";
+    const challengeValue = createHash("sha256").update(verifier).digest("base64url");
+    const client = await registerPublicOAuthClient(handle.db, {
+      name: "Legacy writer display name must not become identity",
+      requesterFingerprint: "7".repeat(64),
+      redirectUris: ["http://127.0.0.1:43827/callback"],
+    });
+    const issuedAt = new Date("2026-08-11T12:00:00.000Z");
+    const legacyCode = createHash("sha256")
+      .update("legacy-writer-authorization-code")
+      .digest("base64url");
+    await handle.db.insert(oauthAuthorizationCodes).values({
+      accountId: verified.accountId,
+      audience: "attention-mcp",
+      clientId: client.clientId,
+      codeChallenge: challengeValue,
+      codeHash: await hashOpaqueToken(legacyCode),
+      createdAt: issuedAt,
+      expiresAt: new Date("2026-08-11T12:10:00.000Z"),
+      redirectUri: "http://127.0.0.1:43827/callback",
+      scopes: ["profile:read"],
+    });
+
+    const codePair = await exchangeAuthorizationCode(handle.db, {
+      clientId: client.clientId,
+      code: legacyCode,
+      codeVerifier: verifier,
+      now: new Date("2026-08-11T12:01:00.000Z"),
+      redirectUri: "http://127.0.0.1:43827/callback",
+      resource: oauthResources["attention-mcp"],
+      resources: oauthResources,
+    });
+    const [codeConnection] = await handle.db
+      .select()
+      .from(oauthConnections)
+      .where(eq(oauthConnections.id, codePair.connectionId));
+    const [consumedCode] = await handle.db
+      .select({ connectionId: oauthAuthorizationCodes.connectionId })
+      .from(oauthAuthorizationCodes)
+      .where(eq(oauthAuthorizationCodes.codeHash, await hashOpaqueToken(legacyCode)));
+    expect(codeConnection).toMatchObject({
+      accountId: verified.accountId,
+      audience: "attention-mcp",
+      clientId: client.clientId,
+      kind: "mcp",
+      label: `Imported connection ${codePair.connectionId}`,
+      normalizedLabel: `imported connection ${codePair.connectionId}`,
+    });
+    expect(consumedCode?.connectionId).toBe(codePair.connectionId);
+
+    const legacyRefresh = createHash("sha256")
+      .update("legacy-writer-refresh-token")
+      .digest("base64url");
+    const [legacyRefreshRow] = await handle.db
+      .insert(oauthRefreshTokens)
+      .values({
+        accountId: verified.accountId,
+        audience: "attention-mcp",
+        clientId: client.clientId,
+        connectionId: null,
+        createdAt: issuedAt,
+        expiresAt: new Date("2026-09-11T12:00:00.000Z"),
+        scopes: ["profile:read"],
+        tokenHash: await hashOpaqueToken(legacyRefresh),
+      })
+      .returning({ id: oauthRefreshTokens.id });
+    if (!legacyRefreshRow) throw new Error("legacy refresh fixture insert failed");
+
+    const refreshPair = await rotateRefreshToken(handle.db, {
+      clientId: client.clientId,
+      now: new Date("2026-08-11T12:02:00.000Z"),
+      refreshToken: legacyRefresh,
+      resource: oauthResources["attention-mcp"],
+      resources: oauthResources,
+    });
+    const [refreshConnection] = await handle.db
+      .select()
+      .from(oauthConnections)
+      .where(eq(oauthConnections.id, refreshPair.connectionId));
+    const [consumedRefresh] = await handle.db
+      .select()
+      .from(oauthRefreshTokens)
+      .where(eq(oauthRefreshTokens.id, legacyRefreshRow.id));
+    expect(refreshPair.connectionId).not.toBe(codePair.connectionId);
+    expect(refreshConnection).toMatchObject({
+      accountId: verified.accountId,
+      audience: "attention-mcp",
+      clientId: client.clientId,
+      kind: "mcp",
+      label: `Imported connection ${refreshPair.connectionId}`,
+      normalizedLabel: `imported connection ${refreshPair.connectionId}`,
+    });
+    expect(consumedRefresh).toMatchObject({
+      connectionId: refreshPair.connectionId,
+      consumedAt: new Date("2026-08-11T12:02:00.000Z"),
+      revokedAt: new Date("2026-08-11T12:02:00.000Z"),
+      status: "revoked",
+    });
+  });
+
   it("atomically replaces an OAuth connection and resolves concurrent name confirmation", async () => {
     const challenge = await createLoginChallenge(handle.db, {
       email: "oauth-connection-transaction@example.com",
@@ -1337,21 +1449,49 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
         { mode: "create", label: "SHARED DESK" },
       ),
     ]);
-    const confirmations = await Promise.allSettled(concurrentCodes.map((code) =>
-      exchangeAuthorizationCode(handle.db, {
-        clientId: client.clientId,
-        code,
-        codeVerifier: verifier,
-        redirectUri: authorization.redirectUri,
-        resource: authorization.resource,
-        resources: oauthResources,
-      })
+    const tokenRequest = (code: string) => new Request(
+      "http://localhost:3000/oauth/token",
+      {
+        body: new URLSearchParams({
+          client_id: client.clientId,
+          code,
+          code_verifier: verifier,
+          grant_type: "authorization_code",
+          redirect_uri: authorization.redirectUri,
+          resource: authorization.resource,
+        }),
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        method: "POST",
+      },
+    );
+    const confirmations = await Promise.all(concurrentCodes.map((code) =>
+      handleOAuthTokenRequest(tokenRequest(code), handle.db)
     ));
-    expect(confirmations.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
-    expect(confirmations.find(({ status }) => status === "rejected")).toMatchObject({
-      reason: { message: "oauth_connection_name_conflict" },
-      status: "rejected",
+    expect(confirmations.filter(({ status }) => status === 200)).toHaveLength(1);
+    const loserIndex = confirmations.findIndex(({ status }) => status === 400);
+    expect(loserIndex).toBeGreaterThanOrEqual(0);
+    await expect(confirmations[loserIndex]!.json()).resolves.toEqual({
+      error: "invalid_grant",
+      error_description: "connection_name_conflict",
     });
+
+    const unchangedRetry = await handleOAuthTokenRequest(
+      tokenRequest(concurrentCodes[loserIndex]!),
+      handle.db,
+    );
+    expect(unchangedRetry.status).toBe(400);
+    await expect(unchangedRetry.json()).resolves.toEqual({
+      error: "invalid_grant",
+      error_description: "connection_name_conflict",
+    });
+    const [losingCode] = await handle.db
+      .select({ consumedAt: oauthAuthorizationCodes.consumedAt })
+      .from(oauthAuthorizationCodes)
+      .where(eq(
+        oauthAuthorizationCodes.codeHash,
+        await hashOpaqueToken(concurrentCodes[loserIndex]!),
+      ));
+    expect(losingCode?.consumedAt).toBeNull();
   });
 
   it("rejects rather than silently dropping scopes from another OAuth audience", async () => {

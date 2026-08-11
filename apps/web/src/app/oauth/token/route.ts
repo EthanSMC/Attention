@@ -1,5 +1,6 @@
 import {
   exchangeAuthorizationCode,
+  OAuthConnectionNameConflictError,
   OAuthError,
   rotateRefreshToken,
 } from "@attention/auth";
@@ -70,6 +71,12 @@ export async function handleOAuthTokenRequest(
   } catch (error) {
     if (error instanceof RequestBodyTooLargeError) {
       return noStoreJson({ error: "invalid_request" }, { status: 413 });
+    }
+    if (error instanceof OAuthConnectionNameConflictError) {
+      return noStoreJson({
+        error: "invalid_grant",
+        error_description: "connection_name_conflict",
+      }, { status: 400 });
     }
     const code = error instanceof OAuthError ? error.code : "invalid_request";
     return noStoreJson({ error: code }, { status: 400 });
