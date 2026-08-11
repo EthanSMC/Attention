@@ -114,7 +114,7 @@ import {
   resolveOAuthAccessToken,
   resolveSession,
   revokeApiCredential,
-  revokeOAuthClientConnection,
+  revokeOAuthConnection,
   reserveRenewalPoints,
   releaseRenewalPoints,
   consumeRenewalPoints,
@@ -285,6 +285,15 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
         ('sharedprefix-client-c', 'Imported connection 00000000000000000001', '["http://127.0.0.1:43903/callback"]'::jsonb, '["profile:read"]'::jsonb),
         ('sharedprefix-client-d', E'  Ａgent\\t Name  ', '["http://127.0.0.1:43904/callback"]'::jsonb, '["profile:read"]'::jsonb)
     `);
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_authorization_codes" DROP COLUMN "replacement_connection_id"',
+    );
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_authorization_codes" DROP COLUMN "connection_label"',
+    );
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_authorization_codes" DROP COLUMN "normalized_connection_label"',
+    );
     await handle.sql.unsafe(
       'ALTER TABLE "oauth_access_tokens" DROP COLUMN "connection_id"',
     );
@@ -474,6 +483,17 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       WHERE code_hash = ${"e".repeat(64)}
     `;
     expect(expandPhaseWrite?.connectionId).toBeNull();
+
+    const intentMigration = readFileSync(
+      resolve(root, "packages/db/drizzle/0029_oauth_authorization_connection_intent.sql"),
+      "utf8",
+    );
+    for (const statement of intentMigration
+      .split("--> statement-breakpoint")
+      .map((part) => part.trim())
+      .filter(Boolean)) {
+      await handle.sql.unsafe(statement);
+    }
   });
 
   it("rejects duplicate active OAuth connection names after normalization", async () => {
@@ -1125,7 +1145,12 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       scope: "profile:read collection:read collection:write public:read",
       state: "test-state",
     });
-    const code = await createAuthorizationCode(handle.db, verified.accountId, request);
+    const code = await createAuthorizationCode(
+      handle.db,
+      verified.accountId,
+      request,
+      { mode: "create", label: "Integration test agent" },
+    );
     await expect(exchangeAuthorizationCode(handle.db, {
       clientId: client.clientId,
       code,
@@ -1152,9 +1177,139 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     })).rejects.toMatchObject({ code: "invalid_grant" });
     const oauthPrincipal = await resolveOAuthAccessToken(handle.db, pair.accessToken, { audience: "attention-mcp" });
     expect(oauthPrincipal).toMatchObject({ accountId: verified.accountId, isMember: true });
-    await revokeOAuthClientConnection(handle.db, verified.accountId, client.clientId);
+    await revokeOAuthConnection(handle.db, verified.accountId, pair.connectionId);
     expect(await resolveOAuthAccessToken(handle.db, pair.accessToken, { audience: "attention-mcp" })).toBeNull();
     expect(await resolveSession(handle.db, verified.session.token, { touch: false })).not.toBeNull();
+  });
+
+  it("atomically replaces an OAuth connection and resolves concurrent name confirmation", async () => {
+    const challenge = await createLoginChallenge(handle.db, {
+      email: "oauth-connection-transaction@example.com",
+    });
+    const verified = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: challenge.challengeId,
+      code: challenge.code,
+    });
+    const verifier = "oauth-connection-transaction-verifier-at-least-forty-three-characters";
+    const challengeValue = createHash("sha256").update(verifier).digest("base64url");
+    const client = await registerPublicOAuthClient(handle.db, {
+      name: "OAuth connection transaction client",
+      requesterFingerprint: "d".repeat(64),
+      redirectUris: ["http://127.0.0.1:43822/callback"],
+    });
+    const authorization = await validateAuthorizationRequest(handle.db, {
+      clientId: client.clientId,
+      codeChallenge: challengeValue,
+      codeChallengeMethod: "S256",
+      redirectUri: "http://127.0.0.1:43822/callback",
+      resource: oauthResources["attention-mcp"],
+      resources: oauthResources,
+      responseType: "code",
+      scope: "profile:read",
+    });
+    const originalCode = await createAuthorizationCode(
+      handle.db,
+      verified.accountId,
+      authorization,
+      { mode: "create", label: "Office MacBook" },
+    );
+    const originalPair = await exchangeAuthorizationCode(handle.db, {
+      clientId: client.clientId,
+      code: originalCode,
+      codeVerifier: verifier,
+      redirectUri: authorization.redirectUri,
+      resource: authorization.resource,
+      resources: oauthResources,
+    });
+    const replacementCode = await createAuthorizationCode(
+      handle.db,
+      verified.accountId,
+      authorization,
+      {
+        mode: "replace",
+        label: "OFFICE MACBOOK",
+        replacementConnectionId: originalPair.connectionId,
+      },
+    );
+
+    await handle.sql.unsafe(`
+      CREATE FUNCTION oauth_refresh_insert_failure() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        RAISE EXCEPTION 'injected refresh insert failure';
+      END;
+      $$;
+      CREATE TRIGGER oauth_refresh_insert_failure
+      BEFORE INSERT ON oauth_refresh_tokens
+      FOR EACH ROW EXECUTE FUNCTION oauth_refresh_insert_failure();
+    `);
+    try {
+      await expect(exchangeAuthorizationCode(handle.db, {
+        clientId: client.clientId,
+        code: replacementCode,
+        codeVerifier: verifier,
+        redirectUri: authorization.redirectUri,
+        resource: authorization.resource,
+        resources: oauthResources,
+      })).rejects.toThrowError(/oauth_refresh_tokens/u);
+      expect(await resolveOAuthAccessToken(handle.db, originalPair.accessToken, {
+        audience: "attention-mcp",
+      })).not.toBeNull();
+      const [originalConnection] = await handle.db
+        .select({ revokedAt: oauthConnections.revokedAt })
+        .from(oauthConnections)
+        .where(eq(oauthConnections.id, originalPair.connectionId));
+      expect(originalConnection?.revokedAt).toBeNull();
+    } finally {
+      await handle.sql.unsafe(`
+        DROP TRIGGER oauth_refresh_insert_failure ON oauth_refresh_tokens;
+        DROP FUNCTION oauth_refresh_insert_failure();
+      `);
+    }
+
+    const replacementPair = await exchangeAuthorizationCode(handle.db, {
+      clientId: client.clientId,
+      code: replacementCode,
+      codeVerifier: verifier,
+      redirectUri: authorization.redirectUri,
+      resource: authorization.resource,
+      resources: oauthResources,
+    });
+    expect(replacementPair.connectionId).not.toBe(originalPair.connectionId);
+    expect(await resolveOAuthAccessToken(handle.db, originalPair.accessToken, {
+      audience: "attention-mcp",
+    })).toBeNull();
+
+    const concurrentCodes = await Promise.all([
+      createAuthorizationCode(
+        handle.db,
+        verified.accountId,
+        authorization,
+        { mode: "create", label: "Shared desk" },
+      ),
+      createAuthorizationCode(
+        handle.db,
+        verified.accountId,
+        authorization,
+        { mode: "create", label: "SHARED DESK" },
+      ),
+    ]);
+    const confirmations = await Promise.allSettled(concurrentCodes.map((code) =>
+      exchangeAuthorizationCode(handle.db, {
+        clientId: client.clientId,
+        code,
+        codeVerifier: verifier,
+        redirectUri: authorization.redirectUri,
+        resource: authorization.resource,
+        resources: oauthResources,
+      })
+    ));
+    expect(confirmations.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    expect(confirmations.find(({ status }) => status === "rejected")).toMatchObject({
+      reason: { message: "oauth_connection_name_conflict" },
+      status: "rejected",
+    });
   });
 
   it("rejects rather than silently dropping scopes from another OAuth audience", async () => {
@@ -1298,7 +1453,12 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       scope: query.get("scope") ?? "",
       state: query.get("state"),
     });
-    const code = await createAuthorizationCode(handle.db, verified.accountId, authorization);
+    const code = await createAuthorizationCode(
+      handle.db,
+      verified.accountId,
+      authorization,
+      { mode: "create", label: "SDK integration client" },
+    );
     const tokens = await exchangeAuthorization(serverInfo.authorizationServerUrl, {
       authorizationCode: code,
       clientInformation,

@@ -8,6 +8,21 @@ import { describe, expect, it } from "vitest";
 import * as schema from "../packages/db/src/schema";
 
 describe("Drizzle migration snapshot", () => {
+  it("persists unambiguous pending OAuth connection intent", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migration = readFileSync(
+      resolve(root, "packages/db/drizzle/0029_oauth_authorization_connection_intent.sql"),
+      "utf8",
+    );
+
+    expect(schema.oauthAuthorizationCodes.connectionLabel).toBeDefined();
+    expect(schema.oauthAuthorizationCodes.normalizedConnectionLabel).toBeDefined();
+    expect(schema.oauthAuthorizationCodes.replacementConnectionId).toBeDefined();
+    expect(migration).toContain("oauth_authorization_codes_connection_intent_check");
+    expect(migration).toContain("replacement_connection_id_oauth_connections_id_fk");
+    expect(migration).not.toContain('ALTER COLUMN "connection_id" SET NOT NULL');
+  });
+
   it("persists OAuth connection identity and active-name uniqueness", () => {
     const root = resolve(import.meta.dirname, "..");
     const migration = readFileSync(

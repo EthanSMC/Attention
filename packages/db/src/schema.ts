@@ -993,6 +993,11 @@ export const oauthAuthorizationCodes = pgTable(
       .notNull()
       .references(() => oauthClients.clientId, { onDelete: "cascade" }),
     connectionId: uuid("connection_id").references(() => oauthConnections.id),
+    connectionLabel: varchar("connection_label", { length: 80 }),
+    normalizedConnectionLabel: varchar("normalized_connection_label", { length: 80 }),
+    replacementConnectionId: uuid("replacement_connection_id").references(
+      () => oauthConnections.id
+    ),
     redirectUri: text("redirect_uri").notNull(),
     scopes: jsonb("scopes").$type<string[]>().notNull(),
     audience: varchar("audience", { length: 128 }).notNull(),
@@ -1007,6 +1012,26 @@ export const oauthAuthorizationCodes = pgTable(
     check(
       "oauth_authorization_codes_expire_after_creation",
       sql`${table.expiresAt} > ${table.createdAt}`
+    ),
+    check(
+      "oauth_authorization_codes_connection_intent_check",
+      sql`(
+        ${table.connectionLabel} IS NULL
+        AND ${table.normalizedConnectionLabel} IS NULL
+        AND ${table.replacementConnectionId} IS NULL
+      ) OR (
+        ${table.connectionId} IS NULL
+        AND ${table.connectionLabel} IS NOT NULL
+        AND ${table.normalizedConnectionLabel} IS NOT NULL
+      )`
+    ),
+    check(
+      "oauth_authorization_codes_connection_label_not_blank",
+      sql`${table.connectionLabel} IS NULL OR char_length(${table.connectionLabel}) > 0`
+    ),
+    check(
+      "oauth_authorization_codes_normalized_label_not_blank",
+      sql`${table.normalizedConnectionLabel} IS NULL OR char_length(${table.normalizedConnectionLabel}) > 0`
     )
   ]
 );

@@ -6,6 +6,7 @@ export * from "./guards";
 export * from "./growth";
 export * from "./invitations";
 export * from "./oauth";
+export * from "./oauth-connection";
 export * from "./passwords";
 export * from "./sessions";
 export * from "./tokens";

@@ -11,9 +11,11 @@ import {
   oauthAccessTokens,
   oauthAuthorizationCodes,
   oauthClients,
+  oauthConnections,
   oauthRefreshTokens,
   sql,
   type AttentionDatabase,
+  type AttentionTransaction,
 } from "@attention/db";
 import {
   CHANNEL_RUNTIME_RESOURCE,
@@ -21,6 +23,12 @@ import {
 } from "@attention/contracts";
 
 import { resolveAccountCapabilities } from "./sessions";
+import {
+  isOAuthConnectionNameConflict,
+  normalizeOAuthConnectionLabel,
+  OAuthConnectionNameConflictError,
+  type OAuthConnectionIntent,
+} from "./oauth-connection";
 import { createOpaqueToken, hashOpaqueToken } from "./tokens";
 
 export const oauthAudiences = [
@@ -271,8 +279,22 @@ export async function createAuthorizationCode(
   db: AttentionDatabase,
   accountId: string,
   request: ValidatedAuthorizationRequest,
+  intent: OAuthConnectionIntent,
   now = new Date(),
 ): Promise<string> {
+  let connectionId: string | null = null;
+  let connectionLabel: string | null = null;
+  let normalizedConnectionLabel: string | null = null;
+  let replacementConnectionId: string | null = null;
+  if (intent.mode === "rotate") {
+    connectionId = intent.connectionId;
+  } else {
+    const normalized = normalizeOAuthConnectionLabel(intent.label);
+    connectionLabel = normalized.label;
+    normalizedConnectionLabel = normalized.normalizedLabel;
+    replacementConnectionId =
+      intent.mode === "replace" ? intent.replacementConnectionId : null;
+  }
   const code = createOpaqueToken();
   await db.insert(oauthAuthorizationCodes).values({
     accountId,
@@ -280,9 +302,13 @@ export async function createAuthorizationCode(
     clientId: request.clientId,
     codeChallenge: request.codeChallenge,
     codeHash: await hashOpaqueToken(code),
+    connectionId,
+    connectionLabel,
     createdAt: now,
     expiresAt: new Date(now.getTime() + codeTtlMs),
+    normalizedConnectionLabel,
     redirectUri: request.redirectUri,
+    replacementConnectionId,
     scopes: request.scopes,
   });
   return code;
@@ -300,6 +326,7 @@ function secureStringEqual(left: string, right: string): boolean {
 
 export interface OAuthTokenPair {
   accessToken: string;
+  connectionId: string;
   expiresIn: number;
   refreshToken: string;
   scope: string;
@@ -307,11 +334,12 @@ export interface OAuthTokenPair {
 }
 
 async function issueTokenPair(
-  db: Parameters<Parameters<AttentionDatabase["transaction"]>[0]>[0],
+  db: AttentionTransaction,
   input: {
     accountId: string;
     audience: string;
     clientId: string;
+    connectionId: string;
     now: Date;
     scopes: string[];
   },
@@ -322,6 +350,7 @@ async function issueTokenPair(
     accountId: input.accountId,
     audience: input.audience,
     clientId: input.clientId,
+    connectionId: input.connectionId,
     createdAt: input.now,
     expiresAt: new Date(input.now.getTime() + accessTtlMs),
     scopes: input.scopes,
@@ -331,6 +360,7 @@ async function issueTokenPair(
     accountId: input.accountId,
     audience: input.audience,
     clientId: input.clientId,
+    connectionId: input.connectionId,
     createdAt: input.now,
     expiresAt: new Date(input.now.getTime() + refreshTtlMs),
     scopes: input.scopes,
@@ -338,11 +368,40 @@ async function issueTokenPair(
   });
   return {
     accessToken,
+    connectionId: input.connectionId,
     expiresIn: Math.floor(accessTtlMs / 1_000),
     refreshToken,
     scope: input.scopes.join(" "),
     tokenType: "Bearer",
   };
+}
+
+async function revokeConnectionCredentials(
+  db: AttentionTransaction,
+  accountId: string,
+  connectionId: string,
+  now: Date,
+): Promise<void> {
+  await db
+    .update(oauthAccessTokens)
+    .set({ revokedAt: now, status: "revoked" })
+    .where(
+      and(
+        eq(oauthAccessTokens.accountId, accountId),
+        eq(oauthAccessTokens.connectionId, connectionId),
+        eq(oauthAccessTokens.status, "active"),
+      ),
+    );
+  await db
+    .update(oauthRefreshTokens)
+    .set({ revokedAt: now, status: "revoked" })
+    .where(
+      and(
+        eq(oauthRefreshTokens.accountId, accountId),
+        eq(oauthRefreshTokens.connectionId, connectionId),
+        eq(oauthRefreshTokens.status, "active"),
+      ),
+    );
 }
 
 export async function exchangeAuthorizationCode(
@@ -364,32 +423,118 @@ export async function exchangeAuthorizationCode(
   const requestedResource = resolveOAuthResource(input.resource, input.resources);
   let codeHash: string;
   try { codeHash = await hashOpaqueToken(input.code); } catch { throw new OAuthError("invalid_grant"); }
-  return db.transaction(async (tx) => {
-    const [code] = await tx
-      .select()
-      .from(oauthAuthorizationCodes)
-      .where(eq(oauthAuthorizationCodes.codeHash, codeHash))
-      .for("update")
-      .limit(1);
-    if (
-      !code || code.consumedAt || code.expiresAt <= now ||
-      code.clientId !== input.clientId || code.redirectUri !== input.redirectUri ||
-      !secureStringEqual(code.codeChallenge, pkceChallenge(input.codeVerifier))
-    ) {
-      throw new OAuthError("invalid_grant");
-    }
-    if (code.audience !== requestedResource.audience) {
-      throw new OAuthError("invalid_target");
-    }
-    await tx.update(oauthAuthorizationCodes).set({ consumedAt: now }).where(eq(oauthAuthorizationCodes.id, code.id));
-    return issueTokenPair(tx, {
-      accountId: code.accountId,
-      audience: code.audience,
-      clientId: code.clientId,
-      now,
-      scopes: code.scopes,
+  try {
+    return await db.transaction(async (tx) => {
+      const [code] = await tx
+        .select()
+        .from(oauthAuthorizationCodes)
+        .where(eq(oauthAuthorizationCodes.codeHash, codeHash))
+        .for("update")
+        .limit(1);
+      if (
+        !code || code.consumedAt || code.expiresAt <= now ||
+        code.clientId !== input.clientId || code.redirectUri !== input.redirectUri ||
+        !secureStringEqual(code.codeChallenge, pkceChallenge(input.codeVerifier))
+      ) {
+        throw new OAuthError("invalid_grant");
+      }
+      if (code.audience !== requestedResource.audience) {
+        throw new OAuthError("invalid_target");
+      }
+      await tx
+        .update(oauthAuthorizationCodes)
+        .set({ consumedAt: now })
+        .where(eq(oauthAuthorizationCodes.id, code.id));
+
+      let connectionId: string;
+      if (code.connectionId) {
+        const [existing] = await tx
+          .select()
+          .from(oauthConnections)
+          .where(eq(oauthConnections.id, code.connectionId))
+          .for("update")
+          .limit(1);
+        if (
+          !existing || existing.revokedAt ||
+          existing.accountId !== code.accountId || existing.audience !== code.audience
+        ) {
+          throw new OAuthError("invalid_grant");
+        }
+        connectionId = existing.id;
+        await revokeConnectionCredentials(tx, code.accountId, connectionId, now);
+        await tx
+          .update(oauthConnections)
+          .set({
+            clientId: code.clientId,
+            lastAuthorizedAt: now,
+            updatedAt: now,
+          })
+          .where(eq(oauthConnections.id, connectionId));
+      } else {
+        if (!code.connectionLabel || !code.normalizedConnectionLabel) {
+          throw new OAuthError("invalid_grant");
+        }
+        let normalized;
+        try {
+          normalized = normalizeOAuthConnectionLabel(code.connectionLabel);
+        } catch {
+          throw new OAuthError("invalid_grant");
+        }
+        if (normalized.normalizedLabel !== code.normalizedConnectionLabel) {
+          throw new OAuthError("invalid_grant");
+        }
+        if (code.replacementConnectionId) {
+          const [replacement] = await tx
+            .select()
+            .from(oauthConnections)
+            .where(eq(oauthConnections.id, code.replacementConnectionId))
+            .for("update")
+            .limit(1);
+          if (
+            !replacement || replacement.revokedAt ||
+            replacement.accountId !== code.accountId ||
+            replacement.audience !== code.audience ||
+            replacement.normalizedLabel !== code.normalizedConnectionLabel
+          ) {
+            throw new OAuthError("invalid_grant");
+          }
+          await tx
+            .update(oauthConnections)
+            .set({ revokedAt: now, updatedAt: now })
+            .where(eq(oauthConnections.id, replacement.id));
+          await revokeConnectionCredentials(tx, code.accountId, replacement.id, now);
+        }
+        const [created] = await tx
+          .insert(oauthConnections)
+          .values({
+            accountId: code.accountId,
+            audience: code.audience,
+            clientId: code.clientId,
+            kind: code.audience === CHANNEL_RUNTIME_RESOURCE ? "runtime" : "mcp",
+            label: code.connectionLabel,
+            lastAuthorizedAt: now,
+            normalizedLabel: code.normalizedConnectionLabel,
+            updatedAt: now,
+          })
+          .returning({ id: oauthConnections.id });
+        if (!created) throw new OAuthError("invalid_grant");
+        connectionId = created.id;
+      }
+      return issueTokenPair(tx, {
+        accountId: code.accountId,
+        audience: code.audience,
+        clientId: code.clientId,
+        connectionId,
+        now,
+        scopes: code.scopes,
+      });
     });
-  });
+  } catch (error) {
+    if (isOAuthConnectionNameConflict(error)) {
+      throw new OAuthConnectionNameConflictError();
+    }
+    throw error;
+  }
 }
 
 export async function rotateRefreshToken(
@@ -408,19 +553,44 @@ export async function rotateRefreshToken(
   let tokenHash: string;
   try { tokenHash = await hashOpaqueToken(input.refreshToken); } catch { throw new OAuthError("invalid_grant"); }
   return db.transaction(async (tx) => {
-    const [token] = await tx
+    const [candidate] = await tx
       .select()
       .from(oauthRefreshTokens)
       .where(eq(oauthRefreshTokens.tokenHash, tokenHash))
+      .limit(1);
+    if (
+      !candidate || candidate.clientId !== input.clientId ||
+      candidate.status !== "active" || candidate.consumedAt ||
+      candidate.revokedAt || candidate.expiresAt <= now
+    ) throw new OAuthError("invalid_grant");
+    if (candidate.audience !== requestedResource.audience) {
+      throw new OAuthError("invalid_target");
+    }
+    if (!candidate.connectionId) throw new OAuthError("invalid_grant");
+    const [connection] = await tx
+      .select()
+      .from(oauthConnections)
+      .where(eq(oauthConnections.id, candidate.connectionId))
       .for("update")
       .limit(1);
     if (
-      !token || token.clientId !== input.clientId || token.status !== "active" ||
+      !connection || connection.revokedAt ||
+      connection.accountId !== candidate.accountId ||
+      connection.audience !== candidate.audience
+    ) {
+      throw new OAuthError("invalid_grant");
+    }
+    const [token] = await tx
+      .select()
+      .from(oauthRefreshTokens)
+      .where(eq(oauthRefreshTokens.id, candidate.id))
+      .for("update")
+      .limit(1);
+    if (
+      !token || token.connectionId !== connection.id ||
+      token.clientId !== input.clientId || token.status !== "active" ||
       token.consumedAt || token.revokedAt || token.expiresAt <= now
     ) throw new OAuthError("invalid_grant");
-    if (token.audience !== requestedResource.audience) {
-      throw new OAuthError("invalid_target");
-    }
     const requestedScopes = input.scope ? normalizeScopes(input.scope) : [...token.scopes].sort();
     const existingScopes = [...token.scopes].sort();
     if (requestedScopes.some((scope) => !existingScopes.includes(scope))) {
@@ -434,6 +604,7 @@ export async function rotateRefreshToken(
       accountId: token.accountId,
       audience: token.audience,
       clientId: token.clientId,
+      connectionId: token.connectionId,
       now,
       scopes: requestedScopes,
     });
@@ -508,6 +679,39 @@ export async function revokeOAuthToken(
     .where(eq(oauthRefreshTokens.tokenHash, tokenHash));
 }
 
+export async function revokeOAuthConnection(
+  db: AttentionDatabase,
+  accountId: string,
+  connectionId: string,
+  now = new Date(),
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const [connection] = await tx
+      .select({ id: oauthConnections.id })
+      .from(oauthConnections)
+      .where(
+        and(
+          eq(oauthConnections.id, connectionId),
+          eq(oauthConnections.accountId, accountId),
+          isNull(oauthConnections.revokedAt),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!connection) return;
+    await tx
+      .update(oauthConnections)
+      .set({ revokedAt: now, updatedAt: now })
+      .where(eq(oauthConnections.id, connection.id));
+    await revokeConnectionCredentials(tx, accountId, connection.id, now);
+  });
+}
+
+/**
+ * Retained for internal runtime shutdown flows that intentionally revoke every
+ * credential issued to one registered client. User-facing settings must revoke
+ * by logical connection ID through revokeOAuthConnection instead.
+ */
 export async function revokeOAuthClientConnection(
   db: AttentionDatabase,
   accountId: string,
