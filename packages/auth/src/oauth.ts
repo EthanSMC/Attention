@@ -1,4 +1,4 @@
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 import {
   accounts,
@@ -104,6 +104,27 @@ const runtimeScopeSet = new Set<string>(CHANNEL_RUNTIME_SCOPES);
 const codeTtlMs = 10 * 60 * 1_000;
 const accessTtlMs = 60 * 60 * 1_000;
 const refreshTtlMs = 30 * 24 * 60 * 60 * 1_000;
+
+function runtimeInstallationHmacSecret(): string {
+  const secret = process.env.ATTENTION_HMAC_SECRET?.trim();
+  if (!secret || secret.length < 32) {
+    throw new Error("ATTENTION_HMAC_SECRET must contain at least 32 characters");
+  }
+  return secret;
+}
+
+export function hashRuntimeInstallationId(installationId: string): string {
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+      .test(installationId)
+  ) {
+    throw new Error("Runtime installation ID must be a canonical UUID");
+  }
+  return createHmac("sha256", runtimeInstallationHmacSecret())
+    .update("attention:runtime-installation:v1\0")
+    .update(installationId.toLocaleLowerCase("en-US"))
+    .digest("hex");
+}
 
 export type OAuthErrorCode =
   | "access_denied"
@@ -756,6 +777,10 @@ export async function registerPublicOAuthClient(
     name: string;
     redirectUris: string[];
     requesterFingerprint: string;
+    runtimeIdentity?: {
+      deviceName: string;
+      installationKeyHash: string;
+    };
   },
 ): Promise<{ allowedScopes: OAuthScope[]; clientId: string }> {
   const name = input.name.normalize("NFKC").trim().slice(0, 100);
@@ -767,6 +792,19 @@ export async function registerPublicOAuthClient(
     throw new OAuthError("invalid_request");
   }
   if (!/^[0-9a-f]{64}$/u.test(input.requesterFingerprint)) {
+    throw new OAuthError("invalid_request");
+  }
+  if (
+    input.runtimeIdentity &&
+    (
+      !input.runtimeIdentity.deviceName ||
+      input.runtimeIdentity.deviceName.length > 80 ||
+      /[\p{Cc}\p{Cf}]/u.test(input.runtimeIdentity.deviceName) ||
+      input.runtimeIdentity.deviceName !==
+        input.runtimeIdentity.deviceName.normalize("NFKC").trim() ||
+      !/^[0-9a-f]{64}$/u.test(input.runtimeIdentity.installationKeyHash)
+    )
+  ) {
     throw new OAuthError("invalid_request");
   }
   const configuredGlobalLimit = Number.parseInt(
@@ -816,6 +854,13 @@ export async function registerPublicOAuthClient(
     await tx.insert(oauthClients).values({
       allowedScopes,
       clientId,
+      ...(input.runtimeIdentity
+        ? {
+            connectionKind: "runtime" as const,
+            deviceName: input.runtimeIdentity.deviceName,
+            installationKeyHash: input.runtimeIdentity.installationKeyHash,
+          }
+        : {}),
       name,
       registrationFingerprint: input.requesterFingerprint,
       redirectUris,

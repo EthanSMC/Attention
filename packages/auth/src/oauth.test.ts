@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   oauthAccessTokens,
   oauthAuthorizationCodes,
@@ -13,6 +13,7 @@ import { apiKeyScopes } from "./api-credentials";
 import {
   createAuthorizationCode,
   exchangeAuthorizationCode,
+  hashRuntimeInstallationId,
   oauthAudiences,
   oauthDefaultScopesByAudience,
   oauthScopesByAudience,
@@ -205,6 +206,19 @@ describe("OAuth resource indicators", () => {
 });
 
 describe("OAuth dynamic client scope policy", () => {
+  it("refuses to derive a Runtime installation identity from non-UUID input", () => {
+    vi.stubEnv(
+      "ATTENTION_HMAC_SECRET",
+      "attention-registration-test-secret-at-least-32-characters",
+    );
+    try {
+      expect(() => hashRuntimeInstallationId("hardware-serial-or-mac"))
+        .toThrow();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("defaults omitted registration scope to legacy MCP and sync access only", () => {
     expect(resolveOAuthClientAllowedScopes()).toEqual([
       "profile:read",

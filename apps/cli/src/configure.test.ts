@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir, hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ import {
 } from "@attention/contracts";
 
 import type { CommandRunner } from "./command-runner";
+import { defaultChannelState, loadChannelState, saveChannelState } from "./channel/state";
 import {
   applyConfigurePlan,
   buildConfigurePlan,
@@ -189,6 +190,10 @@ describe("Skill staging and apply", () => {
   it("authorizes the dedicated Runtime client after Codex MCP login", async () => {
     const directory = await mkdtemp(join(tmpdir(), "attention-cli-"));
     temporaryDirectories.push(directory);
+    const installationId = "11111111-1111-4111-8111-111111111111";
+    const state = defaultChannelState();
+    state.runtimeReporter.installationId = installationId;
+    await saveChannelState(state, directory);
     const events: string[] = [];
     const plan = buildConfigurePlan({
       hostId: "codex",
@@ -197,8 +202,8 @@ describe("Skill staging and apply", () => {
     });
 
     const results = await applyConfigurePlan(plan, {
-      authorizeRuntime: async ({ origin }) => {
-        events.push(`runtime-oauth ${origin}`);
+      authorizeRuntime: async ({ deviceName, installationId: receivedId, origin }) => {
+        events.push(`runtime-oauth ${origin} ${receivedId} ${deviceName}`);
         return {
           access_token: "not-rendered",
           access_token_expires_at: "2026-08-10T11:00:00.000Z",
@@ -219,6 +224,7 @@ describe("Skill staging and apply", () => {
           version: 1,
         };
       },
+      channelBaseDirectory: directory,
       fetchImpl: async () => {
         events.push("fetch-skill");
         return new Response(validSkillDocument, { status: 200 });
@@ -237,12 +243,57 @@ describe("Skill staging and apply", () => {
     });
 
     expect(events.at(-2)).toMatch(/mcp login|mcp auth/u);
-    expect(events.at(-1)).toBe("runtime-oauth https://attention.example");
+    const expectedDeviceName = hostname()
+      .normalize("NFKC")
+      .trim()
+      .replace(/\s+/gu, " ")
+      .slice(0, 80) || "Attention device";
+    expect(events.at(-1)).toBe(
+      `runtime-oauth https://attention.example ${installationId} ${expectedDeviceName}`,
+    );
     expect(results.at(-1)).toMatchObject({
       id: "authorize_runtime",
       status: "applied",
     });
     expect(JSON.stringify(results)).not.toContain("not-rendered");
+  });
+
+  it("creates and persists one opaque Runtime installation ID before DCR", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "attention-cli-"));
+    temporaryDirectories.push(directory);
+    const receivedIds: string[] = [];
+    const plan = buildConfigurePlan({
+      hostId: "codex",
+      origin: "https://attention.example",
+      skillDirectory: directory,
+    });
+
+    const results = await applyConfigurePlan(plan, {
+      authorizeRuntime: async (input) => {
+        receivedIds.push(input.installationId);
+        throw new Error("stop after observing DCR identity");
+      },
+      channelBaseDirectory: directory,
+      fetchImpl: async () => new Response(validSkillDocument, { status: 200 }),
+      login: true,
+      runner: async () => ({
+        exitCode: 0,
+        signal: null,
+        stderr: "",
+        stdout: "ok",
+        timedOut: false,
+      }),
+    });
+
+    expect(results.at(-1)).toMatchObject({
+      id: "authorize_runtime",
+      status: "failed",
+    });
+    expect(receivedIds).toEqual([expect.stringMatching(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    )]);
+    expect((await loadChannelState(directory)).runtimeReporter.installationId)
+      .toBe(receivedIds[0]);
   });
 
   it("does not open Runtime OAuth without the explicit login flag", async () => {

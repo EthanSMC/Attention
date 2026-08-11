@@ -937,6 +937,9 @@ export const oauthClients = pgTable(
     redirectUris: jsonb("redirect_uris").$type<string[]>().notNull(),
     allowedScopes: jsonb("allowed_scopes").$type<string[]>().notNull(),
     registrationFingerprint: char("registration_fingerprint", { length: 64 }),
+    connectionKind: oauthConnectionKindEnum("connection_kind"),
+    deviceName: varchar("device_name", { length: 80 }),
+    installationKeyHash: char("installation_key_hash", { length: 64 }),
     firstParty: boolean("first_party").default(false).notNull(),
     active: boolean("active").default(true).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -948,7 +951,20 @@ export const oauthClients = pgTable(
       table.registrationFingerprint,
       table.createdAt
     ),
-    check("oauth_clients_name_not_blank", sql`btrim(${table.name}) <> ''`)
+    check("oauth_clients_name_not_blank", sql`btrim(${table.name}) <> ''`),
+    check(
+      "oauth_clients_runtime_identity_shape",
+      sql`(
+        ${table.connectionKind} IS NULL
+        AND ${table.deviceName} IS NULL
+        AND ${table.installationKeyHash} IS NULL
+      ) OR (
+        ${table.connectionKind} = 'runtime'
+        AND ${table.deviceName} IS NOT NULL
+        AND btrim(${table.deviceName}) <> ''
+        AND ${table.installationKeyHash} ~ '^[0-9a-f]{64}$'
+      )`
+    )
   ]
 );
 

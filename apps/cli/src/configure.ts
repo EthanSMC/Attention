@@ -20,6 +20,7 @@ import type {
   CommandResult,
   CommandRunner,
 } from "./command-runner";
+import { loadRuntimeRegistrationIdentity } from "./channel/channel-command";
 import { formatInvocation, runCommand } from "./command-runner";
 import { resolveAttentionPublicUrl } from "./origin";
 import {
@@ -74,6 +75,7 @@ export interface ApplyResult {
 
 export interface ApplyConfigureOptions {
   readonly authorizeRuntime?: RuntimeAuthorizer;
+  readonly channelBaseDirectory?: string;
   readonly fetchImpl?: typeof fetch;
   readonly forceSkill?: boolean;
   readonly login: boolean;
@@ -725,8 +727,12 @@ export async function applyConfigurePlan(
       });
     } else {
       try {
+        const identity = await loadRuntimeRegistrationIdentity(
+          options.channelBaseDirectory,
+        );
         await (options.authorizeRuntime ?? authorizeRuntime)({
           ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+          ...identity,
           origin: plan.origin,
         });
         results.push({

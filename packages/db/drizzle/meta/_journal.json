@@ -211,6 +211,13 @@
       "when": 1786448038855,
       "tag": "0029_oauth_authorization_connection_intent",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1786449424484,
+      "tag": "0030_runtime_device_registration",
+      "breakpoints": true
     }
   ]
 }

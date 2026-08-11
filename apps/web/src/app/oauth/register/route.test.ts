@@ -1,3 +1,5 @@
+import { createHmac } from "node:crypto";
+
 import type { AttentionDatabase } from "@attention/db";
 import { describe, expect, it, vi } from "vitest";
 
@@ -44,6 +46,180 @@ function rateLimitedRegistrationDatabase(): AttentionDatabase {
 }
 
 describe("OAuth dynamic registration request limits", () => {
+  it("persists only HMAC-derived identity for an exact trusted Runtime registration", async () => {
+    const secret = "attention-registration-test-secret-at-least-32-characters";
+    const installationId = "11111111-1111-4111-8111-111111111111";
+    vi.stubEnv("ATTENTION_HMAC_SECRET", secret);
+    const inserted: Array<Record<string, unknown>> = [];
+    try {
+      const response = await handleOAuthRegistrationRequest(
+        new Request("https://attention.example/oauth/register", {
+          body: JSON.stringify({
+            application_type: "native",
+            attention_connection_kind: "runtime",
+            attention_device_name: "  Ethan MacBook Pro  ",
+            attention_installation_id: installationId,
+            client_name: "Attention Local Channel Runtime",
+            grant_types: ["authorization_code", "refresh_token"],
+            redirect_uris: ["http://127.0.0.1:43123/callback"],
+            resource: "https://attention.example/api/runtime",
+            response_types: ["code"],
+            scope:
+              "runtime:heartbeat channel:disconnect:report runtime:register channel:bind:report",
+            software_id: "attention-channel-runtime",
+            token_endpoint_auth_method: "none",
+          }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        }),
+        registrationDatabase(inserted),
+      );
+
+      expect(response.status).toBe(201);
+      expect(inserted).toHaveLength(1);
+      expect(inserted[0]).toMatchObject({
+        connectionKind: "runtime",
+        deviceName: "Ethan MacBook Pro",
+        installationKeyHash: createHmac("sha256", secret)
+          .update("attention:runtime-installation:v1\0")
+          .update(installationId)
+          .digest("hex"),
+      });
+      expect(JSON.stringify(inserted[0])).not.toContain(installationId);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("discards Runtime identity claims from a generic MCP registration", async () => {
+    vi.stubEnv(
+      "ATTENTION_HMAC_SECRET",
+      "attention-registration-test-secret-at-least-32-characters",
+    );
+    const inserted: Array<Record<string, unknown>> = [];
+    try {
+      const response = await handleOAuthRegistrationRequest(
+        new Request("https://attention.example/oauth/register", {
+          body: JSON.stringify({
+            attention_connection_kind: "runtime",
+            attention_device_name: "Pretend reliable device",
+            attention_installation_id:
+              "11111111-1111-4111-8111-111111111111",
+            client_name: "Codex",
+            redirect_uris: ["http://127.0.0.1:43123/callback"],
+            resource: "https://attention.example/mcp",
+            scope: "profile:read collection:read",
+            software_id: "attention-channel-runtime",
+          }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        }),
+        registrationDatabase(inserted),
+      );
+
+      expect(response.status).toBe(201);
+      expect(inserted).toHaveLength(1);
+      expect(inserted[0]).not.toHaveProperty("connectionKind");
+      expect(inserted[0]).not.toHaveProperty("deviceName");
+      expect(inserted[0]).not.toHaveProperty("installationKeyHash");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each([
+    [
+      "a mismatched resource",
+      {
+        resource: "https://attention.example/mcp",
+        software_id: "attention-channel-runtime",
+      },
+    ],
+    [
+      "untrusted software",
+      {
+        resource: "https://attention.example/api/runtime",
+        software_id: "generic-mcp-client",
+      },
+    ],
+  ])("discards Runtime identity claims from %s", async (_name, metadata) => {
+    vi.stubEnv(
+      "ATTENTION_HMAC_SECRET",
+      "attention-registration-test-secret-at-least-32-characters",
+    );
+    const inserted: Array<Record<string, unknown>> = [];
+    try {
+      const response = await handleOAuthRegistrationRequest(
+        new Request("https://attention.example/oauth/register", {
+          body: JSON.stringify({
+            attention_connection_kind: "runtime",
+            attention_device_name: "Pretend reliable device",
+            attention_installation_id:
+              "11111111-1111-4111-8111-111111111111",
+            client_name: "Runtime-shaped client",
+            redirect_uris: ["http://127.0.0.1:43123/callback"],
+            scope:
+              "runtime:heartbeat channel:disconnect:report runtime:register channel:bind:report",
+            ...metadata,
+          }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        }),
+        registrationDatabase(inserted),
+      );
+
+      expect(response.status).toBe(201);
+      expect(inserted).toHaveLength(1);
+      expect(inserted[0]).not.toHaveProperty("connectionKind");
+      expect(inserted[0]).not.toHaveProperty("deviceName");
+      expect(inserted[0]).not.toHaveProperty("installationKeyHash");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each([
+    ["a non-UUID installation ID", { attention_installation_id: "serial-number" }],
+    ["control characters", { attention_device_name: "Ethan\u0000Mac" }],
+    ["a device name over 80 characters", { attention_device_name: "x".repeat(81) }],
+  ])("rejects Runtime identity metadata containing %s", async (_name, invalid) => {
+    vi.stubEnv(
+      "ATTENTION_HMAC_SECRET",
+      "attention-registration-test-secret-at-least-32-characters",
+    );
+    const inserted: Array<Record<string, unknown>> = [];
+    try {
+      const response = await handleOAuthRegistrationRequest(
+        new Request("https://attention.example/oauth/register", {
+          body: JSON.stringify({
+            application_type: "native",
+            attention_connection_kind: "runtime",
+            attention_device_name: "Ethan MacBook Pro",
+            attention_installation_id: "11111111-1111-4111-8111-111111111111",
+            client_name: "Attention Local Channel Runtime",
+            redirect_uris: ["http://127.0.0.1:43123/callback"],
+            resource: "https://attention.example/api/runtime",
+            scope:
+              "runtime:heartbeat channel:disconnect:report runtime:register channel:bind:report",
+            software_id: "attention-channel-runtime",
+            ...invalid,
+          }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        }),
+        registrationDatabase(inserted),
+      );
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: "invalid_client_metadata",
+      });
+      expect(inserted).toHaveLength(0);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("normalizes the exact all-scopes metadata emitted by Codex CLI to the MCP audience", async () => {
     vi.stubEnv(
       "ATTENTION_HMAC_SECRET",
@@ -183,13 +359,18 @@ describe("OAuth dynamic registration request limits", () => {
     expect(pulls).toBe(1);
   });
 
-  it("rejects a partial runtime scope registration", async () => {
+  it("rejects mixed Runtime and MCP scopes even when identity metadata is supplied", async () => {
     const response = await handleOAuthRegistrationRequest(
       new Request("https://attention.example/oauth/register", {
         body: JSON.stringify({
-          client_name: "Partial runtime client",
+          attention_connection_kind: "runtime",
+          attention_device_name: "Pretend reliable device",
+          attention_installation_id: "11111111-1111-4111-8111-111111111111",
+          client_name: "Mixed runtime client",
           redirect_uris: ["http://127.0.0.1:43123/callback"],
-          scope: "runtime:register",
+          resource: "https://attention.example/api/runtime",
+          scope: "runtime:register profile:read",
+          software_id: "attention-channel-runtime",
         }),
         headers: { "content-type": "application/json" },
         method: "POST",
