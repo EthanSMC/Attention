@@ -17649,12 +17649,15 @@ async function discoverAuthorizationServer(issuer, fetchImpl) {
     tokenEndpoint: endpointUrl(parsed.token_endpoint, issuer)
   };
 }
-async function registerRuntimeClient(metadata, redirectUri, resource, fetchImpl) {
+async function registerRuntimeClient(metadata, redirectUri, resource, identity, fetchImpl) {
   const parsed = await fetchJson(
     metadata.registrationEndpoint,
     {
       body: JSON.stringify({
         application_type: "native",
+        attention_connection_kind: "runtime",
+        attention_device_name: identity.deviceName,
+        attention_installation_id: identity.installationId,
         client_name: RUNTIME_CLIENT_NAME,
         grant_types: ["authorization_code", "refresh_token"],
         redirect_uris: [redirectUri],
@@ -17967,6 +17970,7 @@ var authorizeRuntime = async (input) => {
       authorizationServer,
       callbackServer.redirectUri,
       protectedResource.resource,
+      input,
       fetchImpl
     );
     const verifier = randomBytes(32).toString("base64url");
@@ -21019,6 +21023,22 @@ var HOST_EXECUTABLES = {
   codex: "codex"
 };
 var RUNTIME_REPORTER_CREDENTIAL_RETRY_MS = 6e4;
+function runtimeRegistrationDeviceName(source = hostname3()) {
+  const normalized = source.normalize("NFKC").replace(/[\p{Cc}\p{Cf}]/gu, "").trim().replace(/\s+/gu, " ").slice(0, 80);
+  return normalized || "Attention device";
+}
+async function loadRuntimeRegistrationIdentity(baseDirectory) {
+  const state = await loadChannelState(baseDirectory);
+  const installationId = state.runtimeReporter.installationId ?? randomUUID6();
+  if (state.runtimeReporter.installationId !== installationId) {
+    state.runtimeReporter.installationId = installationId;
+    await saveChannelState(state, baseDirectory);
+  }
+  return {
+    deviceName: runtimeRegistrationDeviceName(),
+    installationId
+  };
+}
 function defaultSleep2(ms) {
   return new Promise((resolve4) => setTimeout(resolve4, ms));
 }
@@ -21338,11 +21358,6 @@ async function channelStart(hostId, options = {}) {
       }
       let reporterIdentityChanged = false;
       const previousRuntimeClientFingerprint = runtime.state.runtimeReporter.runtimeClientFingerprint;
-      if (runtimeClientFingerprint && previousRuntimeClientFingerprint && runtimeClientFingerprint !== previousRuntimeClientFingerprint) {
-        runtime.state.runtimeReporter.bindingId = null;
-        runtime.state.runtimeReporter.installationId = null;
-        reporterIdentityChanged = true;
-      }
       if (runtimeClientFingerprint && runtimeClientFingerprint !== previousRuntimeClientFingerprint) {
         runtime.state.runtimeReporter.runtimeClientFingerprint = runtimeClientFingerprint;
         reporterIdentityChanged = true;
@@ -21376,7 +21391,7 @@ async function channelStart(hostId, options = {}) {
               "wechat_ilink",
               runtime.state.accountId
             ),
-            deviceName: hostname3().slice(0, 100) || "Attention device",
+            deviceName: runtimeRegistrationDeviceName(),
             installationId,
             provider: "wechat_ilink",
             restrictedProfile: true,
@@ -22595,8 +22610,12 @@ async function applyConfigurePlan(plan, options) {
       });
     } else {
       try {
+        const identity = await loadRuntimeRegistrationIdentity(
+          options.channelBaseDirectory
+        );
         await (options.authorizeRuntime ?? authorizeRuntime)({
           ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {},
+          ...identity,
           origin: plan.origin
         });
         results.push({

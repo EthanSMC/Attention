@@ -39,7 +39,14 @@ export default async function ConnectionsPage() {
           lastSuccessfulMessageAt:
             item.lastSuccessfulMessageAt?.toISOString() ?? null,
         }))}
-        oauthConnections={connections.oauth.map((item) => ({ ...item, createdAt: item.createdAt.toISOString() }))}
+        mcpOAuthConnections={connections.mcpOAuthConnections.map((group) => ({
+          ...group,
+          connections: group.connections.map((connection) => ({
+            ...connection,
+            lastAuthorizedAt: connection.lastAuthorizedAt.toISOString(),
+            lastUsedAt: connection.lastUsedAt?.toISOString() ?? null,
+          })),
+        }))}
         pats={connections.pats.map((item) => ({
           ...item,
           createdAt: item.createdAt.toISOString(),

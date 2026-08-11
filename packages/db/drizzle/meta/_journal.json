@@ -197,6 +197,34 @@
       "when": 1786443172000,
       "tag": "0027_xiaohongshu_outbound_repair",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1786445661166,
+      "tag": "0028_oauth_connection_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1786448038855,
+      "tag": "0029_oauth_authorization_connection_intent",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1786449424484,
+      "tag": "0030_runtime_device_registration",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1786455761644,
+      "tag": "0031_runtime_oauth_connection_lifecycle",
+      "breakpoints": true
     }
   ]
 }

@@ -1,11 +1,133 @@
-import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
+import * as schema from "../packages/db/src/schema";
+
 describe("Drizzle migration snapshot", () => {
+  it("enforces one active Runtime connection per trusted installation", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migrationPath = resolve(
+      root,
+      "packages/db/drizzle/0031_runtime_oauth_connection_lifecycle.sql",
+    );
+
+    expect(existsSync(migrationPath)).toBe(true);
+    if (!existsSync(migrationPath)) return;
+    const migration = readFileSync(migrationPath, "utf8");
+
+    expect(migration).toContain(
+      "oauth_connections_active_runtime_installation_unique",
+    );
+    expect(migration).toContain('"installation_key_hash" IS NOT NULL');
+    expect(migration).toContain('"audience" = \'attention-channel-runtime\'');
+    expect(migration).toContain('"kind" = \'runtime\'');
+    expect(migration).toContain('"revoked_at" IS NULL');
+    expect(migration).toContain(
+      "oauth_authorization_codes_connection_intent_check",
+    );
+    expect(migration).toContain(
+      'GRANT SELECT, INSERT, UPDATE ON TABLE "oauth_connections" TO "attention_web_runtime"',
+    );
+    expect(migration).toContain(
+      'GRANT SELECT, INSERT, UPDATE ON TABLE "oauth_authorization_codes" TO "attention_web_runtime"',
+    );
+    expect(migration).not.toContain('ALTER COLUMN "installation_key_hash" SET NOT NULL');
+    expect(migration).not.toContain('ALTER COLUMN "connection_id" SET NOT NULL');
+  });
+
+  it("persists unambiguous pending OAuth connection intent", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migration = readFileSync(
+      resolve(root, "packages/db/drizzle/0029_oauth_authorization_connection_intent.sql"),
+      "utf8",
+    );
+
+    expect(schema.oauthAuthorizationCodes.connectionLabel).toBeDefined();
+    expect(schema.oauthAuthorizationCodes.normalizedConnectionLabel).toBeDefined();
+    expect(schema.oauthAuthorizationCodes.replacementConnectionId).toBeDefined();
+    expect(migration).toContain("oauth_authorization_codes_connection_intent_check");
+    expect(migration).toContain("replacement_connection_id_oauth_connections_id_fk");
+    expect(migration).not.toContain('ALTER COLUMN "connection_id" SET NOT NULL');
+  });
+
+  it("persists OAuth connection identity and active-name uniqueness", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migration = readFileSync(
+      resolve(root, "packages/db/drizzle/0028_oauth_connection_identity.sql"),
+      "utf8",
+    );
+
+    expect(schema.oauthConnections).toBeDefined();
+    expect(schema.oauthAuthorizationCodes.connectionId).toBeDefined();
+    expect(schema.oauthAccessTokens.connectionId).toBeDefined();
+    expect(schema.oauthRefreshTokens.connectionId).toBeDefined();
+    expect(migration).toContain("oauth_connections_active_name_unique");
+    expect(migration).toContain('WHERE "revoked_at" IS NULL');
+  });
+
+  it("grants the web runtime access to OAuth connections", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migration = readFileSync(
+      resolve(root, "packages/db/drizzle/0028_oauth_connection_identity.sql"),
+      "utf8",
+    );
+
+    expect(migration).toContain(
+      'GRANT SELECT, INSERT, UPDATE ON TABLE "oauth_connections" TO "attention_web_runtime"',
+    );
+  });
+
+  it("keeps OAuth connection links nullable during rollout", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migration = readFileSync(
+      resolve(root, "packages/db/drizzle/0028_oauth_connection_identity.sql"),
+      "utf8",
+    );
+
+    expect(schema.oauthAuthorizationCodes.connectionId.notNull).toBe(false);
+    expect(schema.oauthAccessTokens.connectionId.notNull).toBe(false);
+    expect(schema.oauthRefreshTokens.connectionId.notNull).toBe(false);
+    expect(migration).not.toContain('ALTER COLUMN "connection_id" SET NOT NULL');
+  });
+
+  it("gives every historical OAuth connection a globally ranked import label", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migration = readFileSync(
+      resolve(root, "packages/db/drizzle/0028_oauth_connection_identity.sql"),
+      "utf8",
+    );
+
+    expect(migration).toContain('AS "import_rank"');
+    expect(migration).toContain("'Imported connection '");
+    expect(migration).toContain("'imported connection '");
+    expect(migration).toContain('LPAD("import_rank"::text, 20, \'0\')');
+    expect(migration).not.toContain('LEFT("client_id", 8)');
+    expect(migration).not.toContain("TO_CHAR(");
+  });
+
+  it("avoids SQL Unicode semantics in historical OAuth connection labels", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migration = readFileSync(
+      resolve(root, "packages/db/drizzle/0028_oauth_connection_identity.sql"),
+      "utf8",
+    );
+
+    expect(migration).not.toContain("NORMALIZE(");
+    expect(migration).not.toContain("REGEXP_REPLACE(");
+    expect(migration).not.toContain('"oauth_clients"."name"');
+  });
+
   it("produces no migration when the checked-in schema is unchanged", () => {
     const root = resolve(import.meta.dirname, "..");
     const probe = mkdtempSync(resolve(tmpdir(), "attention-migration-snapshot-"));

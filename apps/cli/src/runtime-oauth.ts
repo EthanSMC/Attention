@@ -67,7 +67,9 @@ export interface RuntimeCallbackServer {
 export interface AuthorizeRuntimeInput {
   readonly createCallbackServer?: () => Promise<RuntimeCallbackServer>;
   readonly credentialPath?: string;
+  readonly deviceName: string;
   readonly fetchImpl?: typeof fetch;
+  readonly installationId: string;
   readonly now?: () => Date;
   readonly openBrowser?: (authorizationUrl: string) => Promise<void>;
   readonly origin: string;
@@ -299,6 +301,7 @@ async function registerRuntimeClient(
   metadata: AuthorizationServerMetadata,
   redirectUri: string,
   resource: string,
+  identity: Pick<AuthorizeRuntimeInput, "deviceName" | "installationId">,
   fetchImpl: typeof fetch,
 ): Promise<string> {
   const parsed = await fetchJson(
@@ -306,6 +309,9 @@ async function registerRuntimeClient(
     {
       body: JSON.stringify({
         application_type: "native",
+        attention_connection_kind: "runtime",
+        attention_device_name: identity.deviceName,
+        attention_installation_id: identity.installationId,
         client_name: RUNTIME_CLIENT_NAME,
         grant_types: ["authorization_code", "refresh_token"],
         redirect_uris: [redirectUri],
@@ -727,6 +733,7 @@ export const authorizeRuntime: RuntimeAuthorizer = async (
       authorizationServer,
       callbackServer.redirectUri,
       protectedResource.resource,
+      input,
       fetchImpl,
     );
     const verifier = randomBytes(32).toString("base64url");

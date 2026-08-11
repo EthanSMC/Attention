@@ -1,5 +1,54 @@
 import { readFileSync } from "node:fs";
+import { createElement, type ComponentType } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+
+import * as connectionManagerModule from "./connection-manager";
+
+const { ConnectionManager } = connectionManagerModule;
+
+const mcpGroups = [
+  {
+    clientName: "Codex",
+    connections: [
+      {
+        id: "10000000-0000-4000-8000-000000000001",
+        label: "工作 MacBook",
+        lastAuthorizedAt: "2026-08-11T10:00:00.000Z",
+        lastUsedAt: "2026-08-11T10:30:00.000Z",
+        scopes: ["collection:read", "collection:write"],
+      },
+      {
+        id: "10000000-0000-4000-8000-000000000002",
+        label: "家里 Mac mini",
+        lastAuthorizedAt: "2026-08-10T10:00:00.000Z",
+        lastUsedAt: null,
+        scopes: ["collection:read"],
+      },
+      {
+        id: "10000000-0000-4000-8000-000000000003",
+        label: "测试容器",
+        lastAuthorizedAt: "2026-08-09T10:00:00.000Z",
+        lastUsedAt: null,
+        scopes: ["profile:read"],
+      },
+    ],
+  },
+];
+
+function renderManager(): string {
+  return renderToStaticMarkup(createElement(
+    ConnectionManager as ComponentType<Record<string, unknown>>,
+    {
+      agentConnectionPrompt: "Connect Attention",
+      agentDocumentationUrl: "https://attention.example/doc",
+      localChannelRuntimes: [],
+      mcpOAuthConnections: mcpGroups,
+      oauthConnections: [],
+      pats: [],
+    },
+  ));
+}
 
 describe("ConnectionManager", () => {
   it("keeps Agent setup concise and hands detailed work to the public guide", () => {
@@ -47,6 +96,100 @@ describe("ConnectionManager", () => {
     expect(componentSource).toContain("待处理");
     expect(componentSource).not.toMatch(
       /threadId|messageRef|fingerprint|providerAccount|accessToken/u,
+    );
+  });
+
+  it("renders one collapsed app group with every logical connection independently actionable", () => {
+    const markup = renderManager();
+
+    expect(markup).toContain("Codex · 3 个连接");
+    expect(markup).toContain("工作 MacBook");
+    expect(markup).toContain("家里 Mac mini");
+    expect(markup).toContain("测试容器");
+    expect(markup).toContain("权限范围（2）");
+    expect(markup).toContain("collection:read");
+    expect(markup).toMatch(/<details[^>]*class="oauth-connection-group"(?![^>]*open)/u);
+    expect(markup).toContain('aria-label="撤销连接：工作 MacBook"');
+    expect(markup).toContain("撤销全部");
+    expect(markup).not.toContain("Attention Local Channel Runtime");
+    expect(markup).not.toContain("Runtime OAuth");
+  });
+
+  it("renders the destructive group confirmation with the exact connection count", () => {
+    const candidate = Reflect.get(
+      connectionManagerModule,
+      "OAuthGroupRevokeModal",
+    ) as ComponentType<Record<string, unknown>> | undefined;
+    expect(candidate).toBeTypeOf("function");
+    if (!candidate) return;
+
+    const markup = renderToStaticMarkup(createElement(candidate, {
+      busy: false,
+      clientName: "Codex",
+      connectionCount: 3,
+      onCancel: () => undefined,
+      onConfirm: () => undefined,
+    }));
+    expect(markup).toContain("撤销 Codex 的 3 个连接？");
+    expect(markup).toContain("这 3 个连接会立即停止访问 Attention");
+  });
+
+  it("submits the exact logical connection snapshot that supplied the confirmation count", async () => {
+    const candidate = Reflect.get(
+      connectionManagerModule,
+      "requestOAuthGroupSnapshotRevoke",
+    ) as ((
+      group: (typeof mcpGroups)[number],
+      request: typeof fetch,
+    ) => Promise<string>) | undefined;
+    expect(candidate).toBeTypeOf("function");
+    if (!candidate) return;
+    let requestBody: unknown;
+
+    const result = await candidate(mcpGroups[0]!, async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ revoked_count: 3 }), { status: 200 });
+    });
+
+    expect(requestBody).toEqual({
+      client_name: "Codex",
+      connection_ids: [
+        "10000000-0000-4000-8000-000000000001",
+        "10000000-0000-4000-8000-000000000002",
+        "10000000-0000-4000-8000-000000000003",
+      ],
+    });
+    expect(result).toBe("revoked");
+  });
+
+  it("distinguishes a stale confirmed snapshot from an ambiguous server failure", async () => {
+    const candidate = Reflect.get(
+      connectionManagerModule,
+      "requestOAuthGroupSnapshotRevoke",
+    ) as ((
+      group: (typeof mcpGroups)[number],
+      request: typeof fetch,
+    ) => Promise<string>) | undefined;
+    expect(candidate).toBeTypeOf("function");
+    if (!candidate) return;
+
+    await expect(candidate(mcpGroups[0]!, async () => new Response(
+      JSON.stringify({ error: { code: "oauth_connection_snapshot_stale" } }),
+      { status: 409 },
+    ))).resolves.toBe("stale");
+
+    const feedbackCandidate = Reflect.get(
+      connectionManagerModule,
+      "oauthGroupRevokeFailureMessage",
+    ) as ((outcome: string) => string) | undefined;
+    expect(feedbackCandidate).toBeTypeOf("function");
+    if (!feedbackCandidate) return;
+    expect(feedbackCandidate("stale")).toBe("连接列表已变化，请刷新后重试。");
+    await expect(candidate(mcpGroups[0]!, async () => {
+      throw new Error("connection_lost");
+    })).resolves.toBe("unknown");
+    expect(feedbackCandidate("unknown")).toBe(
+      "网络连接中断，撤销结果无法确认。请刷新连接列表后再操作。",
     );
   });
 });

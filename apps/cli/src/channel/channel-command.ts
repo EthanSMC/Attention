@@ -163,6 +163,38 @@ const HOST_EXECUTABLES: Record<ChannelBridgeHost, string> = {
 };
 const RUNTIME_REPORTER_CREDENTIAL_RETRY_MS = 60_000;
 
+export interface RuntimeRegistrationIdentity {
+  readonly deviceName: string;
+  readonly installationId: string;
+}
+
+export function runtimeRegistrationDeviceName(
+  source = hostname(),
+): string {
+  const normalized = source
+    .normalize("NFKC")
+    .replace(/[\p{Cc}\p{Cf}]/gu, "")
+    .trim()
+    .replace(/\s+/gu, " ")
+    .slice(0, 80);
+  return normalized || "Attention device";
+}
+
+export async function loadRuntimeRegistrationIdentity(
+  baseDirectory?: string,
+): Promise<RuntimeRegistrationIdentity> {
+  const state = await loadChannelState(baseDirectory);
+  const installationId = state.runtimeReporter.installationId ?? randomUUID();
+  if (state.runtimeReporter.installationId !== installationId) {
+    state.runtimeReporter.installationId = installationId;
+    await saveChannelState(state, baseDirectory);
+  }
+  return {
+    deviceName: runtimeRegistrationDeviceName(),
+    installationId,
+  };
+}
+
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -535,15 +567,9 @@ export async function channelStart(
       let reporterIdentityChanged = false;
       const previousRuntimeClientFingerprint =
         runtime.state.runtimeReporter.runtimeClientFingerprint;
-      if (
-        runtimeClientFingerprint &&
-        previousRuntimeClientFingerprint &&
-        runtimeClientFingerprint !== previousRuntimeClientFingerprint
-      ) {
-        runtime.state.runtimeReporter.bindingId = null;
-        runtime.state.runtimeReporter.installationId = null;
-        reporterIdentityChanged = true;
-      }
+      // DCR issues a new client_id on normal reauthorization. Its fingerprint
+      // can restart the Reporter onto fresh credentials, but it is not a
+      // reliable account-switch signal and must not rotate device identity.
       if (
         runtimeClientFingerprint &&
         runtimeClientFingerprint !== previousRuntimeClientFingerprint
@@ -589,7 +615,7 @@ export async function channelStart(
               "wechat_ilink",
               runtime.state.accountId,
             ),
-            deviceName: hostname().slice(0, 100) || "Attention device",
+            deviceName: runtimeRegistrationDeviceName(),
             installationId,
             provider: "wechat_ilink",
             restrictedProfile: true,

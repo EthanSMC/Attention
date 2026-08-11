@@ -26,6 +26,8 @@ const registrationEndpoint = "https://login.attention.example/clients/register";
 const tokenEndpoint = "https://login.attention.example/tokens/exchange";
 const redirectUri = "http://127.0.0.1:49152/oauth/callback";
 const runtimeScope = CHANNEL_RUNTIME_SCOPES.join(" ");
+const installationId = "11111111-1111-4111-8111-111111111111";
+const deviceName = "Ethan MacBook Pro";
 
 afterEach(async () => {
   await Promise.all(
@@ -181,7 +183,9 @@ describe("dedicated Runtime OAuth", () => {
     const credential = await authorizeRuntime({
       createCallbackServer: async () => harness.callbackServer,
       credentialPath: path,
+      deviceName,
       fetchImpl: harness.fetchImpl,
+      installationId,
       now: () => new Date("2026-08-10T10:00:00.000Z"),
       openBrowser: harness.openBrowser,
       origin: "https://attention.example",
@@ -197,6 +201,9 @@ describe("dedicated Runtime OAuth", () => {
     );
     expect(harness.registrationBodies).toEqual([{
       application_type: "native",
+      attention_connection_kind: "runtime",
+      attention_device_name: deviceName,
+      attention_installation_id: installationId,
       client_name: "Attention Local Channel Runtime",
       grant_types: ["authorization_code", "refresh_token"],
       redirect_uris: [redirectUri],
@@ -207,6 +214,9 @@ describe("dedicated Runtime OAuth", () => {
       software_version: "0.2.1",
       token_endpoint_auth_method: "none",
     }]);
+    expect(harness.registrationBodies[0]).not.toHaveProperty("mac_address");
+    expect(harness.registrationBodies[0]).not.toHaveProperty("hardware_serial");
+    expect(harness.registrationBodies[0]).not.toHaveProperty("ilink_credential");
     const authorizeUrl = harness.openedAuthorizationUrl();
     expect(authorizeUrl).not.toBeNull();
     expect(`${authorizeUrl!.origin}${authorizeUrl!.pathname}`).toBe(
@@ -259,7 +269,9 @@ describe("dedicated Runtime OAuth", () => {
     await expect(authorizeRuntime({
       createCallbackServer: async () => harness.callbackServer,
       credentialPath: path,
+      deviceName,
       fetchImpl: harness.fetchImpl,
+      installationId,
       openBrowser: harness.openBrowser,
       origin: "https://attention.example",
     })).rejects.toMatchObject({ code: "runtime_oauth_state_mismatch" });
@@ -277,7 +289,9 @@ describe("dedicated Runtime OAuth", () => {
     await expect(authorizeRuntime({
       createCallbackServer: async () => harness.callbackServer,
       credentialPath: path,
+      deviceName,
       fetchImpl: harness.fetchImpl,
+      installationId,
       openBrowser: harness.openBrowser,
       origin: "https://attention.example",
     })).rejects.toMatchObject({ code: "runtime_oauth_metadata_invalid" });
@@ -291,7 +305,9 @@ describe("dedicated Runtime OAuth", () => {
     await authorizeRuntime({
       createCallbackServer: async () => harness.callbackServer,
       credentialPath: path,
+      deviceName,
       fetchImpl: harness.fetchImpl,
+      installationId,
       now: () => new Date("2026-08-10T10:00:00.000Z"),
       openBrowser: harness.openBrowser,
       origin: "https://attention.example",
@@ -324,7 +340,9 @@ describe("dedicated Runtime OAuth", () => {
     await authorizeRuntime({
       createCallbackServer: async () => harness.callbackServer,
       credentialPath: path,
+      deviceName,
       fetchImpl: harness.fetchImpl,
+      installationId,
       now: () => new Date("2026-08-10T10:00:00.000Z"),
       openBrowser: harness.openBrowser,
       origin: "https://attention.example",
@@ -345,7 +363,9 @@ describe("dedicated Runtime OAuth", () => {
     await authorizeRuntime({
       createCallbackServer: async () => harness.callbackServer,
       credentialPath: path,
+      deviceName,
       fetchImpl: harness.fetchImpl,
+      installationId,
       now: () => new Date("2026-08-10T10:00:00.000Z"),
       openBrowser: harness.openBrowser,
       origin: "https://attention.example",
@@ -410,7 +430,9 @@ describe("dedicated Runtime OAuth", () => {
     await authorizeRuntime({
       createCallbackServer: async () => harness.callbackServer,
       credentialPath: path,
+      deviceName,
       fetchImpl: harness.fetchImpl,
+      installationId,
       now: () => new Date("2026-08-10T10:00:00.000Z"),
       openBrowser: harness.openBrowser,
       origin: "https://attention.example",

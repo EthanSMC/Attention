@@ -107,6 +107,10 @@ export const oauthCredentialStatusEnum = pgEnum("oauth_credential_status", [
   "active",
   "revoked"
 ]);
+export const oauthConnectionKindEnum = pgEnum("oauth_connection_kind", [
+  "mcp",
+  "runtime"
+]);
 export const apiCredentialStatusEnum = pgEnum("api_credential_status", [
   "active",
   "revoked"
@@ -933,6 +937,9 @@ export const oauthClients = pgTable(
     redirectUris: jsonb("redirect_uris").$type<string[]>().notNull(),
     allowedScopes: jsonb("allowed_scopes").$type<string[]>().notNull(),
     registrationFingerprint: char("registration_fingerprint", { length: 64 }),
+    connectionKind: oauthConnectionKindEnum("connection_kind"),
+    deviceName: varchar("device_name", { length: 80 }),
+    installationKeyHash: char("installation_key_hash", { length: 64 }),
     firstParty: boolean("first_party").default(false).notNull(),
     active: boolean("active").default(true).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -944,7 +951,59 @@ export const oauthClients = pgTable(
       table.registrationFingerprint,
       table.createdAt
     ),
-    check("oauth_clients_name_not_blank", sql`btrim(${table.name}) <> ''`)
+    check("oauth_clients_name_not_blank", sql`btrim(${table.name}) <> ''`),
+    check(
+      "oauth_clients_runtime_identity_shape",
+      sql`(
+        ${table.connectionKind} IS NULL
+        AND ${table.deviceName} IS NULL
+        AND ${table.installationKeyHash} IS NULL
+      ) OR (
+        ${table.connectionKind} = 'runtime'
+        AND ${table.deviceName} IS NOT NULL
+        AND btrim(${table.deviceName}) <> ''
+        AND ${table.installationKeyHash} ~ '^[0-9a-f]{64}$'
+      )`
+    )
+  ]
+);
+
+export const oauthConnections = pgTable(
+  "oauth_connections",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    clientId: varchar("client_id", { length: 128 })
+      .notNull()
+      .references(() => oauthClients.clientId),
+    audience: varchar("audience", { length: 128 }).notNull(),
+    kind: oauthConnectionKindEnum("kind").notNull(),
+    label: varchar("label", { length: 80 }).notNull(),
+    normalizedLabel: varchar("normalized_label", { length: 80 }).notNull(),
+    deviceName: varchar("device_name", { length: 80 }),
+    installationKeyHash: char("installation_key_hash", { length: 64 }),
+    lastAuthorizedAt: timestamp("last_authorized_at", { withTimezone: true }).notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    uniqueIndex("oauth_connections_active_name_unique")
+      .on(table.accountId, table.audience, table.normalizedLabel)
+      .where(sql`${table.revokedAt} IS NULL`),
+    uniqueIndex("oauth_connections_active_runtime_installation_unique")
+      .on(
+        table.accountId,
+        table.audience,
+        table.kind,
+        table.installationKeyHash
+      )
+      .where(
+        sql`${table.audience} = 'attention-channel-runtime' AND ${table.kind} = 'runtime' AND ${table.installationKeyHash} IS NOT NULL AND ${table.revokedAt} IS NULL`
+      )
   ]
 );
 
@@ -959,6 +1018,12 @@ export const oauthAuthorizationCodes = pgTable(
     clientId: varchar("client_id", { length: 128 })
       .notNull()
       .references(() => oauthClients.clientId, { onDelete: "cascade" }),
+    connectionId: uuid("connection_id").references(() => oauthConnections.id),
+    connectionLabel: varchar("connection_label", { length: 80 }),
+    normalizedConnectionLabel: varchar("normalized_connection_label", { length: 80 }),
+    replacementConnectionId: uuid("replacement_connection_id").references(
+      () => oauthConnections.id
+    ),
     redirectUri: text("redirect_uri").notNull(),
     scopes: jsonb("scopes").$type<string[]>().notNull(),
     audience: varchar("audience", { length: 128 }).notNull(),
@@ -973,6 +1038,29 @@ export const oauthAuthorizationCodes = pgTable(
     check(
       "oauth_authorization_codes_expire_after_creation",
       sql`${table.expiresAt} > ${table.createdAt}`
+    ),
+    check(
+      "oauth_authorization_codes_connection_intent_check",
+      sql`(
+        ${table.connectionLabel} IS NULL
+        AND ${table.normalizedConnectionLabel} IS NULL
+        AND ${table.replacementConnectionId} IS NULL
+      ) OR (
+        ${table.connectionLabel} IS NOT NULL
+        AND ${table.normalizedConnectionLabel} IS NOT NULL
+        AND (
+          ${table.connectionId} IS NULL
+          OR ${table.replacementConnectionId} IS NULL
+        )
+      )`
+    ),
+    check(
+      "oauth_authorization_codes_connection_label_not_blank",
+      sql`${table.connectionLabel} IS NULL OR char_length(${table.connectionLabel}) > 0`
+    ),
+    check(
+      "oauth_authorization_codes_normalized_label_not_blank",
+      sql`${table.normalizedConnectionLabel} IS NULL OR char_length(${table.normalizedConnectionLabel}) > 0`
     )
   ]
 );
@@ -988,6 +1076,7 @@ export const oauthAccessTokens = pgTable(
     clientId: varchar("client_id", { length: 128 })
       .notNull()
       .references(() => oauthClients.clientId, { onDelete: "cascade" }),
+    connectionId: uuid("connection_id").references(() => oauthConnections.id),
     scopes: jsonb("scopes").$type<string[]>().notNull(),
     audience: varchar("audience", { length: 128 }).notNull(),
     status: oauthCredentialStatusEnum("status").default("active").notNull(),
@@ -1014,6 +1103,7 @@ export const oauthRefreshTokens = pgTable(
     clientId: varchar("client_id", { length: 128 })
       .notNull()
       .references(() => oauthClients.clientId, { onDelete: "cascade" }),
+    connectionId: uuid("connection_id").references(() => oauthConnections.id),
     scopes: jsonb("scopes").$type<string[]>().notNull(),
     audience: varchar("audience", { length: 128 }).notNull(),
     status: oauthCredentialStatusEnum("status").default("active").notNull(),

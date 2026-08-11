@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import {
   Client,
@@ -112,8 +113,9 @@ import {
   resolveChannelIdentity,
   resolveOAuthAccessToken,
   resolveSession,
+  rotateRefreshToken,
   revokeApiCredential,
-  revokeOAuthClientConnection,
+  revokeOAuthConnection,
   reserveRenewalPoints,
   releaseRenewalPoints,
   consumeRenewalPoints,
@@ -153,6 +155,9 @@ import {
   moderationVotes,
   membershipGrants,
   oauthClients,
+  oauthAuthorizationCodes,
+  oauthConnections,
+  oauthRefreshTokens,
   type ModerationRepositoryError,
   pendingCandidateSets,
   publicContentAttributionsCurrent,
@@ -188,6 +193,14 @@ const oauthResources = {
   "attention-mcp": "http://localhost:3000/mcp",
   "attention-sync": "http://localhost:3000/api/sync",
 } as const;
+
+function normalizeOAuthConnectionLabel(value: string): string {
+  return value
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/gu, " ")
+    .toLowerCase();
+}
 
 describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
   let handle: DatabaseHandle;
@@ -256,6 +269,316 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     const redeemed = await redeemInvitation(handle.db, invitation.token);
     return { invitation, redeemed };
   }
+
+  it("backfills adversarial historical OAuth connection names without collisions", async () => {
+    const challenge = await createLoginChallenge(handle.db, {
+      email: "oauth-migration-backfill@example.com",
+    });
+    const verified = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: challenge.challengeId,
+      code: challenge.code,
+    });
+
+    await handle.sql.unsafe(`
+      INSERT INTO oauth_clients (client_id, name, redirect_uris, allowed_scopes)
+      VALUES
+        ('sharedprefix-client-a', U&'\\FEFF\\0130STANBUL', '["http://127.0.0.1:43901/callback"]'::jsonb, '["profile:read"]'::jsonb),
+        ('sharedprefix-client-b', U&'Greek \\03C2', '["http://127.0.0.1:43902/callback"]'::jsonb, '["profile:read"]'::jsonb),
+        ('sharedprefix-client-c', 'Imported connection 00000000000000000001', '["http://127.0.0.1:43903/callback"]'::jsonb, '["profile:read"]'::jsonb),
+        ('sharedprefix-client-d', E'  Ａgent\\t Name  ', '["http://127.0.0.1:43904/callback"]'::jsonb, '["profile:read"]'::jsonb)
+    `);
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_authorization_codes" DROP COLUMN "replacement_connection_id"',
+    );
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_authorization_codes" DROP COLUMN "connection_label"',
+    );
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_authorization_codes" DROP COLUMN "normalized_connection_label"',
+    );
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_clients" DROP CONSTRAINT "oauth_clients_runtime_identity_shape"',
+    );
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_clients" DROP COLUMN "connection_kind"',
+    );
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_clients" DROP COLUMN "device_name"',
+    );
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_clients" DROP COLUMN "installation_key_hash"',
+    );
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_access_tokens" DROP COLUMN "connection_id"',
+    );
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_authorization_codes" DROP COLUMN "connection_id"',
+    );
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_refresh_tokens" DROP COLUMN "connection_id"',
+    );
+    await handle.sql.unsafe('DROP TABLE "oauth_connections"');
+    await handle.sql.unsafe('DROP TYPE "oauth_connection_kind"');
+    await handle.sql.unsafe(
+      `
+        INSERT INTO oauth_authorization_codes (
+          code_hash,
+          account_id,
+          client_id,
+          redirect_uri,
+          scopes,
+          audience,
+          code_challenge,
+          expires_at,
+          created_at
+        )
+        VALUES
+          (repeat('a', 64), $1, 'sharedprefix-client-a', 'http://127.0.0.1:43901/callback', '["profile:read"]'::jsonb, 'attention-mcp', 'challenge-a', '2026-08-11 11:00:00+00', '2026-08-11 10:00:00+00'),
+          (repeat('b', 64), $1, 'sharedprefix-client-b', 'http://127.0.0.1:43902/callback', '["profile:read"]'::jsonb, 'attention-mcp', 'challenge-b', '2026-08-11 11:00:00+00', '2026-08-11 10:00:00+00'),
+          (repeat('c', 64), $1, 'sharedprefix-client-c', 'http://127.0.0.1:43903/callback', '["profile:read"]'::jsonb, 'attention-mcp', 'challenge-c', '2026-08-11 11:00:00+00', '2026-08-11 10:00:00+00'),
+          (repeat('d', 64), $1, 'sharedprefix-client-d', 'http://127.0.0.1:43904/callback', '["profile:read"]'::jsonb, 'attention-mcp', 'challenge-d', '2026-08-11 11:00:00+00', '2026-08-11 10:00:00+00')
+      `,
+      [verified.accountId],
+    );
+
+    const root = resolve(import.meta.dirname, "../..");
+    const migration = readFileSync(
+      resolve(root, "packages/db/drizzle/0028_oauth_connection_identity.sql"),
+      "utf8",
+    );
+    for (const statement of migration
+      .split("--> statement-breakpoint")
+      .map((part) => part.trim())
+      .filter(Boolean)) {
+      await handle.sql.unsafe(statement);
+    }
+
+    const connections = await handle.sql<
+      { clientId: string; deviceName: string | null; label: string; normalizedLabel: string }[]
+    >`
+      SELECT
+        client_id AS "clientId",
+        device_name AS "deviceName",
+        label,
+        normalized_label AS "normalizedLabel"
+      FROM oauth_connections
+      WHERE account_id = ${verified.accountId}
+        AND audience = 'attention-mcp'
+      ORDER BY client_id
+    `;
+    expect(connections).toEqual([
+      {
+        clientId: "sharedprefix-client-a",
+        deviceName: null,
+        label: "Imported connection 00000000000000000001",
+        normalizedLabel: "imported connection 00000000000000000001",
+      },
+      {
+        clientId: "sharedprefix-client-b",
+        deviceName: null,
+        label: "Imported connection 00000000000000000002",
+        normalizedLabel: "imported connection 00000000000000000002",
+      },
+      {
+        clientId: "sharedprefix-client-c",
+        deviceName: null,
+        label: "Imported connection 00000000000000000003",
+        normalizedLabel: "imported connection 00000000000000000003",
+      },
+      {
+        clientId: "sharedprefix-client-d",
+        deviceName: null,
+        label: "Imported connection 00000000000000000004",
+        normalizedLabel: "imported connection 00000000000000000004",
+      },
+    ]);
+    expect(
+      connections.map(({ label, normalizedLabel }) =>
+        normalizeOAuthConnectionLabel(label) === normalizedLabel
+      ),
+    ).toEqual([true, true, true, true]);
+
+    const [backfillState] = await handle.sql<
+      { connectedCodes: number; distinctNames: number; totalConnections: number }[]
+    >`
+      SELECT
+        (SELECT count(*)::integer FROM oauth_authorization_codes WHERE connection_id IS NOT NULL) AS "connectedCodes",
+        count(DISTINCT normalized_label)::integer AS "distinctNames",
+        count(*)::integer AS "totalConnections"
+      FROM oauth_connections
+      WHERE account_id = ${verified.accountId}
+        AND audience = 'attention-mcp'
+    `;
+    expect(backfillState).toEqual({
+      connectedCodes: 4,
+      distinctNames: 4,
+      totalConnections: 4,
+    });
+
+    const nullability = await handle.sql<{ isNullable: "YES" | "NO" }[]>`
+      SELECT is_nullable AS "isNullable"
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name IN (
+          'oauth_authorization_codes',
+          'oauth_access_tokens',
+          'oauth_refresh_tokens'
+        )
+        AND column_name = 'connection_id'
+      ORDER BY table_name
+    `;
+    expect(nullability).toEqual([
+      { isNullable: "YES" },
+      { isNullable: "YES" },
+      { isNullable: "YES" },
+    ]);
+
+    const [connectionForeignKeys] = await handle.sql<{ count: number }[]>`
+      SELECT count(*)::integer AS count
+      FROM information_schema.table_constraints AS constraints
+      INNER JOIN information_schema.key_column_usage AS columns
+        ON columns.constraint_schema = constraints.constraint_schema
+        AND columns.constraint_name = constraints.constraint_name
+      WHERE constraints.constraint_type = 'FOREIGN KEY'
+        AND constraints.table_schema = 'public'
+        AND constraints.table_name IN (
+          'oauth_authorization_codes',
+          'oauth_access_tokens',
+          'oauth_refresh_tokens'
+        )
+        AND columns.column_name = 'connection_id'
+    `;
+    expect(connectionForeignKeys?.count).toBe(3);
+
+    const [runtimePrivileges] = await handle.sql<
+      { canInsert: boolean; canSelect: boolean; canUpdate: boolean }[]
+    >`
+      SELECT
+        has_table_privilege('attention_web_runtime', 'oauth_connections', 'INSERT') AS "canInsert",
+        has_table_privilege('attention_web_runtime', 'oauth_connections', 'SELECT') AS "canSelect",
+        has_table_privilege('attention_web_runtime', 'oauth_connections', 'UPDATE') AS "canUpdate"
+    `;
+    expect(runtimePrivileges).toEqual({
+      canInsert: true,
+      canSelect: true,
+      canUpdate: true,
+    });
+
+    await handle.sql.unsafe(
+      `
+        INSERT INTO oauth_authorization_codes (
+          code_hash,
+          account_id,
+          client_id,
+          redirect_uri,
+          scopes,
+          audience,
+          code_challenge,
+          expires_at,
+          created_at
+        )
+        VALUES (
+          repeat('e', 64),
+          $1,
+          'sharedprefix-client-a',
+          'http://127.0.0.1:43901/callback',
+          '["profile:read"]'::jsonb,
+          'attention-mcp',
+          'challenge-e',
+          '2026-08-11 12:00:00+00',
+          '2026-08-11 11:00:00+00'
+        )
+      `,
+      [verified.accountId],
+    );
+    const [expandPhaseWrite] = await handle.sql<{ connectionId: string | null }[]>`
+      SELECT connection_id AS "connectionId"
+      FROM oauth_authorization_codes
+      WHERE code_hash = ${"e".repeat(64)}
+    `;
+    expect(expandPhaseWrite?.connectionId).toBeNull();
+
+    const intentMigration = readFileSync(
+      resolve(root, "packages/db/drizzle/0029_oauth_authorization_connection_intent.sql"),
+      "utf8",
+    );
+    for (const statement of intentMigration
+      .split("--> statement-breakpoint")
+      .map((part) => part.trim())
+      .filter(Boolean)) {
+      await handle.sql.unsafe(statement);
+    }
+
+    const runtimeIdentityMigration = readFileSync(
+      resolve(root, "packages/db/drizzle/0030_runtime_device_registration.sql"),
+      "utf8",
+    );
+    for (const statement of runtimeIdentityMigration
+      .split("--> statement-breakpoint")
+      .map((part) => part.trim())
+      .filter(Boolean)) {
+      await handle.sql.unsafe(statement);
+    }
+    const restoredRuntimeIdentityColumns = await handle.sql<
+      { columnName: string }[]
+    >`
+      SELECT column_name AS "columnName"
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'oauth_clients'
+        AND column_name IN (
+          'connection_kind',
+          'device_name',
+          'installation_key_hash'
+        )
+      ORDER BY column_name
+    `;
+    expect(restoredRuntimeIdentityColumns).toEqual([
+      { columnName: "connection_kind" },
+      { columnName: "device_name" },
+      { columnName: "installation_key_hash" },
+    ]);
+  });
+
+  it("rejects duplicate active OAuth connection names after normalization", async () => {
+    const challenge = await createLoginChallenge(handle.db, {
+      email: "oauth-connection-name@example.com",
+    });
+    const verified = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: challenge.challengeId,
+      code: challenge.code,
+    });
+    const client = await registerPublicOAuthClient(handle.db, {
+      name: "OAuth Connection Test Client",
+      requesterFingerprint: "9".repeat(64),
+      redirectUris: ["http://127.0.0.1:43829/callback"],
+    });
+    const lastAuthorizedAt = new Date();
+
+    await handle.db.insert(oauthConnections).values({
+      accountId: verified.accountId,
+      audience: "attention-mcp",
+      clientId: client.clientId,
+      kind: "mcp",
+      label: "Attention Agent",
+      normalizedLabel: "attention agent",
+      lastAuthorizedAt,
+    });
+
+    await expect(
+      handle.db.insert(oauthConnections).values({
+        accountId: verified.accountId,
+        audience: "attention-mcp",
+        clientId: client.clientId,
+        kind: "mcp",
+        label: "  ATTENTION AGENT  ",
+        normalizedLabel: "attention agent",
+        lastAuthorizedAt,
+      }),
+    ).rejects.toMatchObject({ cause: { code: "23505" } });
+  });
 
   async function principalFor(
     redeemed: Awaited<ReturnType<typeof createRedeemedAccount>>["redeemed"]
@@ -867,7 +1190,12 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       scope: "profile:read collection:read collection:write public:read",
       state: "test-state",
     });
-    const code = await createAuthorizationCode(handle.db, verified.accountId, request);
+    const code = await createAuthorizationCode(
+      handle.db,
+      verified.accountId,
+      request,
+      { mode: "create", label: "Integration test agent" },
+    );
     await expect(exchangeAuthorizationCode(handle.db, {
       clientId: client.clientId,
       code,
@@ -894,9 +1222,280 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     })).rejects.toMatchObject({ code: "invalid_grant" });
     const oauthPrincipal = await resolveOAuthAccessToken(handle.db, pair.accessToken, { audience: "attention-mcp" });
     expect(oauthPrincipal).toMatchObject({ accountId: verified.accountId, isMember: true });
-    await revokeOAuthClientConnection(handle.db, verified.accountId, client.clientId);
+    await revokeOAuthConnection(handle.db, verified.accountId, pair.connectionId);
     expect(await resolveOAuthAccessToken(handle.db, pair.accessToken, { audience: "attention-mcp" })).toBeNull();
     expect(await resolveSession(handle.db, verified.session.token, { touch: false })).not.toBeNull();
+  });
+
+  it("lazily materializes distinct logical connections for legacy code and refresh rows", async () => {
+    const challenge = await createLoginChallenge(handle.db, {
+      email: "oauth-legacy-writer@example.com",
+    });
+    const verified = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: challenge.challengeId,
+      code: challenge.code,
+    });
+    const verifier = "oauth-legacy-writer-verifier-at-least-forty-three-characters";
+    const challengeValue = createHash("sha256").update(verifier).digest("base64url");
+    const client = await registerPublicOAuthClient(handle.db, {
+      name: "Legacy writer display name must not become identity",
+      requesterFingerprint: "7".repeat(64),
+      redirectUris: ["http://127.0.0.1:43827/callback"],
+    });
+    const issuedAt = new Date("2026-08-11T12:00:00.000Z");
+    const legacyCode = createHash("sha256")
+      .update("legacy-writer-authorization-code")
+      .digest("base64url");
+    await handle.db.insert(oauthAuthorizationCodes).values({
+      accountId: verified.accountId,
+      audience: "attention-mcp",
+      clientId: client.clientId,
+      codeChallenge: challengeValue,
+      codeHash: await hashOpaqueToken(legacyCode),
+      createdAt: issuedAt,
+      expiresAt: new Date("2026-08-11T12:10:00.000Z"),
+      redirectUri: "http://127.0.0.1:43827/callback",
+      scopes: ["profile:read"],
+    });
+
+    const codePair = await exchangeAuthorizationCode(handle.db, {
+      clientId: client.clientId,
+      code: legacyCode,
+      codeVerifier: verifier,
+      now: new Date("2026-08-11T12:01:00.000Z"),
+      redirectUri: "http://127.0.0.1:43827/callback",
+      resource: oauthResources["attention-mcp"],
+      resources: oauthResources,
+    });
+    const [codeConnection] = await handle.db
+      .select()
+      .from(oauthConnections)
+      .where(eq(oauthConnections.id, codePair.connectionId));
+    const [consumedCode] = await handle.db
+      .select({ connectionId: oauthAuthorizationCodes.connectionId })
+      .from(oauthAuthorizationCodes)
+      .where(eq(oauthAuthorizationCodes.codeHash, await hashOpaqueToken(legacyCode)));
+    expect(codeConnection).toMatchObject({
+      accountId: verified.accountId,
+      audience: "attention-mcp",
+      clientId: client.clientId,
+      kind: "mcp",
+      label: `Imported connection ${codePair.connectionId}`,
+      normalizedLabel: `imported connection ${codePair.connectionId}`,
+    });
+    expect(consumedCode?.connectionId).toBe(codePair.connectionId);
+
+    const legacyRefresh = createHash("sha256")
+      .update("legacy-writer-refresh-token")
+      .digest("base64url");
+    const [legacyRefreshRow] = await handle.db
+      .insert(oauthRefreshTokens)
+      .values({
+        accountId: verified.accountId,
+        audience: "attention-mcp",
+        clientId: client.clientId,
+        connectionId: null,
+        createdAt: issuedAt,
+        expiresAt: new Date("2026-09-11T12:00:00.000Z"),
+        scopes: ["profile:read"],
+        tokenHash: await hashOpaqueToken(legacyRefresh),
+      })
+      .returning({ id: oauthRefreshTokens.id });
+    if (!legacyRefreshRow) throw new Error("legacy refresh fixture insert failed");
+
+    const refreshPair = await rotateRefreshToken(handle.db, {
+      clientId: client.clientId,
+      now: new Date("2026-08-11T12:02:00.000Z"),
+      refreshToken: legacyRefresh,
+      resource: oauthResources["attention-mcp"],
+      resources: oauthResources,
+    });
+    const [refreshConnection] = await handle.db
+      .select()
+      .from(oauthConnections)
+      .where(eq(oauthConnections.id, refreshPair.connectionId));
+    const [consumedRefresh] = await handle.db
+      .select()
+      .from(oauthRefreshTokens)
+      .where(eq(oauthRefreshTokens.id, legacyRefreshRow.id));
+    expect(refreshPair.connectionId).not.toBe(codePair.connectionId);
+    expect(refreshConnection).toMatchObject({
+      accountId: verified.accountId,
+      audience: "attention-mcp",
+      clientId: client.clientId,
+      kind: "mcp",
+      label: `Imported connection ${refreshPair.connectionId}`,
+      normalizedLabel: `imported connection ${refreshPair.connectionId}`,
+    });
+    expect(consumedRefresh).toMatchObject({
+      connectionId: refreshPair.connectionId,
+      consumedAt: new Date("2026-08-11T12:02:00.000Z"),
+      revokedAt: new Date("2026-08-11T12:02:00.000Z"),
+      status: "revoked",
+    });
+  });
+
+  it("atomically replaces an OAuth connection and resolves concurrent name confirmation", async () => {
+    const challenge = await createLoginChallenge(handle.db, {
+      email: "oauth-connection-transaction@example.com",
+    });
+    const verified = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: challenge.challengeId,
+      code: challenge.code,
+    });
+    const verifier = "oauth-connection-transaction-verifier-at-least-forty-three-characters";
+    const challengeValue = createHash("sha256").update(verifier).digest("base64url");
+    const client = await registerPublicOAuthClient(handle.db, {
+      name: "OAuth connection transaction client",
+      requesterFingerprint: "d".repeat(64),
+      redirectUris: ["http://127.0.0.1:43822/callback"],
+    });
+    const authorization = await validateAuthorizationRequest(handle.db, {
+      clientId: client.clientId,
+      codeChallenge: challengeValue,
+      codeChallengeMethod: "S256",
+      redirectUri: "http://127.0.0.1:43822/callback",
+      resource: oauthResources["attention-mcp"],
+      resources: oauthResources,
+      responseType: "code",
+      scope: "profile:read",
+    });
+    const originalCode = await createAuthorizationCode(
+      handle.db,
+      verified.accountId,
+      authorization,
+      { mode: "create", label: "Office MacBook" },
+    );
+    const originalPair = await exchangeAuthorizationCode(handle.db, {
+      clientId: client.clientId,
+      code: originalCode,
+      codeVerifier: verifier,
+      redirectUri: authorization.redirectUri,
+      resource: authorization.resource,
+      resources: oauthResources,
+    });
+    const replacementCode = await createAuthorizationCode(
+      handle.db,
+      verified.accountId,
+      authorization,
+      {
+        mode: "replace",
+        label: "OFFICE MACBOOK",
+        replacementConnectionId: originalPair.connectionId,
+      },
+    );
+
+    await handle.sql.unsafe(`
+      CREATE FUNCTION oauth_refresh_insert_failure() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        RAISE EXCEPTION 'injected refresh insert failure';
+      END;
+      $$;
+      CREATE TRIGGER oauth_refresh_insert_failure
+      BEFORE INSERT ON oauth_refresh_tokens
+      FOR EACH ROW EXECUTE FUNCTION oauth_refresh_insert_failure();
+    `);
+    try {
+      await expect(exchangeAuthorizationCode(handle.db, {
+        clientId: client.clientId,
+        code: replacementCode,
+        codeVerifier: verifier,
+        redirectUri: authorization.redirectUri,
+        resource: authorization.resource,
+        resources: oauthResources,
+      })).rejects.toThrowError(/oauth_refresh_tokens/u);
+      expect(await resolveOAuthAccessToken(handle.db, originalPair.accessToken, {
+        audience: "attention-mcp",
+      })).not.toBeNull();
+      const [originalConnection] = await handle.db
+        .select({ revokedAt: oauthConnections.revokedAt })
+        .from(oauthConnections)
+        .where(eq(oauthConnections.id, originalPair.connectionId));
+      expect(originalConnection?.revokedAt).toBeNull();
+    } finally {
+      await handle.sql.unsafe(`
+        DROP TRIGGER oauth_refresh_insert_failure ON oauth_refresh_tokens;
+        DROP FUNCTION oauth_refresh_insert_failure();
+      `);
+    }
+
+    const replacementPair = await exchangeAuthorizationCode(handle.db, {
+      clientId: client.clientId,
+      code: replacementCode,
+      codeVerifier: verifier,
+      redirectUri: authorization.redirectUri,
+      resource: authorization.resource,
+      resources: oauthResources,
+    });
+    expect(replacementPair.connectionId).not.toBe(originalPair.connectionId);
+    expect(await resolveOAuthAccessToken(handle.db, originalPair.accessToken, {
+      audience: "attention-mcp",
+    })).toBeNull();
+
+    const concurrentCodes = await Promise.all([
+      createAuthorizationCode(
+        handle.db,
+        verified.accountId,
+        authorization,
+        { mode: "create", label: "Shared desk" },
+      ),
+      createAuthorizationCode(
+        handle.db,
+        verified.accountId,
+        authorization,
+        { mode: "create", label: "SHARED DESK" },
+      ),
+    ]);
+    vi.stubEnv(
+      "ATTENTION_MCP_PUBLIC_URL",
+      oauthResources["attention-mcp"],
+    );
+    const tokenRequest = (code: string) => new Request(
+      "http://localhost:3000/oauth/token",
+      {
+        body: new URLSearchParams({
+          client_id: client.clientId,
+          code,
+          code_verifier: verifier,
+          grant_type: "authorization_code",
+          redirect_uri: authorization.redirectUri,
+          resource: authorization.resource,
+        }),
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        method: "POST",
+      },
+    );
+    const confirmations = await Promise.all(concurrentCodes.map((code) =>
+      handleOAuthTokenRequest(tokenRequest(code), handle.db)
+    ));
+    expect(confirmations.filter(({ status }) => status === 200)).toHaveLength(1);
+    const loserIndex = confirmations.findIndex(({ status }) => status === 400);
+    expect(loserIndex).toBeGreaterThanOrEqual(0);
+    await expect(confirmations[loserIndex]!.json()).resolves.toEqual({
+      error: "invalid_grant",
+      error_description: "connection_name_conflict",
+    });
+
+    const unchangedRetry = await handleOAuthTokenRequest(
+      tokenRequest(concurrentCodes[loserIndex]!),
+      handle.db,
+    );
+    expect(unchangedRetry.status).toBe(400);
+    await expect(unchangedRetry.json()).resolves.toEqual({
+      error: "invalid_grant",
+      error_description: "connection_name_conflict",
+    });
+    const [losingCode] = await handle.db
+      .select({ consumedAt: oauthAuthorizationCodes.consumedAt })
+      .from(oauthAuthorizationCodes)
+      .where(eq(
+        oauthAuthorizationCodes.codeHash,
+        await hashOpaqueToken(concurrentCodes[loserIndex]!),
+      ));
+    expect(losingCode?.consumedAt).toBeNull();
   });
 
   it("rejects rather than silently dropping scopes from another OAuth audience", async () => {
@@ -1040,7 +1639,12 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       scope: query.get("scope") ?? "",
       state: query.get("state"),
     });
-    const code = await createAuthorizationCode(handle.db, verified.accountId, authorization);
+    const code = await createAuthorizationCode(
+      handle.db,
+      verified.accountId,
+      authorization,
+      { mode: "create", label: "SDK integration client" },
+    );
     const tokens = await exchangeAuthorization(serverInfo.authorizationServerUrl, {
       authorizationCode: code,
       clientInformation,

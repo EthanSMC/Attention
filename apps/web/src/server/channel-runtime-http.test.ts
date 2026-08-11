@@ -138,13 +138,13 @@ function dependencies(
 ): ChannelRuntimeHttpDependencies & {
   createService: ReturnType<typeof vi.fn>;
   resolvePrincipal: ReturnType<typeof vi.fn>;
-  revokeClientTokens: ReturnType<typeof vi.fn>;
+  revokeRuntimeAuthorization: ReturnType<typeof vi.fn>;
 } {
   return {
     createService: vi.fn(() => runtimeService),
     getDatabase: vi.fn(() => ({} as AttentionDatabase)),
     resolvePrincipal: vi.fn(async () => principalValue),
-    revokeClientTokens: vi.fn(async () => undefined),
+    revokeRuntimeAuthorization: vi.fn(async () => true),
   };
 }
 
@@ -549,10 +549,13 @@ describe("channel runtime HTTP route operations", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(deps.revokeClientTokens).toHaveBeenCalledWith(
+    expect(deps.revokeRuntimeAuthorization).toHaveBeenCalledWith(
       expect.anything(),
-      accountId,
-      principal.clientId,
+      {
+        accountId,
+        clientId: principal.clientId,
+        installationId,
+      },
     );
     await expect(response.json()).resolves.toMatchObject({
       installation: { installation_id: installationId, status: "revoked" },

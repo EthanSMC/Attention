@@ -15,6 +15,7 @@ import {
   channelStart,
   channelStatus,
   isBridgeHost,
+  loadRuntimeRegistrationIdentity,
   verifyAttentionAccount,
 } from "./channel-command";
 import { defaultChannelState, loadChannelState, saveChannelState } from "./state";
@@ -545,12 +546,16 @@ describe("channel subcommands", () => {
     expect((await loadChannelState(base)).ownerUserId).toBe("owner");
   });
 
-  it("replaces the live reporter when Runtime OAuth changes account identity", async () => {
+  it("replaces the live reporter after DCR client rotation without rotating device identity", async () => {
     const base = await makeTempBase();
+    const dcrInstallationId = "11111111-1111-4111-8111-111111111111";
     const state = defaultChannelState();
     state.token = "local-ilink-token";
     state.accountId = "local-account";
+    state.runtimeReporter.installationId = dcrInstallationId;
     await saveChannelState(state, base);
+    const dcrIdentity = await loadRuntimeRegistrationIdentity(base);
+    expect(dcrIdentity.installationId).toBe(dcrInstallationId);
 
     const reporterOptions: RuntimeReporterOptions[] = [];
     const reporterStops: Array<{
@@ -656,18 +661,24 @@ describe("channel subcommands", () => {
     ).toBe(0);
 
     expect(reporterOptions).toHaveLength(2);
-    expect(reporterOptions[0]?.identity.installationId).not.toBe(
-      reporterOptions[1]?.identity.installationId,
+    expect(reporterOptions[0]?.identity.installationId).toBe(
+      dcrIdentity.installationId,
+    );
+    expect(reporterOptions[1]?.identity.installationId).toBe(
+      dcrIdentity.installationId,
+    );
+    expect(reporterOptions[1]?.identity.bindingId).toBe(
+      "22222222-2222-4222-8222-222222222222",
     );
     expect(reporterStops).toContainEqual({ discardPending: true, index: 0 });
     expect(persistedReporterStates).toHaveLength(2);
     expect(persistedReporterStates[0]?.bindingId).toBe(
       "22222222-2222-4222-8222-222222222222",
     );
-    expect(persistedReporterStates[1]?.bindingId).toBeNull();
-    expect(persistedReporterStates[1]?.installationId).not.toBe(
-      persistedReporterStates[0]?.installationId,
+    expect(persistedReporterStates[1]?.bindingId).toBe(
+      "22222222-2222-4222-8222-222222222222",
     );
+    expect(persistedReporterStates[1]?.installationId).toBe(dcrInstallationId);
     expect(persistedReporterStates[1]?.runtimeClientFingerprint).not.toBe(
       persistedReporterStates[0]?.runtimeClientFingerprint,
     );

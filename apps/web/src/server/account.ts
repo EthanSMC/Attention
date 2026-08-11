@@ -14,10 +14,9 @@ import {
   eq,
   externalChannelBindings,
   filterProfiles,
-  gt,
   isNull,
   oauthClients,
-  oauthRefreshTokens,
+  oauthConnections,
   type AttentionDatabase,
 } from "@attention/db";
 
@@ -406,28 +405,81 @@ function projectLocalChannelRuntimes(
   return runtimes;
 }
 
+interface McpOAuthConnectionRow {
+  audience: string;
+  clientName: string;
+  id: string;
+  kind: "mcp" | "runtime";
+  label: string;
+  lastAuthorizedAt: Date;
+  lastUsedAt: Date | null;
+  scopes: string[];
+}
+
+export interface McpOAuthConnectionOverview {
+  id: string;
+  label: string;
+  lastAuthorizedAt: Date;
+  lastUsedAt: Date | null;
+  scopes: string[];
+}
+
+export interface McpOAuthConnectionGroupOverview {
+  clientName: string;
+  connections: McpOAuthConnectionOverview[];
+}
+
+function normalizedOAuthClientName(value: string): string {
+  return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase("en-US");
+}
+
+function projectMcpOAuthConnections(
+  rows: McpOAuthConnectionRow[],
+): McpOAuthConnectionGroupOverview[] {
+  const groups = new Map<string, McpOAuthConnectionGroupOverview>();
+  for (const row of rows) {
+    if (row.audience !== "attention-mcp" || row.kind !== "mcp") continue;
+    const normalizedClientName = normalizedOAuthClientName(row.clientName);
+    let group = groups.get(normalizedClientName);
+    if (!group) {
+      group = { clientName: row.clientName.normalize("NFKC").trim(), connections: [] };
+      groups.set(normalizedClientName, group);
+    }
+    group.connections.push({
+      id: row.id,
+      label: row.label,
+      lastAuthorizedAt: row.lastAuthorizedAt,
+      lastUsedAt: row.lastUsedAt,
+      scopes: row.scopes,
+    });
+  }
+  return [...groups.values()];
+}
+
 export async function loadConnectionOverview(db: AttentionDatabase, accountId: string) {
-  const [oauth, pats, localChannelRuntimeRows] = await Promise.all([
+  const [oauthConnectionRows, pats, localChannelRuntimeRows] = await Promise.all([
     db
       .select({
-        clientId: oauthRefreshTokens.clientId,
+        audience: oauthConnections.audience,
         clientName: oauthClients.name,
-        createdAt: oauthRefreshTokens.createdAt,
-        expiresAt: oauthRefreshTokens.expiresAt,
-        id: oauthRefreshTokens.id,
-        scopes: oauthRefreshTokens.scopes,
+        id: oauthConnections.id,
+        kind: oauthConnections.kind,
+        label: oauthConnections.label,
+        lastAuthorizedAt: oauthConnections.lastAuthorizedAt,
+        lastUsedAt: oauthConnections.lastUsedAt,
+        scopes: oauthClients.allowedScopes,
       })
-      .from(oauthRefreshTokens)
-      .innerJoin(oauthClients, eq(oauthClients.clientId, oauthRefreshTokens.clientId))
+      .from(oauthConnections)
+      .innerJoin(oauthClients, eq(oauthClients.clientId, oauthConnections.clientId))
       .where(
         and(
-          eq(oauthRefreshTokens.accountId, accountId),
-          eq(oauthRefreshTokens.status, "active"),
-          isNull(oauthRefreshTokens.revokedAt),
-          gt(oauthRefreshTokens.expiresAt, new Date()),
+          eq(oauthConnections.accountId, accountId),
+          eq(oauthConnections.audience, "attention-mcp"),
+          eq(oauthConnections.kind, "mcp"),
+          isNull(oauthConnections.revokedAt),
         ),
       )
-      .orderBy(desc(oauthRefreshTokens.createdAt)),
+      .orderBy(desc(oauthConnections.lastAuthorizedAt)),
     db
       .select({
         createdAt: apiCredentials.createdAt,
@@ -469,7 +521,7 @@ export async function loadConnectionOverview(db: AttentionDatabase, accountId: s
   ]);
   return {
     localChannelRuntimes: projectLocalChannelRuntimes(localChannelRuntimeRows),
-    oauth,
+    mcpOAuthConnections: projectMcpOAuthConnections(oauthConnectionRows),
     pats: pats.map((pat) => ({
       ...pat,
       needsRotation: apiKeyScopes.some((scope) => !pat.scopes.includes(scope)),

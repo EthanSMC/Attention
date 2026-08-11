@@ -3,10 +3,16 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import {
+  checkOAuthConnectionName,
   OAuthError,
   validateAuthorizationRequest,
 } from "@attention/auth";
+import { and, eq, oauthClients } from "@attention/db";
 
+import {
+  OAuthAuthorizationForm,
+  type OAuthConnectionNameResultClient,
+} from "../../../components/oauth-authorization-form";
 import { PageIntro } from "../../../components/page-intro";
 import { accountIdentityLabel } from "../../../lib/attention";
 import { getWebDatabase } from "../../../server/db";
@@ -22,6 +28,8 @@ interface AuthorizationParams {
   client_id?: AuthorizationParam;
   code_challenge?: AuthorizationParam;
   code_challenge_method?: AuthorizationParam;
+  connection_error?: AuthorizationParam;
+  connection_label?: AuthorizationParam;
   redirect_uri?: AuthorizationParam;
   resource?: AuthorizationParam;
   response_type?: AuthorizationParam;
@@ -78,10 +86,11 @@ export default async function OAuthAuthorizePage({
   searchParams: Promise<AuthorizationParams>;
 }) {
   const params = await searchParams;
+  const database = getWebDatabase();
   let authorization;
   try {
     const origin = await authorizationOrigin();
-    authorization = await validateAuthorizationRequest(getWebDatabase(), {
+    authorization = await validateAuthorizationRequest(database, {
       clientId: single(params.client_id),
       codeChallenge: single(params.code_challenge),
       codeChallengeMethod: single(params.code_challenge_method),
@@ -101,6 +110,63 @@ export default async function OAuthAuthorizePage({
     redirect(`/auth?return_to=${encodeURIComponent(`/oauth/authorize?${queryString(params)}`)}`);
   }
   const accountLabel = accountIdentityLabel(principal);
+  const [clientMetadata] = await database
+    .select({
+      connectionKind: oauthClients.connectionKind,
+      deviceName: oauthClients.deviceName,
+    })
+    .from(oauthClients)
+    .where(
+      and(
+        eq(oauthClients.clientId, authorization.clientId),
+        eq(oauthClients.active, true),
+      ),
+    )
+    .limit(1);
+  const submittedLabel = single(params.connection_label);
+  const trustedRuntimeDeviceName =
+    authorization.audience === "attention-channel-runtime" &&
+    clientMetadata?.connectionKind === "runtime"
+      ? clientMetadata.deviceName
+      : null;
+  // A generic client name identifies software, not the user's physical
+  // connection. Only trusted Runtime DCR metadata is safe to prefill here.
+  const defaultLabel = submittedLabel || trustedRuntimeDeviceName || "";
+  let initialNameResult: OAuthConnectionNameResultClient | null = null;
+  let initialErrorCode = single(params.connection_error) || null;
+  try {
+    const result = await checkOAuthConnectionName(database, {
+      accountId: principal.accountId,
+      audience: authorization.audience,
+      label: defaultLabel,
+    });
+    initialNameResult = result.status === "available"
+      ? result
+      : {
+          ...result,
+          existing: {
+            ...result.existing,
+            createdAt: result.existing.createdAt.toISOString(),
+            lastUsedAt: result.existing.lastUsedAt?.toISOString() ?? null,
+          },
+        };
+  } catch (error) {
+    if (error instanceof Error && error.message === "invalid_connection_label") {
+      initialErrorCode = "invalid_connection_label";
+    } else {
+      initialErrorCode = "connection_name_check_failed";
+    }
+  }
+  const authorizationFields = {
+    client_id: authorization.clientId,
+    code_challenge: authorization.codeChallenge,
+    code_challenge_method: "S256",
+    redirect_uri: authorization.redirectUri,
+    resource: authorization.resource,
+    response_type: "code",
+    scope: authorization.scopes.join(" "),
+    ...(authorization.state ? { state: authorization.state } : {}),
+  };
   return (
     <div className="page-shell page-shell--form">
       <PageIntro
@@ -113,23 +179,15 @@ export default async function OAuthAuthorizePage({
         <h2>这个客户端将可以</h2>
         <ul>{authorization.scopes.map((scope) => <li key={scope}>{scopeLabels[scope] ?? scope}</li>)}</ul>
         <p>高级 scope 仍会在每次调用时检查当前会员权益；授权不会自动开通会员。</p>
-        <form action="/oauth/authorize/confirm" method="post">
-          <input name="client_id" type="hidden" value={authorization.clientId} />
-          <input name="code_challenge" type="hidden" value={authorization.codeChallenge} />
-          <input name="code_challenge_method" type="hidden" value="S256" />
-          <input name="redirect_uri" type="hidden" value={authorization.redirectUri} />
-          <input name="resource" type="hidden" value={authorization.resource} />
-          <input name="response_type" type="hidden" value="code" />
-          <input name="scope" type="hidden" value={authorization.scopes.join(" ")} />
-          {authorization.state ? <input name="state" type="hidden" value={authorization.state} /> : null}
-          <button className="button button--primary" type="submit">允许连接</button>
-          <a
-            className="button button--secondary"
-            href={`/oauth/authorize/cancel?${queryString(params)}`}
-          >
-            取消
-          </a>
-        </form>
+        <OAuthAuthorizationForm
+          cancelHref={`/oauth/authorize/cancel?${queryString(authorizationFields)}`}
+          clientId={authorization.clientId}
+          defaultLabel={defaultLabel}
+          fields={authorizationFields}
+          initialErrorCode={initialErrorCode}
+          initialNameResult={initialNameResult}
+          resource={authorization.resource}
+        />
       </section>
     </div>
   );

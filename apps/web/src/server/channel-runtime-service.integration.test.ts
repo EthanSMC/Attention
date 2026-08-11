@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { hashRuntimeInstallationId } from "@attention/auth";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   accounts,
@@ -9,6 +10,7 @@ import {
   agentInstallations,
   externalChannelBindingChallenges,
   oauthClients,
+  oauthConnections,
   type DatabaseHandle,
 } from "@attention/db";
 import { migrateDatabase } from "@attention/db/migrate";
@@ -60,6 +62,10 @@ describe.skipIf(!databaseUrl)("local channel runtime service with PostgreSQL", (
   let now = new Date("2026-08-07T08:00:00.000Z");
 
   beforeAll(async () => {
+    vi.stubEnv(
+      "ATTENTION_HMAC_SECRET",
+      "runtime-service-integration-secret-at-least-32-characters",
+    );
     handle = createDatabase(databaseUrl!, { maxConnections: 2 });
     await migrateDatabase(handle.db);
   });
@@ -87,7 +93,56 @@ describe.skipIf(!databaseUrl)("local channel runtime service with PostgreSQL", (
   });
 
   afterAll(async () => {
+    vi.unstubAllEnvs();
     await handle.close();
+  });
+
+  it("rebinds an installation only after its trusted logical connection rotates DCR clients", async () => {
+    const oldService = new ChannelRuntimeService(handle.db, {
+      now: () => now,
+      pairingSecret,
+    });
+    await oldService.registerInstallation(principal, registration);
+
+    const nextClientId = "runtime-integration-client-rotated";
+    const installationKeyHash = hashRuntimeInstallationId(installationId);
+    await handle.db.insert(oauthClients).values({
+      allowedScopes: [
+        "runtime:register",
+        "runtime:heartbeat",
+        "channel:bind:report",
+        "channel:disconnect:report",
+      ],
+      clientId: nextClientId,
+      connectionKind: "runtime",
+      deviceName: registration.device_name,
+      installationKeyHash,
+      name: "Rotated Runtime integration client",
+      redirectUris: ["http://127.0.0.1/rotated-callback"],
+    });
+    await handle.db.insert(oauthConnections).values({
+      accountId,
+      audience: "attention-channel-runtime",
+      clientId: nextClientId,
+      deviceName: registration.device_name,
+      installationKeyHash,
+      kind: "runtime",
+      label: "Integration Mac",
+      lastAuthorizedAt: now,
+      normalizedLabel: "integration mac",
+    });
+
+    const rotatedPrincipal = { accountId, clientId: nextClientId };
+    await expect(oldService.registerInstallation(
+      rotatedPrincipal,
+      registration,
+    )).resolves.toMatchObject({ installation_id: installationId });
+    const [stored] = await handle.db.select().from(agentInstallations);
+    expect(stored?.oauthClientId).toBe(nextClientId);
+    await expect(oldService.getInstallation(rotatedPrincipal, installationId))
+      .resolves.toMatchObject({ installation_id: installationId });
+    await expect(oldService.getInstallation(principal, installationId))
+      .rejects.toMatchObject({ code: "installation_not_found", status: 404 });
   });
 
   it("persists the complete lifecycle without storing the pairing code", async () => {
