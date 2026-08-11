@@ -1,6 +1,8 @@
 node_modules/
 .next/
 .playwright-cli/
+.pnpm-store/
+.worktrees/
 **/.impeccable/
 dist/
 coverage/
