@@ -35,7 +35,13 @@ trap cleanup EXIT
 ready=0
 for _attempt in $(seq 1 60); do
   if "$ATTENTION_DOCKER_BIN" exec "$container" \
-    pg_isready --username=attention_restore_owner --dbname=attention_restore >/dev/null 2>&1; then
+    psql \
+      --username=attention_restore_owner \
+      --dbname=attention_restore \
+      --no-align \
+      --tuples-only \
+      --set ON_ERROR_STOP=1 \
+      --command="SELECT 1" >/dev/null 2>&1; then
     ready=1
     break
   fi
