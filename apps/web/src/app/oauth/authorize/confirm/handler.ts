@@ -3,11 +3,13 @@ import {
   createAuthorizationCode,
   isOAuthConnectionNameConflict,
   OAuthError,
+  resolveRuntimeOAuthConnectionIntent,
   type OAuthConnectionIntent,
   type OAuthConnectionNameResult,
   type ValidatedAuthorizationRequest,
   validateAuthorizationRequest,
 } from "@attention/auth";
+import { CHANNEL_RUNTIME_RESOURCE } from "@attention/contracts";
 import type { AttentionDatabase } from "@attention/db";
 import type { NextRequest, NextResponse } from "next/server";
 
@@ -42,6 +44,7 @@ interface OAuthAuthorizationConfirmDependencies {
   ) => Promise<string>;
   database: AttentionDatabase;
   loadSession: (request: Request) => Promise<RequestSession>;
+  resolveRuntimeIntent: typeof resolveRuntimeOAuthConnectionIntent;
   validateRequest: typeof validateAuthorizationRequest;
 }
 
@@ -51,6 +54,7 @@ function defaultDependencies(): OAuthAuthorizationConfirmDependencies {
     createCode: createAuthorizationCode,
     database: getWebDatabase(),
     loadSession: getRequestSession,
+    resolveRuntimeIntent: resolveRuntimeOAuthConnectionIntent,
     validateRequest: validateAuthorizationRequest,
   };
 }
@@ -135,6 +139,28 @@ export async function handleOAuthAuthorizationConfirmRequest(
     form.get("replacement_connection_id") ?? "",
   );
   try {
+    if (authorization.audience === CHANNEL_RUNTIME_RESOURCE) {
+      const intent = await dependencies.resolveRuntimeIntent(
+        dependencies.database,
+        {
+          accountId: session.principal.accountId,
+          audience: CHANNEL_RUNTIME_RESOURCE,
+          clientId: authorization.clientId,
+          label: connectionLabel,
+          ...(replacementConnectionId ? { replacementConnectionId } : {}),
+        },
+      );
+      const code = await dependencies.createCode(
+        dependencies.database,
+        session.principal.accountId,
+        authorization,
+        intent,
+      );
+      const redirectTo = new URL(authorization.redirectUri);
+      redirectTo.searchParams.set("code", code);
+      if (authorization.state) redirectTo.searchParams.set("state", authorization.state);
+      return noStoreRedirect(redirectTo);
+    }
     const name = await dependencies.checkName(dependencies.database, {
       accountId: session.principal.accountId,
       audience: authorization.audience,

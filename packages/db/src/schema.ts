@@ -993,7 +993,17 @@ export const oauthConnections = pgTable(
   (table) => [
     uniqueIndex("oauth_connections_active_name_unique")
       .on(table.accountId, table.audience, table.normalizedLabel)
-      .where(sql`${table.revokedAt} IS NULL`)
+      .where(sql`${table.revokedAt} IS NULL`),
+    uniqueIndex("oauth_connections_active_runtime_installation_unique")
+      .on(
+        table.accountId,
+        table.audience,
+        table.kind,
+        table.installationKeyHash
+      )
+      .where(
+        sql`${table.audience} = 'attention-channel-runtime' AND ${table.kind} = 'runtime' AND ${table.installationKeyHash} IS NOT NULL AND ${table.revokedAt} IS NULL`
+      )
   ]
 );
 
@@ -1036,9 +1046,12 @@ export const oauthAuthorizationCodes = pgTable(
         AND ${table.normalizedConnectionLabel} IS NULL
         AND ${table.replacementConnectionId} IS NULL
       ) OR (
-        ${table.connectionId} IS NULL
-        AND ${table.connectionLabel} IS NOT NULL
+        ${table.connectionLabel} IS NOT NULL
         AND ${table.normalizedConnectionLabel} IS NOT NULL
+        AND (
+          ${table.connectionId} IS NULL
+          OR ${table.replacementConnectionId} IS NULL
+        )
       )`
     ),
     check(

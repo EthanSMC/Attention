@@ -9,6 +9,7 @@ import {
 } from "node:crypto";
 
 import {
+  CHANNEL_RUNTIME_RESOURCE,
   ChannelBindingChallengeSchema,
   ChannelBindingViewSchema,
   InstallationViewSchema,
@@ -27,6 +28,7 @@ import {
   type RuntimeCapabilities,
   type AgentIntegrationId,
 } from "@attention/contracts";
+import { hashRuntimeInstallationId } from "@attention/auth";
 import {
   agentInstallations,
   and,
@@ -37,6 +39,7 @@ import {
   externalChannelBindings,
   gt,
   isNull,
+  oauthConnections,
   sql,
   type AttentionDatabase,
   type AttentionTransaction,
@@ -590,10 +593,65 @@ export class ChannelRuntimeService {
           .for("update")
           .limit(1);
         if (existing) {
-          if (!isExactInstallationReplay(existing, registration)) {
+          if (isExactInstallationReplay(existing, registration)) {
+            return installationView(existing);
+          }
+          const installationKeyHash = hashRuntimeInstallationId(
+            registration.id,
+          );
+          const [trustedRotatedConnection] = await tx
+            .select({
+              deviceName: oauthConnections.deviceName,
+              id: oauthConnections.id,
+            })
+            .from(oauthConnections)
+            .where(
+              and(
+                eq(oauthConnections.accountId, principal.accountId),
+                eq(oauthConnections.audience, CHANNEL_RUNTIME_RESOURCE),
+                eq(oauthConnections.kind, "runtime"),
+                eq(oauthConnections.clientId, principal.clientId),
+                eq(
+                  oauthConnections.installationKeyHash,
+                  installationKeyHash,
+                ),
+                isNull(oauthConnections.revokedAt),
+              ),
+            )
+            .limit(1);
+          const replayAfterTrustedRotation = {
+            ...existing,
+            deviceName: registration.deviceName,
+            oauthClientId: registration.oauthClientId,
+          };
+          if (
+            existing.revokedAt ||
+            !trustedRotatedConnection ||
+            trustedRotatedConnection.deviceName !== registration.deviceName ||
+            !isExactInstallationReplay(
+              replayAfterTrustedRotation,
+              registration,
+            )
+          ) {
             error("installation_conflict", 409);
           }
-          return installationView(existing);
+          const [rebound] = await tx
+            .update(agentInstallations)
+            .set({
+              deviceName: registration.deviceName,
+              oauthClientId: registration.oauthClientId,
+              updatedAt: registration.updatedAt,
+            })
+            .where(
+              and(
+                eq(agentInstallations.id, registration.id),
+                eq(agentInstallations.accountId, registration.accountId),
+                eq(agentInstallations.oauthClientId, existing.oauthClientId),
+              ),
+            )
+            .returning();
+          if (!rebound) error("installation_conflict", 409);
+          return installationView(rebound);
         }
 
         const [inserted] = await tx

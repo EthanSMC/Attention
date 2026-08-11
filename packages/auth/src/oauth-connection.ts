@@ -6,11 +6,12 @@ import {
   oauthConnections,
   type AttentionDatabase,
 } from "@attention/db";
+import { CHANNEL_RUNTIME_RESOURCE } from "@attention/contracts";
 
 export type OAuthConnectionIntent =
   | { mode: "create"; label: string }
   | { mode: "replace"; label: string; replacementConnectionId: string }
-  | { mode: "rotate"; connectionId: string };
+  | { mode: "rotate"; connectionId: string; label: string };
 
 export type OAuthConnectionNameResult =
   | { status: "available"; label: string; normalizedLabel: string }
@@ -78,6 +79,112 @@ export async function checkOAuthConnectionName(
     ...normalized,
     existing,
   };
+}
+
+/**
+ * Resolves Runtime identity exclusively from server-validated DCR metadata.
+ * The dynamic OAuth client ID is only a pointer to that trusted metadata; it
+ * never becomes the installation identity itself.
+ */
+export async function resolveRuntimeOAuthConnectionIntent(
+  db: AttentionDatabase,
+  input: {
+    accountId: string;
+    audience: typeof CHANNEL_RUNTIME_RESOURCE;
+    clientId: string;
+    label: string;
+    replacementConnectionId?: string;
+  },
+): Promise<OAuthConnectionIntent> {
+  if (input.audience !== CHANNEL_RUNTIME_RESOURCE) {
+    throw new Error("invalid_runtime_audience");
+  }
+  const normalized = normalizeOAuthConnectionLabel(input.label);
+  const [trustedClient] = await db
+    .select({
+      connectionKind: oauthClients.connectionKind,
+      deviceName: oauthClients.deviceName,
+      installationKeyHash: oauthClients.installationKeyHash,
+    })
+    .from(oauthClients)
+    .where(
+      and(
+        eq(oauthClients.clientId, input.clientId),
+        eq(oauthClients.active, true),
+        eq(oauthClients.connectionKind, "runtime"),
+      ),
+    )
+    .limit(1);
+  if (
+    !trustedClient?.deviceName ||
+    !trustedClient.installationKeyHash ||
+    !/^[0-9a-f]{64}$/u.test(trustedClient.installationKeyHash)
+  ) {
+    throw new Error("invalid_runtime_client_metadata");
+  }
+
+  const [installationConnections, nameConnections] = await Promise.all([
+    db
+      .select({ id: oauthConnections.id })
+      .from(oauthConnections)
+      .where(
+        and(
+          eq(oauthConnections.accountId, input.accountId),
+          eq(oauthConnections.audience, CHANNEL_RUNTIME_RESOURCE),
+          eq(oauthConnections.kind, "runtime"),
+          eq(
+            oauthConnections.installationKeyHash,
+            trustedClient.installationKeyHash,
+          ),
+          isNull(oauthConnections.revokedAt),
+        ),
+      )
+      .limit(1),
+    db
+      .select({ id: oauthConnections.id })
+      .from(oauthConnections)
+      .where(
+        and(
+          eq(oauthConnections.accountId, input.accountId),
+          eq(oauthConnections.audience, CHANNEL_RUNTIME_RESOURCE),
+          eq(oauthConnections.normalizedLabel, normalized.normalizedLabel),
+          isNull(oauthConnections.revokedAt),
+        ),
+      )
+      .limit(1),
+  ]);
+  const installationConnection = installationConnections[0];
+  const nameConnection = nameConnections[0];
+
+  if (installationConnection) {
+    if (
+      (nameConnection && nameConnection.id !== installationConnection.id) ||
+      (input.replacementConnectionId &&
+        input.replacementConnectionId !== installationConnection.id)
+    ) {
+      throw new OAuthConnectionNameConflictError();
+    }
+    return {
+      connectionId: installationConnection.id,
+      label: normalized.label,
+      mode: "rotate",
+    };
+  }
+
+  if (nameConnection) {
+    if (input.replacementConnectionId === nameConnection.id) {
+      return {
+        label: normalized.label,
+        mode: "replace",
+        replacementConnectionId: nameConnection.id,
+      };
+    }
+    throw new OAuthConnectionNameConflictError();
+  }
+  if (input.replacementConnectionId) {
+    throw new OAuthConnectionNameConflictError();
+  }
+  return { label: normalized.label, mode: "create" };
 }
 
 export function isOAuthConnectionNameConflict(error: unknown): boolean {

@@ -218,6 +218,13 @@
       "when": 1786449424484,
       "tag": "0030_runtime_device_registration",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1786455761644,
+      "tag": "0031_runtime_oauth_connection_lifecycle",
+      "breakpoints": true
     }
   ]
 }

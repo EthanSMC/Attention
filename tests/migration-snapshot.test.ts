@@ -1,4 +1,11 @@
-import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -8,6 +15,37 @@ import { describe, expect, it } from "vitest";
 import * as schema from "../packages/db/src/schema";
 
 describe("Drizzle migration snapshot", () => {
+  it("enforces one active Runtime connection per trusted installation", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migrationPath = resolve(
+      root,
+      "packages/db/drizzle/0031_runtime_oauth_connection_lifecycle.sql",
+    );
+
+    expect(existsSync(migrationPath)).toBe(true);
+    if (!existsSync(migrationPath)) return;
+    const migration = readFileSync(migrationPath, "utf8");
+
+    expect(migration).toContain(
+      "oauth_connections_active_runtime_installation_unique",
+    );
+    expect(migration).toContain('"installation_key_hash" IS NOT NULL');
+    expect(migration).toContain('"audience" = \'attention-channel-runtime\'');
+    expect(migration).toContain('"kind" = \'runtime\'');
+    expect(migration).toContain('"revoked_at" IS NULL');
+    expect(migration).toContain(
+      "oauth_authorization_codes_connection_intent_check",
+    );
+    expect(migration).toContain(
+      'GRANT SELECT, INSERT, UPDATE ON TABLE "oauth_connections" TO "attention_web_runtime"',
+    );
+    expect(migration).toContain(
+      'GRANT SELECT, INSERT, UPDATE ON TABLE "oauth_authorization_codes" TO "attention_web_runtime"',
+    );
+    expect(migration).not.toContain('ALTER COLUMN "installation_key_hash" SET NOT NULL');
+    expect(migration).not.toContain('ALTER COLUMN "connection_id" SET NOT NULL');
+  });
+
   it("persists unambiguous pending OAuth connection intent", () => {
     const root = resolve(import.meta.dirname, "..");
     const migration = readFileSync(

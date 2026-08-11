@@ -21,6 +21,19 @@ const validatedAuthorization: ValidatedAuthorizationRequest = {
   scopes: ["profile:read"],
   state: "opaque-state",
 };
+const validatedRuntimeAuthorization: ValidatedAuthorizationRequest = {
+  ...validatedAuthorization,
+  audience: "attention-channel-runtime",
+  clientId: "runtime-client-2",
+  clientName: "Attention Local Channel Runtime",
+  resource: "https://attention.example/api/runtime",
+  scopes: [
+    "channel:bind:report",
+    "channel:disconnect:report",
+    "runtime:heartbeat",
+    "runtime:register",
+  ],
+};
 
 function principal(): SessionPrincipal {
   return {
@@ -74,6 +87,11 @@ function dependencies(result: OAuthConnectionNameResult = {
     loadSession: vi.fn(async () => ({
       principal: principal(),
       shouldClearCookie: false,
+    })),
+    resolveRuntimeIntent: vi.fn(async () => ({
+      connectionId,
+      label: "Renamed Studio Runtime",
+      mode: "rotate" as const,
     })),
     validateRequest: vi.fn(async () => validatedAuthorization),
   };
@@ -222,5 +240,39 @@ describe("OAuth authorization confirmation", () => {
     expect(response.status).toBe(400);
     expect(deps.checkName).not.toHaveBeenCalled();
     expect(deps.createCode).not.toHaveBeenCalled();
+  });
+
+  it("rotates the trusted Runtime installation while preserving the typed rename", async () => {
+    const deps = dependencies();
+    deps.validateRequest.mockResolvedValue(validatedRuntimeAuthorization);
+
+    const response = await handleOAuthAuthorizationConfirmRequest(
+      request({
+        client_id: "runtime-client-2",
+        connection_label: "Renamed Studio Runtime",
+        resource: "https://attention.example/api/runtime",
+        scope: validatedRuntimeAuthorization.scopes.join(" "),
+      }),
+      deps,
+    );
+
+    expect(response.status).toBe(303);
+    expect(deps.resolveRuntimeIntent).toHaveBeenCalledWith(deps.database, {
+      accountId,
+      audience: "attention-channel-runtime",
+      clientId: "runtime-client-2",
+      label: "Renamed Studio Runtime",
+    });
+    expect(deps.createCode).toHaveBeenCalledWith(
+      deps.database,
+      accountId,
+      validatedRuntimeAuthorization,
+      {
+        connectionId,
+        label: "Renamed Studio Runtime",
+        mode: "rotate",
+      },
+    );
+    expect(deps.checkName).not.toHaveBeenCalled();
   });
 });

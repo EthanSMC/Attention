@@ -151,6 +151,14 @@ export class OAuthError extends Error {
   }
 }
 
+export class OAuthRuntimeInstallationConflictError extends OAuthError {
+  constructor() {
+    super("invalid_grant");
+    this.name = "OAuthRuntimeInstallationConflictError";
+    this.message = "runtime_installation_authorization_conflict";
+  }
+}
+
 /**
  * A public OAuth client registration quota was exhausted.
  *
@@ -310,19 +318,10 @@ export async function createAuthorizationCode(
   intent: OAuthConnectionIntent,
   now = new Date(),
 ): Promise<string> {
-  let connectionId: string | null = null;
-  let connectionLabel: string | null = null;
-  let normalizedConnectionLabel: string | null = null;
-  let replacementConnectionId: string | null = null;
-  if (intent.mode === "rotate") {
-    connectionId = intent.connectionId;
-  } else {
-    const normalized = normalizeOAuthConnectionLabel(intent.label);
-    connectionLabel = normalized.label;
-    normalizedConnectionLabel = normalized.normalizedLabel;
-    replacementConnectionId =
-      intent.mode === "replace" ? intent.replacementConnectionId : null;
-  }
+  const normalized = normalizeOAuthConnectionLabel(intent.label);
+  const connectionId = intent.mode === "rotate" ? intent.connectionId : null;
+  const replacementConnectionId =
+    intent.mode === "replace" ? intent.replacementConnectionId : null;
   const code = createOpaqueToken();
   await db.insert(oauthAuthorizationCodes).values({
     accountId,
@@ -331,10 +330,10 @@ export async function createAuthorizationCode(
     codeChallenge: request.codeChallenge,
     codeHash: await hashOpaqueToken(code),
     connectionId,
-    connectionLabel,
+    connectionLabel: normalized.label,
     createdAt: now,
     expiresAt: new Date(now.getTime() + codeTtlMs),
-    normalizedConnectionLabel,
+    normalizedConnectionLabel: normalized.normalizedLabel,
     redirectUri: request.redirectUri,
     replacementConnectionId,
     scopes: request.scopes,
@@ -457,6 +456,7 @@ export async function exchangeAuthorizationCode(
   const requestedResource = resolveOAuthResource(input.resource, input.resources);
   let codeHash: string;
   try { codeHash = await hashOpaqueToken(input.code); } catch { throw new OAuthError("invalid_grant"); }
+  let runtimeExchange = false;
   try {
     return await db.transaction(async (tx) => {
       const [code] = await tx
@@ -475,6 +475,33 @@ export async function exchangeAuthorizationCode(
       if (code.audience !== requestedResource.audience) {
         throw new OAuthError("invalid_target");
       }
+      runtimeExchange = code.audience === CHANNEL_RUNTIME_RESOURCE;
+      const trustedRuntimeClient = runtimeExchange
+        ? (await tx
+            .select({
+              deviceName: oauthClients.deviceName,
+              installationKeyHash: oauthClients.installationKeyHash,
+            })
+            .from(oauthClients)
+            .where(
+              and(
+                eq(oauthClients.clientId, code.clientId),
+                eq(oauthClients.active, true),
+                eq(oauthClients.connectionKind, "runtime"),
+              ),
+            )
+            .limit(1))[0]
+        : null;
+      if (
+        runtimeExchange &&
+        (
+          !trustedRuntimeClient?.deviceName ||
+          !trustedRuntimeClient.installationKeyHash ||
+          !/^[0-9a-f]{64}$/u.test(trustedRuntimeClient.installationKeyHash)
+        )
+      ) {
+        throw new OAuthError("invalid_grant");
+      }
       await tx
         .update(oauthAuthorizationCodes)
         .set({ consumedAt: now })
@@ -490,9 +517,27 @@ export async function exchangeAuthorizationCode(
           .limit(1);
         if (
           !existing || existing.revokedAt ||
-          existing.accountId !== code.accountId || existing.audience !== code.audience
+          existing.accountId !== code.accountId || existing.audience !== code.audience ||
+          (runtimeExchange &&
+            (existing.kind !== "runtime" ||
+              existing.installationKeyHash !==
+                trustedRuntimeClient?.installationKeyHash))
         ) {
           throw new OAuthError("invalid_grant");
+        }
+        let rotateLabel: ReturnType<typeof normalizeOAuthConnectionLabel> | null = null;
+        if (code.connectionLabel || code.normalizedConnectionLabel) {
+          if (!code.connectionLabel || !code.normalizedConnectionLabel) {
+            throw new OAuthError("invalid_grant");
+          }
+          try {
+            rotateLabel = normalizeOAuthConnectionLabel(code.connectionLabel);
+          } catch {
+            throw new OAuthError("invalid_grant");
+          }
+          if (rotateLabel.normalizedLabel !== code.normalizedConnectionLabel) {
+            throw new OAuthError("invalid_grant");
+          }
         }
         connectionId = existing.id;
         await revokeConnectionCredentials(tx, code.accountId, [connectionId], now);
@@ -500,6 +545,20 @@ export async function exchangeAuthorizationCode(
           .update(oauthConnections)
           .set({
             clientId: code.clientId,
+            ...(trustedRuntimeClient
+              ? {
+                  deviceName: trustedRuntimeClient.deviceName,
+                  installationKeyHash:
+                    trustedRuntimeClient.installationKeyHash,
+                  kind: "runtime" as const,
+                }
+              : {}),
+            ...(rotateLabel
+              ? {
+                  label: rotateLabel.label,
+                  normalizedLabel: rotateLabel.normalizedLabel,
+                }
+              : {}),
             lastAuthorizedAt: now,
             updatedAt: now,
           })
@@ -544,6 +603,9 @@ export async function exchangeAuthorizationCode(
             accountId: code.accountId,
             audience: code.audience,
             clientId: code.clientId,
+            deviceName: trustedRuntimeClient?.deviceName ?? null,
+            installationKeyHash:
+              trustedRuntimeClient?.installationKeyHash ?? null,
             kind: code.audience === CHANNEL_RUNTIME_RESOURCE ? "runtime" : "mcp",
             label: code.connectionLabel,
             lastAuthorizedAt: now,
@@ -564,11 +626,43 @@ export async function exchangeAuthorizationCode(
       });
     });
   } catch (error) {
+    if (
+      runtimeExchange &&
+      (isOAuthConnectionNameConflict(error) ||
+        isRuntimeInstallationConflict(error))
+    ) {
+      throw new OAuthRuntimeInstallationConflictError();
+    }
     if (isOAuthConnectionNameConflict(error)) {
       throw new OAuthConnectionNameConflictError();
     }
     throw error;
   }
+}
+
+function isRuntimeInstallationConflict(error: unknown): boolean {
+  const seen = new Set<object>();
+  let current = error;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const candidate = current as {
+      cause?: unknown;
+      code?: unknown;
+      constraint?: unknown;
+      constraint_name?: unknown;
+    };
+    if (
+      candidate.code === "23505" &&
+      (candidate.constraint ===
+        "oauth_connections_active_runtime_installation_unique" ||
+        candidate.constraint_name ===
+          "oauth_connections_active_runtime_installation_unique")
+    ) {
+      return true;
+    }
+    current = candidate.cause;
+  }
+  return false;
 }
 
 export async function rotateRefreshToken(
@@ -905,6 +999,70 @@ export async function revokeOAuthConnection(
       .limit(1);
     if (!connection) return;
     await revokeLockedOAuthConnections(tx, accountId, [connection.id], now);
+  });
+}
+
+export async function revokeRuntimeOAuthInstallation(
+  db: AttentionDatabase,
+  input: {
+    accountId: string;
+    clientId: string;
+    installationId: string;
+  },
+  now = new Date(),
+): Promise<boolean> {
+  const installationKeyHash = hashRuntimeInstallationId(input.installationId);
+  return db.transaction(async (tx) => {
+    const [connection] = await tx
+      .select({ id: oauthConnections.id })
+      .from(oauthConnections)
+      .where(
+        and(
+          eq(oauthConnections.accountId, input.accountId),
+          eq(oauthConnections.audience, CHANNEL_RUNTIME_RESOURCE),
+          eq(oauthConnections.kind, "runtime"),
+          eq(oauthConnections.installationKeyHash, installationKeyHash),
+          isNull(oauthConnections.revokedAt),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (connection) {
+      await revokeLockedOAuthConnections(
+        tx,
+        input.accountId,
+        [connection.id],
+        now,
+      );
+    }
+
+    // Rolling compatibility: credentials issued before logical connection
+    // links existed can only be scoped to their exact legacy Runtime client.
+    await tx
+      .update(oauthAccessTokens)
+      .set({ revokedAt: now, status: "revoked" })
+      .where(
+        and(
+          eq(oauthAccessTokens.accountId, input.accountId),
+          eq(oauthAccessTokens.audience, CHANNEL_RUNTIME_RESOURCE),
+          eq(oauthAccessTokens.clientId, input.clientId),
+          isNull(oauthAccessTokens.connectionId),
+          eq(oauthAccessTokens.status, "active"),
+        ),
+      );
+    await tx
+      .update(oauthRefreshTokens)
+      .set({ revokedAt: now, status: "revoked" })
+      .where(
+        and(
+          eq(oauthRefreshTokens.accountId, input.accountId),
+          eq(oauthRefreshTokens.audience, CHANNEL_RUNTIME_RESOURCE),
+          eq(oauthRefreshTokens.clientId, input.clientId),
+          isNull(oauthRefreshTokens.connectionId),
+          eq(oauthRefreshTokens.status, "active"),
+        ),
+      );
+    return Boolean(connection);
   });
 }
 

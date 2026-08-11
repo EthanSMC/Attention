@@ -2,7 +2,7 @@ import "server-only";
 
 import {
   oauthDefaultScopesByAudience,
-  revokeOAuthClientConnection,
+  revokeRuntimeOAuthInstallation,
 } from "@attention/auth";
 import {
   CHANNEL_RUNTIME_API_VERSION,
@@ -61,11 +61,14 @@ export interface ChannelRuntimeHttpDependencies {
   createService: (database: AttentionDatabase) => ChannelRuntimeHttpService;
   getDatabase: () => AttentionDatabase;
   resolvePrincipal: (request: Request) => Promise<OAuthCloudPrincipal | null>;
-  revokeClientTokens: (
+  revokeRuntimeAuthorization: (
     database: AttentionDatabase,
-    accountId: string,
-    clientId: string,
-  ) => Promise<void>;
+    input: {
+      accountId: string;
+      clientId: string;
+      installationId: string;
+    },
+  ) => Promise<boolean>;
 }
 
 const installationParamsSchema = z
@@ -128,7 +131,7 @@ const defaultDependencies: ChannelRuntimeHttpDependencies = {
     }),
   getDatabase: getWebDatabase,
   resolvePrincipal: resolveRuntimePrincipal,
-  revokeClientTokens: revokeOAuthClientConnection,
+  revokeRuntimeAuthorization: revokeRuntimeOAuthInstallation,
 };
 
 function runtimePrincipal(principal: OAuthCloudPrincipal): RuntimePrincipal {
@@ -387,10 +390,13 @@ export async function handleRevokeInstallation(
       if (result.oauthClientId !== principal.clientId) {
         throw new Error("runtime_oauth_client_mismatch");
       }
-      await dependencies.revokeClientTokens(
+      await dependencies.revokeRuntimeAuthorization(
         database,
-        principal.accountId,
-        result.oauthClientId,
+        {
+          accountId: principal.accountId,
+          clientId: result.oauthClientId,
+          installationId,
+        },
       );
       return noStoreJson({
         installation: result.installation,
