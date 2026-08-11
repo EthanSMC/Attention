@@ -6,7 +6,9 @@ import {
   useRef,
   type Dispatch,
   type FormEvent,
+  type KeyboardEvent,
   type MouseEvent,
+  type RefObject,
 } from "react";
 
 export type OAuthConnectionNameResultClient =
@@ -27,8 +29,9 @@ export interface OAuthAuthorizationFormState {
   confirmationOpen: boolean;
   error: string | null;
   label: string;
-  phase: "checking" | "error" | "ready";
+  phase: "checking" | "error" | "idle" | "ready";
   result: OAuthConnectionNameResultClient | null;
+  touched?: boolean;
 }
 
 type OAuthAuthorizationFormAction =
@@ -55,6 +58,7 @@ export function oauthAuthorizationFormReducer(
         label: action.label,
         phase: "checking",
         result: null,
+        touched: true,
       };
     case "validation_started":
       if (state.label !== action.label) return state;
@@ -196,8 +200,36 @@ interface OAuthAuthorizationFormProps {
 interface OAuthAuthorizationFormPresentationProps
   extends Omit<OAuthAuthorizationFormProps, "defaultLabel" | "initialErrorCode" | "initialNameResult"> {
   dispatch: Dispatch<OAuthAuthorizationFormAction>;
+  replacementFocus?: {
+    cancelRef: RefObject<HTMLButtonElement | null>;
+    confirmRef: RefObject<HTMLButtonElement | null>;
+    onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
+    triggerRef: RefObject<HTMLButtonElement | null>;
+  };
   state: OAuthAuthorizationFormState;
   submissionGuard: { current: boolean };
+}
+
+export function oauthReplacementDialogNavigation({
+  activeIndex,
+  focusCount,
+  key,
+  shiftKey,
+}: {
+  activeIndex: number;
+  focusCount: number;
+  key: string;
+  shiftKey: boolean;
+}): { close?: true; focusIndex?: number; preventDefault: boolean } | null {
+  if (key === "Escape") return { close: true, preventDefault: true };
+  if (key !== "Tab" || focusCount < 1) return null;
+  if (shiftKey && activeIndex <= 0) {
+    return { focusIndex: focusCount - 1, preventDefault: true };
+  }
+  if (!shiftKey && (activeIndex < 0 || activeIndex >= focusCount - 1)) {
+    return { focusIndex: 0, preventDefault: true };
+  }
+  return null;
 }
 
 function errorMessage(code: unknown): string {
@@ -281,6 +313,7 @@ export function OAuthAuthorizationFormPresentation({
   cancelHref,
   dispatch,
   fields,
+  replacementFocus,
   state,
   submissionGuard,
 }: OAuthAuthorizationFormPresentationProps) {
@@ -364,7 +397,9 @@ export function OAuthAuthorizationFormPresentation({
       </p>
 
       <div aria-live="polite" className="oauth-authorization-form__status">
-        {state.phase === "checking"
+        {!state.touched && !state.label.trim()
+          ? "请输入用于识别设备或用途的名称。"
+          : state.phase === "checking"
           ? "正在检查名称…"
           : state.result?.status === "available"
             ? "名称可用"
@@ -391,6 +426,7 @@ export function OAuthAuthorizationFormPresentation({
           aria-labelledby="oauth-replacement-confirmation-title"
           aria-modal="true"
           className="collect-modal oauth-replacement-modal"
+          onKeyDown={replacementFocus?.onKeyDown}
           role="dialog"
         >
           <div aria-hidden="true" className="collect-modal__backdrop" />
@@ -409,6 +445,7 @@ export function OAuthAuthorizationFormPresentation({
               <button
                 className="button button--secondary"
                 onClick={() => dispatch({ type: "replacement_confirmation_closed" })}
+                ref={replacementFocus?.cancelRef}
                 type="button"
               >
                 返回修改
@@ -417,6 +454,7 @@ export function OAuthAuthorizationFormPresentation({
                 className="button button--primary"
                 data-confirm-replacement="true"
                 onClick={onReplacementConfirm}
+                ref={replacementFocus?.confirmRef}
                 type="submit"
               >
                 确认替换
@@ -429,6 +467,7 @@ export function OAuthAuthorizationFormPresentation({
           <button
             className="button button--primary"
             disabled={!canSubmit}
+            ref={replaceableResult ? replacementFocus?.triggerRef : undefined}
             type="submit"
           >
             {primaryLabel}
@@ -455,11 +494,16 @@ export function OAuthAuthorizationForm({
     confirmationOpen: false,
     error: initialErrorCode ? errorMessage(initialErrorCode) : null,
     label: defaultLabel,
-    phase: initialNameResult ? "ready" : initialErrorCode ? "error" : "checking",
+    phase: initialNameResult ? "ready" : initialErrorCode ? "error" : "idle",
     result: initialNameResult,
+    touched: Boolean(initialErrorCode),
   });
   const validatorRef = useRef<ReturnType<typeof createOAuthConnectionNameValidator> | null>(null);
   const submissionGuard = useRef(false);
+  const replacementCancelRef = useRef<HTMLButtonElement | null>(null);
+  const replacementConfirmRef = useRef<HTMLButtonElement | null>(null);
+  const replacementTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const confirmationWasOpenRef = useRef(false);
 
   useEffect(() => {
     const validator = createOAuthConnectionNameValidator({
@@ -477,12 +521,50 @@ export function OAuthAuthorizationForm({
       request: requestConnectionName,
     });
     validatorRef.current = validator;
-    validator.validate(defaultLabel, { clientId, immediate: true, resource });
+    if (defaultLabel.trim()) {
+      validator.validate(defaultLabel, { clientId, immediate: true, resource });
+    }
     return () => {
       validator.cancel();
       validatorRef.current = null;
     };
   }, [clientId, defaultLabel, resource]);
+
+  useEffect(() => {
+    if (state.confirmationOpen) {
+      confirmationWasOpenRef.current = true;
+      const frame = window.requestAnimationFrame(() => {
+        replacementCancelRef.current?.focus();
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
+    if (!confirmationWasOpenRef.current) return;
+    confirmationWasOpenRef.current = false;
+    const frame = window.requestAnimationFrame(() => {
+      replacementTriggerRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [state.confirmationOpen]);
+
+  function onReplacementDialogKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const actions = [replacementCancelRef.current, replacementConfirmRef.current]
+      .filter((element): element is HTMLButtonElement => element !== null && !element.disabled);
+    const navigation = oauthReplacementDialogNavigation({
+      activeIndex: actions.indexOf(document.activeElement as HTMLButtonElement),
+      focusCount: actions.length,
+      key: event.key,
+      shiftKey: event.shiftKey,
+    });
+    if (!navigation) return;
+    if (navigation.preventDefault) event.preventDefault();
+    if (navigation.close) {
+      dispatch({ type: "replacement_confirmation_closed" });
+      return;
+    }
+    if (navigation.focusIndex !== undefined) {
+      actions[navigation.focusIndex]?.focus();
+    }
+  }
 
   function formDispatch(action: OAuthAuthorizationFormAction) {
     dispatch(action);
@@ -506,6 +588,12 @@ export function OAuthAuthorizationForm({
       clientId={clientId}
       dispatch={formDispatch}
       fields={fields}
+      replacementFocus={{
+        cancelRef: replacementCancelRef,
+        confirmRef: replacementConfirmRef,
+        onKeyDown: onReplacementDialogKeyDown,
+        triggerRef: replacementTriggerRef,
+      }}
       resource={resource}
       state={state}
       submissionGuard={submissionGuard}

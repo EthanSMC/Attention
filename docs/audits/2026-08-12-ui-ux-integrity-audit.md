@@ -152,3 +152,20 @@ The highest-signal files are:
 - `23-doc-claude-code-mobile-frame.png`
 
 Responsive screenshots use a disposable 390 × 844 iframe shell so the audited application receives a true 390 px layout viewport without altering product code. The gray area outside the frame is the audit shell, not part of Attention.
+
+## Remediation result
+
+The audit above remains the frozen pre-remediation record. A second walkthrough after remediation confirmed:
+
+| Finding | Result |
+| --- | --- |
+| P1-01 replacement-dialog focus lifecycle | Resolved. The safe secondary action receives initial focus, Tab is contained within both decisions, Escape returns to editing, and focus returns to “继续并替换”. |
+| P2-01 fixed collection action obstruction | Resolved. The action remains on discovery and the personal collection surface, and is absent from settings, membership, authentication, OAuth, and documentation tasks. |
+| P2-02 unrelated OAuth chrome | Resolved. OAuth uses a focused Attention brand/back header with no product navigation, mobile navigation, or collection action. |
+| P2-03 password recovery return path | Resolved. The login module preserves its validated caller return path instead of forcing account settings. |
+| P2-04 flat permission disclosure | Resolved. Every exact scope remains visible and is grouped into content, AI/digest, moderation, and account categories from one shared component used by all clients. |
+| P2-05 hidden active document tab | Resolved. The active Agent document scrolls into the center of the mobile document navigation on entry. |
+| P3-01 premature empty-name error | Resolved. The untouched field starts with neutral guidance; validation becomes corrective only after interaction or a returned server error. |
+| P3-02 hidden horizontal continuation | Resolved. Mobile settings and document navigation retain one horizontal pattern and add a restrained edge cue. |
+
+Post-remediation browser acceptance repeated both Codex and Claude Code consent pages, Codex duplicate replacement, account settings, membership, and Claude Code documentation. The 390 px views remained free of document-level overflow and content obstruction. Codex and Claude Code rendered the same category order, exact scope set, connection-name behavior, and two-decision authorization structure.

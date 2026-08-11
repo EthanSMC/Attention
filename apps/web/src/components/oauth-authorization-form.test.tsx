@@ -11,6 +11,7 @@ import {
   createOAuthConnectionNameValidator,
   OAuthAuthorizationForm,
   OAuthAuthorizationFormPresentation,
+  oauthReplacementDialogNavigation,
   oauthAuthorizationFormReducer,
   type OAuthAuthorizationFormState,
 } from "./oauth-authorization-form";
@@ -153,6 +154,18 @@ describe("OAuthAuthorizationForm", () => {
     expect(actionCount(markup)).toBe(2);
   });
 
+  it("keeps an untouched empty name neutral until the user interacts", () => {
+    const markup = renderToStaticMarkup(createElement(OAuthAuthorizationForm, {
+      ...formProps,
+      defaultLabel: "",
+      initialNameResult: null,
+    }));
+
+    expect(markup).toContain("请输入用于识别设备或用途的名称");
+    expect(markup).not.toContain('role="alert"');
+    expect(markup).not.toContain("请输入 1–80 个可见字符");
+  });
+
   it("shows a concise old-connection summary and replacement action for a duplicate", () => {
     const markup = renderToStaticMarkup(createElement(OAuthAuthorizationForm, {
       ...formProps,
@@ -286,5 +299,26 @@ describe("OAuthAuthorizationForm", () => {
     expect(button.disabled).toBe(true);
     expect(attributes.get("aria-busy")).toBe("true");
     expect(actionCount(renderToStaticMarkup(tree))).toBe(2);
+  });
+
+  it("defines a two-action keyboard loop and Escape close behavior", () => {
+    expect(oauthReplacementDialogNavigation({
+      activeIndex: 0,
+      focusCount: 2,
+      key: "Tab",
+      shiftKey: true,
+    })).toEqual({ focusIndex: 1, preventDefault: true });
+    expect(oauthReplacementDialogNavigation({
+      activeIndex: 1,
+      focusCount: 2,
+      key: "Tab",
+      shiftKey: false,
+    })).toEqual({ focusIndex: 0, preventDefault: true });
+    expect(oauthReplacementDialogNavigation({
+      activeIndex: 0,
+      focusCount: 2,
+      key: "Escape",
+      shiftKey: false,
+    })).toEqual({ close: true, preventDefault: true });
   });
 });
