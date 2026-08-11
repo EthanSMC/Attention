@@ -57,60 +57,25 @@ WITH "oauth_credential_activity" AS (
 	FROM "oauth_credential_activity"
 	GROUP BY "account_id", "client_id", "audience"
 ),
-"normalized_candidates" AS (
-	SELECT
-		"connection_candidates".*,
-		"oauth_clients"."name" AS "client_name",
-		BTRIM(
-			REGEXP_REPLACE(
-				NORMALIZE("oauth_clients"."name", NFKC),
-				'[[:space:]]+',
-				' ',
-				'g'
-			)
-		) AS "display_client_name",
-		LOWER(
-			BTRIM(
-				REGEXP_REPLACE(
-					NORMALIZE("oauth_clients"."name", NFKC),
-					'[[:space:]]+',
-					' ',
-					'g'
-				)
-			)
-		) AS "normalized_client_name"
-	FROM "connection_candidates"
-	INNER JOIN "oauth_clients"
-		ON "oauth_clients"."client_id" = "connection_candidates"."client_id"
-),
 "ranked_connections" AS (
 	SELECT
-		"normalized_candidates".*,
+		"connection_candidates".*,
 		ROW_NUMBER() OVER (
 			PARTITION BY
-				"normalized_candidates"."account_id",
-				"normalized_candidates"."audience"
+				"connection_candidates"."account_id",
+				"connection_candidates"."audience"
 			ORDER BY
-				"normalized_candidates"."first_authorized_at",
-				"normalized_candidates"."normalized_client_name" COLLATE "C",
-				"normalized_candidates"."client_id" COLLATE "C"
+				"connection_candidates"."first_authorized_at",
+				"connection_candidates"."client_id" COLLATE "C"
 		) AS "import_rank"
-	FROM "normalized_candidates"
+	FROM "connection_candidates"
 ),
 "labeled_connections" AS (
 	SELECT
 		"ranked_connections".*,
-		' · imported ' || "import_rank"::text AS "import_suffix"
+		'Imported connection ' || LPAD("import_rank"::text, 20, '0') AS "connection_label",
+		'imported connection ' || LPAD("import_rank"::text, 20, '0') AS "normalized_connection_label"
 	FROM "ranked_connections"
-),
-"bounded_labels" AS (
-	SELECT
-		"labeled_connections".*,
-		LEFT(
-			"display_client_name",
-			GREATEST(0, 80 - CHAR_LENGTH("import_suffix"))
-		) || "import_suffix" AS "connection_label"
-	FROM "labeled_connections"
 )
 INSERT INTO "oauth_connections" (
 	"account_id",
@@ -133,21 +98,12 @@ SELECT
 		ELSE 'mcp'::"oauth_connection_kind"
 	END,
 	"connection_label",
-	LOWER(
-		BTRIM(
-			REGEXP_REPLACE(
-				NORMALIZE("connection_label", NFKC),
-				'[[:space:]]+',
-				' ',
-				'g'
-			)
-		)
-	),
+	"normalized_connection_label",
 	"last_authorized_at",
 	"last_used_at",
 	"first_authorized_at",
 	"last_authorized_at"
-FROM "bounded_labels";--> statement-breakpoint
+FROM "labeled_connections";--> statement-breakpoint
 UPDATE "oauth_authorization_codes" AS "credential"
 SET "connection_id" = "connection"."id"
 FROM "oauth_connections" AS "connection"

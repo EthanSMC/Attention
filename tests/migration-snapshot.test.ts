@@ -56,22 +56,23 @@ describe("Drizzle migration snapshot", () => {
     );
 
     expect(migration).toContain('AS "import_rank"');
-    expect(migration).toContain("' · imported '");
+    expect(migration).toContain("'Imported connection '");
+    expect(migration).toContain("'imported connection '");
+    expect(migration).toContain('LPAD("import_rank"::text, 20, \'0\')');
     expect(migration).not.toContain('LEFT("client_id", 8)');
     expect(migration).not.toContain("TO_CHAR(");
   });
 
-  it("normalizes historical OAuth connection labels like the product", () => {
+  it("avoids SQL Unicode semantics in historical OAuth connection labels", () => {
     const root = resolve(import.meta.dirname, "..");
     const migration = readFileSync(
       resolve(root, "packages/db/drizzle/0028_oauth_connection_identity.sql"),
       "utf8",
     );
 
-    expect(migration).toContain("NORMALIZE(");
-    expect(migration).toContain("NFKC");
-    expect(migration).toContain("'[[:space:]]+'");
-    expect(migration).toContain('AS "normalized_client_name"');
+    expect(migration).not.toContain("NORMALIZE(");
+    expect(migration).not.toContain("REGEXP_REPLACE(");
+    expect(migration).not.toContain('"oauth_clients"."name"');
   });
 
   it("produces no migration when the checked-in schema is unchanged", () => {

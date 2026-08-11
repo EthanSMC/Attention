@@ -191,6 +191,14 @@ const oauthResources = {
   "attention-sync": "http://localhost:3000/api/sync",
 } as const;
 
+function normalizeOAuthConnectionLabel(value: string): string {
+  return value
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/gu, " ")
+    .toLowerCase();
+}
+
 describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
   let handle: DatabaseHandle;
 
@@ -272,9 +280,10 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     await handle.sql.unsafe(`
       INSERT INTO oauth_clients (client_id, name, redirect_uris, allowed_scopes)
       VALUES
-        ('sharedprefix-client-a', E'  Ａgent\\t Name  ', '["http://127.0.0.1:43901/callback"]'::jsonb, '["profile:read"]'::jsonb),
-        ('sharedprefix-client-b', 'agent  name', '["http://127.0.0.1:43902/callback"]'::jsonb, '["profile:read"]'::jsonb),
-        ('sharedprefix-client-c', 'Agent Name · imported 1', '["http://127.0.0.1:43903/callback"]'::jsonb, '["profile:read"]'::jsonb)
+        ('sharedprefix-client-a', U&'\\FEFF\\0130STANBUL', '["http://127.0.0.1:43901/callback"]'::jsonb, '["profile:read"]'::jsonb),
+        ('sharedprefix-client-b', U&'Greek \\03C2', '["http://127.0.0.1:43902/callback"]'::jsonb, '["profile:read"]'::jsonb),
+        ('sharedprefix-client-c', 'Imported connection 00000000000000000001', '["http://127.0.0.1:43903/callback"]'::jsonb, '["profile:read"]'::jsonb),
+        ('sharedprefix-client-d', E'  Ａgent\\t Name  ', '["http://127.0.0.1:43904/callback"]'::jsonb, '["profile:read"]'::jsonb)
     `);
     await handle.sql.unsafe(
       'ALTER TABLE "oauth_access_tokens" DROP COLUMN "connection_id"',
@@ -303,7 +312,8 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
         VALUES
           (repeat('a', 64), $1, 'sharedprefix-client-a', 'http://127.0.0.1:43901/callback', '["profile:read"]'::jsonb, 'attention-mcp', 'challenge-a', '2026-08-11 11:00:00+00', '2026-08-11 10:00:00+00'),
           (repeat('b', 64), $1, 'sharedprefix-client-b', 'http://127.0.0.1:43902/callback', '["profile:read"]'::jsonb, 'attention-mcp', 'challenge-b', '2026-08-11 11:00:00+00', '2026-08-11 10:00:00+00'),
-          (repeat('c', 64), $1, 'sharedprefix-client-c', 'http://127.0.0.1:43903/callback', '["profile:read"]'::jsonb, 'attention-mcp', 'challenge-c', '2026-08-11 11:00:00+00', '2026-08-11 10:00:00+00')
+          (repeat('c', 64), $1, 'sharedprefix-client-c', 'http://127.0.0.1:43903/callback', '["profile:read"]'::jsonb, 'attention-mcp', 'challenge-c', '2026-08-11 11:00:00+00', '2026-08-11 10:00:00+00'),
+          (repeat('d', 64), $1, 'sharedprefix-client-d', 'http://127.0.0.1:43904/callback', '["profile:read"]'::jsonb, 'attention-mcp', 'challenge-d', '2026-08-11 11:00:00+00', '2026-08-11 10:00:00+00')
       `,
       [verified.accountId],
     );
@@ -321,10 +331,11 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     }
 
     const connections = await handle.sql<
-      { clientId: string; label: string; normalizedLabel: string }[]
+      { clientId: string; deviceName: string | null; label: string; normalizedLabel: string }[]
     >`
       SELECT
         client_id AS "clientId",
+        device_name AS "deviceName",
         label,
         normalized_label AS "normalizedLabel"
       FROM oauth_connections
@@ -335,20 +346,34 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     expect(connections).toEqual([
       {
         clientId: "sharedprefix-client-a",
-        label: "Agent Name · imported 1",
-        normalizedLabel: "agent name · imported 1",
+        deviceName: null,
+        label: "Imported connection 00000000000000000001",
+        normalizedLabel: "imported connection 00000000000000000001",
       },
       {
         clientId: "sharedprefix-client-b",
-        label: "agent name · imported 2",
-        normalizedLabel: "agent name · imported 2",
+        deviceName: null,
+        label: "Imported connection 00000000000000000002",
+        normalizedLabel: "imported connection 00000000000000000002",
       },
       {
         clientId: "sharedprefix-client-c",
-        label: "Agent Name · imported 1 · imported 3",
-        normalizedLabel: "agent name · imported 1 · imported 3",
+        deviceName: null,
+        label: "Imported connection 00000000000000000003",
+        normalizedLabel: "imported connection 00000000000000000003",
+      },
+      {
+        clientId: "sharedprefix-client-d",
+        deviceName: null,
+        label: "Imported connection 00000000000000000004",
+        normalizedLabel: "imported connection 00000000000000000004",
       },
     ]);
+    expect(
+      connections.map(({ label, normalizedLabel }) =>
+        normalizeOAuthConnectionLabel(label) === normalizedLabel
+      ),
+    ).toEqual([true, true, true, true]);
 
     const [backfillState] = await handle.sql<
       { connectedCodes: number; distinctNames: number; totalConnections: number }[]
@@ -362,9 +387,9 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
         AND audience = 'attention-mcp'
     `;
     expect(backfillState).toEqual({
-      connectedCodes: 3,
-      distinctNames: 3,
-      totalConnections: 3,
+      connectedCodes: 4,
+      distinctNames: 4,
+      totalConnections: 4,
     });
 
     const nullability = await handle.sql<{ isNullable: "YES" | "NO" }[]>`
@@ -384,6 +409,23 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       { isNullable: "YES" },
       { isNullable: "YES" },
     ]);
+
+    const [connectionForeignKeys] = await handle.sql<{ count: number }[]>`
+      SELECT count(*)::integer AS count
+      FROM information_schema.table_constraints AS constraints
+      INNER JOIN information_schema.key_column_usage AS columns
+        ON columns.constraint_schema = constraints.constraint_schema
+        AND columns.constraint_name = constraints.constraint_name
+      WHERE constraints.constraint_type = 'FOREIGN KEY'
+        AND constraints.table_schema = 'public'
+        AND constraints.table_name IN (
+          'oauth_authorization_codes',
+          'oauth_access_tokens',
+          'oauth_refresh_tokens'
+        )
+        AND columns.column_name = 'connection_id'
+    `;
+    expect(connectionForeignKeys?.count).toBe(3);
 
     const [runtimePrivileges] = await handle.sql<
       { canInsert: boolean; canSelect: boolean; canUpdate: boolean }[]
@@ -413,13 +455,13 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
           created_at
         )
         VALUES (
-          repeat('d', 64),
+          repeat('e', 64),
           $1,
           'sharedprefix-client-a',
           'http://127.0.0.1:43901/callback',
           '["profile:read"]'::jsonb,
           'attention-mcp',
-          'challenge-d',
+          'challenge-e',
           '2026-08-11 12:00:00+00',
           '2026-08-11 11:00:00+00'
         )
@@ -429,7 +471,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     const [expandPhaseWrite] = await handle.sql<{ connectionId: string | null }[]>`
       SELECT connection_id AS "connectionId"
       FROM oauth_authorization_codes
-      WHERE code_hash = ${"d".repeat(64)}
+      WHERE code_hash = ${"e".repeat(64)}
     `;
     expect(expandPhaseWrite?.connectionId).toBeNull();
   });
