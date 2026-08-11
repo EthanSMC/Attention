@@ -6,6 +6,7 @@ import {
   useRef,
   type Dispatch,
   type FormEvent,
+  type MouseEvent,
 } from "react";
 
 export type OAuthConnectionNameResultClient =
@@ -196,6 +197,7 @@ interface OAuthAuthorizationFormPresentationProps
   extends Omit<OAuthAuthorizationFormProps, "defaultLabel" | "initialErrorCode" | "initialNameResult"> {
   dispatch: Dispatch<OAuthAuthorizationFormAction>;
   state: OAuthAuthorizationFormState;
+  submissionGuard: { current: boolean };
 }
 
 function errorMessage(code: unknown): string {
@@ -280,6 +282,7 @@ export function OAuthAuthorizationFormPresentation({
   dispatch,
   fields,
   state,
+  submissionGuard,
 }: OAuthAuthorizationFormPresentationProps) {
   const replaceableResult = state.result?.status === "replaceable"
     ? state.result
@@ -287,16 +290,40 @@ export function OAuthAuthorizationFormPresentation({
   const canSubmit = state.phase === "ready" && state.result !== null;
   const primaryLabel = replaceableResult ? "继续并替换" : "继续";
 
+  function resetReplacementSubmission(button: HTMLButtonElement | null) {
+    submissionGuard.current = false;
+    if (!button) return;
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
+
   function onSubmit(event: FormEvent<HTMLFormElement>) {
+    const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
+    const confirmed = submitter?.dataset.confirmReplacement === "true";
     if (!canSubmit) {
       event.preventDefault();
+      if (confirmed) resetReplacementSubmission(submitter);
       return;
     }
-    const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLElement | null;
-    const confirmed = submitter?.dataset.confirmReplacement === "true";
     if (replaceableResult && !confirmed) {
       event.preventDefault();
       dispatch({ type: "replacement_confirmation_opened" });
+    }
+  }
+
+  function onReplacementConfirm(event: MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    const button = event.currentTarget;
+    if (!canSubmit || !replaceableResult || submissionGuard.current || !button.form) {
+      return;
+    }
+    submissionGuard.current = true;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    try {
+      button.form.requestSubmit(button);
+    } catch {
+      resetReplacementSubmission(button);
     }
   }
 
@@ -389,6 +416,7 @@ export function OAuthAuthorizationFormPresentation({
               <button
                 className="button button--primary"
                 data-confirm-replacement="true"
+                onClick={onReplacementConfirm}
                 type="submit"
               >
                 确认替换
@@ -431,6 +459,7 @@ export function OAuthAuthorizationForm({
     result: initialNameResult,
   });
   const validatorRef = useRef<ReturnType<typeof createOAuthConnectionNameValidator> | null>(null);
+  const submissionGuard = useRef(false);
 
   useEffect(() => {
     const validator = createOAuthConnectionNameValidator({
@@ -479,6 +508,7 @@ export function OAuthAuthorizationForm({
       fields={fields}
       resource={resource}
       state={state}
+      submissionGuard={submissionGuard}
     />
   );
 }

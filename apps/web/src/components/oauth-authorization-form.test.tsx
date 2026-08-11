@@ -1,4 +1,9 @@
-import { createElement } from "react";
+import {
+  createElement,
+  isValidElement,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -48,6 +53,23 @@ const formProps = {
 
 function actionCount(markup: string): number {
   return (markup.match(/<(?:a|button)\b/gu) ?? []).length;
+}
+
+function findElement(
+  node: ReactNode,
+  predicate: (element: ReactElement<Record<string, unknown>>) => boolean,
+): ReactElement<Record<string, unknown>> | null {
+  if (!isValidElement<Record<string, unknown>>(node)) return null;
+  if (predicate(node)) return node;
+  const children = node.props.children;
+  if (Array.isArray(children)) {
+    for (const child of children) {
+      const match = findElement(child as ReactNode, predicate);
+      if (match) return match;
+    }
+    return null;
+  }
+  return findElement(children as ReactNode, predicate);
 }
 
 describe("OAuthAuthorizationForm", () => {
@@ -168,6 +190,7 @@ describe("OAuthAuthorizationForm", () => {
         ...formProps,
         dispatch: () => undefined,
         state: unique,
+        submissionGuard: { current: false },
       },
     ));
 
@@ -195,6 +218,7 @@ describe("OAuthAuthorizationForm", () => {
         ...formProps,
         dispatch: () => undefined,
         state: confirming,
+        submissionGuard: { current: false },
       },
     ));
 
@@ -204,5 +228,63 @@ describe("OAuthAuthorizationForm", () => {
     expect(markup).toContain("返回修改");
     expect(markup).not.toContain("取消授权</a>");
     expect(actionCount(markup)).toBe(2);
+
+    const closed = oauthAuthorizationFormReducer(confirming, {
+      type: "replacement_confirmation_closed",
+    });
+    const closedMarkup = renderToStaticMarkup(createElement(
+      OAuthAuthorizationFormPresentation,
+      {
+        ...formProps,
+        dispatch: () => undefined,
+        state: closed,
+        submissionGuard: { current: false },
+      },
+    ));
+    expect(closed.confirmationOpen).toBe(false);
+    expect(closedMarkup).toContain("继续并替换");
+    expect(closedMarkup).toContain("取消授权");
+    expect(actionCount(closedMarkup)).toBe(2);
+  });
+
+  it("accepts only one synchronous click on the replacement confirmation", () => {
+    const confirming: OAuthAuthorizationFormState = {
+      confirmationOpen: true,
+      error: null,
+      label: "Office MacBook",
+      phase: "ready",
+      result: replaceable,
+    };
+    const submissionGuard = { current: false };
+    const tree = OAuthAuthorizationFormPresentation({
+      ...formProps,
+      dispatch: () => undefined,
+      state: confirming,
+      submissionGuard,
+    });
+    const confirmButton = findElement(
+      tree,
+      (element) => element.type === "button" &&
+        element.props.children === "确认替换",
+    );
+    const onClick = confirmButton?.props.onClick as ((event: unknown) => void) | undefined;
+    const requestSubmit = vi.fn();
+    const attributes = new Map<string, string>();
+    const button = {
+      disabled: false,
+      form: { requestSubmit },
+      setAttribute: (name: string, value: string) => attributes.set(name, value),
+    };
+    const preventDefault = vi.fn();
+
+    expect(onClick).toBeTypeOf("function");
+    onClick?.({ currentTarget: button, preventDefault });
+    onClick?.({ currentTarget: button, preventDefault });
+
+    expect(requestSubmit).toHaveBeenCalledTimes(1);
+    expect(requestSubmit).toHaveBeenCalledWith(button);
+    expect(button.disabled).toBe(true);
+    expect(attributes.get("aria-busy")).toBe("true");
+    expect(actionCount(renderToStaticMarkup(tree))).toBe(2);
   });
 });
