@@ -107,6 +107,10 @@ export const oauthCredentialStatusEnum = pgEnum("oauth_credential_status", [
   "active",
   "revoked"
 ]);
+export const oauthConnectionKindEnum = pgEnum("oauth_connection_kind", [
+  "mcp",
+  "runtime"
+]);
 export const apiCredentialStatusEnum = pgEnum("api_credential_status", [
   "active",
   "revoked"
@@ -948,6 +952,35 @@ export const oauthClients = pgTable(
   ]
 );
 
+export const oauthConnections = pgTable(
+  "oauth_connections",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    clientId: varchar("client_id", { length: 128 })
+      .notNull()
+      .references(() => oauthClients.clientId),
+    audience: varchar("audience", { length: 128 }).notNull(),
+    kind: oauthConnectionKindEnum("kind").notNull(),
+    label: varchar("label", { length: 80 }).notNull(),
+    normalizedLabel: varchar("normalized_label", { length: 80 }).notNull(),
+    deviceName: varchar("device_name", { length: 80 }),
+    installationKeyHash: char("installation_key_hash", { length: 64 }),
+    lastAuthorizedAt: timestamp("last_authorized_at", { withTimezone: true }).notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+  },
+  (table) => [
+    uniqueIndex("oauth_connections_active_name_unique")
+      .on(table.accountId, table.audience, table.normalizedLabel)
+      .where(sql`${table.revokedAt} IS NULL`)
+  ]
+);
+
 export const oauthAuthorizationCodes = pgTable(
   "oauth_authorization_codes",
   {
@@ -959,6 +992,7 @@ export const oauthAuthorizationCodes = pgTable(
     clientId: varchar("client_id", { length: 128 })
       .notNull()
       .references(() => oauthClients.clientId, { onDelete: "cascade" }),
+    connectionId: uuid("connection_id").references(() => oauthConnections.id),
     redirectUri: text("redirect_uri").notNull(),
     scopes: jsonb("scopes").$type<string[]>().notNull(),
     audience: varchar("audience", { length: 128 }).notNull(),
@@ -988,6 +1022,7 @@ export const oauthAccessTokens = pgTable(
     clientId: varchar("client_id", { length: 128 })
       .notNull()
       .references(() => oauthClients.clientId, { onDelete: "cascade" }),
+    connectionId: uuid("connection_id").references(() => oauthConnections.id),
     scopes: jsonb("scopes").$type<string[]>().notNull(),
     audience: varchar("audience", { length: 128 }).notNull(),
     status: oauthCredentialStatusEnum("status").default("active").notNull(),
@@ -1014,6 +1049,7 @@ export const oauthRefreshTokens = pgTable(
     clientId: varchar("client_id", { length: 128 })
       .notNull()
       .references(() => oauthClients.clientId, { onDelete: "cascade" }),
+    connectionId: uuid("connection_id").references(() => oauthConnections.id),
     scopes: jsonb("scopes").$type<string[]>().notNull(),
     audience: varchar("audience", { length: 128 }).notNull(),
     status: oauthCredentialStatusEnum("status").default("active").notNull(),

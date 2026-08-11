@@ -5,7 +5,24 @@ import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
+import * as schema from "../packages/db/src/schema";
+
 describe("Drizzle migration snapshot", () => {
+  it("persists OAuth connection identity and active-name uniqueness", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migration = readFileSync(
+      resolve(root, "packages/db/drizzle/0028_oauth_connection_identity.sql"),
+      "utf8",
+    );
+
+    expect(schema.oauthConnections).toBeDefined();
+    expect(schema.oauthAuthorizationCodes.connectionId).toBeDefined();
+    expect(schema.oauthAccessTokens.connectionId).toBeDefined();
+    expect(schema.oauthRefreshTokens.connectionId).toBeDefined();
+    expect(migration).toContain("oauth_connections_active_name_unique");
+    expect(migration).toContain('WHERE "revoked_at" IS NULL');
+  });
+
   it("produces no migration when the checked-in schema is unchanged", () => {
     const root = resolve(import.meta.dirname, "..");
     const probe = mkdtempSync(resolve(tmpdir(), "attention-migration-snapshot-"));

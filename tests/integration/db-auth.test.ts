@@ -153,6 +153,7 @@ import {
   moderationVotes,
   membershipGrants,
   oauthClients,
+  oauthConnections,
   type ModerationRepositoryError,
   pendingCandidateSets,
   publicContentAttributionsCurrent,
@@ -256,6 +257,45 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     const redeemed = await redeemInvitation(handle.db, invitation.token);
     return { invitation, redeemed };
   }
+
+  it("rejects duplicate active OAuth connection names after normalization", async () => {
+    const challenge = await createLoginChallenge(handle.db, {
+      email: "oauth-connection-name@example.com",
+    });
+    const verified = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: challenge.challengeId,
+      code: challenge.code,
+    });
+    const client = await registerPublicOAuthClient(handle.db, {
+      name: "OAuth Connection Test Client",
+      requesterFingerprint: "9".repeat(64),
+      redirectUris: ["http://127.0.0.1:43829/callback"],
+    });
+    const lastAuthorizedAt = new Date();
+
+    await handle.db.insert(oauthConnections).values({
+      accountId: verified.accountId,
+      audience: "attention-mcp",
+      clientId: client.clientId,
+      kind: "mcp",
+      label: "Attention Agent",
+      normalizedLabel: "attention agent",
+      lastAuthorizedAt,
+    });
+
+    await expect(
+      handle.db.insert(oauthConnections).values({
+        accountId: verified.accountId,
+        audience: "attention-mcp",
+        clientId: client.clientId,
+        kind: "mcp",
+        label: "  ATTENTION AGENT  ",
+        normalizedLabel: "attention agent",
+        lastAuthorizedAt,
+      }),
+    ).rejects.toMatchObject({ code: "23505" });
+  });
 
   async function principalFor(
     redeemed: Awaited<ReturnType<typeof createRedeemedAccount>>["redeemed"]
