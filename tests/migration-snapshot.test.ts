@@ -23,6 +23,57 @@ describe("Drizzle migration snapshot", () => {
     expect(migration).toContain('WHERE "revoked_at" IS NULL');
   });
 
+  it("grants the web runtime access to OAuth connections", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migration = readFileSync(
+      resolve(root, "packages/db/drizzle/0028_oauth_connection_identity.sql"),
+      "utf8",
+    );
+
+    expect(migration).toContain(
+      'GRANT SELECT, INSERT, UPDATE ON TABLE "oauth_connections" TO "attention_web_runtime"',
+    );
+  });
+
+  it("keeps OAuth connection links nullable during rollout", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migration = readFileSync(
+      resolve(root, "packages/db/drizzle/0028_oauth_connection_identity.sql"),
+      "utf8",
+    );
+
+    expect(schema.oauthAuthorizationCodes.connectionId.notNull).toBe(false);
+    expect(schema.oauthAccessTokens.connectionId.notNull).toBe(false);
+    expect(schema.oauthRefreshTokens.connectionId.notNull).toBe(false);
+    expect(migration).not.toContain('ALTER COLUMN "connection_id" SET NOT NULL');
+  });
+
+  it("gives every historical OAuth connection a globally ranked import label", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migration = readFileSync(
+      resolve(root, "packages/db/drizzle/0028_oauth_connection_identity.sql"),
+      "utf8",
+    );
+
+    expect(migration).toContain('AS "import_rank"');
+    expect(migration).toContain("' · imported '");
+    expect(migration).not.toContain('LEFT("client_id", 8)');
+    expect(migration).not.toContain("TO_CHAR(");
+  });
+
+  it("normalizes historical OAuth connection labels like the product", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migration = readFileSync(
+      resolve(root, "packages/db/drizzle/0028_oauth_connection_identity.sql"),
+      "utf8",
+    );
+
+    expect(migration).toContain("NORMALIZE(");
+    expect(migration).toContain("NFKC");
+    expect(migration).toContain("'[[:space:]]+'");
+    expect(migration).toContain('AS "normalized_client_name"');
+  });
+
   it("produces no migration when the checked-in schema is unchanged", () => {
     const root = resolve(import.meta.dirname, "..");
     const probe = mkdtempSync(resolve(tmpdir(), "attention-migration-snapshot-"));

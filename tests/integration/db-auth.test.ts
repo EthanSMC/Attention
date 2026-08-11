@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import {
   Client,
@@ -258,6 +259,181 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     return { invitation, redeemed };
   }
 
+  it("backfills adversarial historical OAuth connection names without collisions", async () => {
+    const challenge = await createLoginChallenge(handle.db, {
+      email: "oauth-migration-backfill@example.com",
+    });
+    const verified = await verifyLoginChallenge(handle.db, {
+      acceptTerms: true,
+      challengeId: challenge.challengeId,
+      code: challenge.code,
+    });
+
+    await handle.sql.unsafe(`
+      INSERT INTO oauth_clients (client_id, name, redirect_uris, allowed_scopes)
+      VALUES
+        ('sharedprefix-client-a', E'  Ａgent\\t Name  ', '["http://127.0.0.1:43901/callback"]'::jsonb, '["profile:read"]'::jsonb),
+        ('sharedprefix-client-b', 'agent  name', '["http://127.0.0.1:43902/callback"]'::jsonb, '["profile:read"]'::jsonb),
+        ('sharedprefix-client-c', 'Agent Name · imported 1', '["http://127.0.0.1:43903/callback"]'::jsonb, '["profile:read"]'::jsonb)
+    `);
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_access_tokens" DROP COLUMN "connection_id"',
+    );
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_authorization_codes" DROP COLUMN "connection_id"',
+    );
+    await handle.sql.unsafe(
+      'ALTER TABLE "oauth_refresh_tokens" DROP COLUMN "connection_id"',
+    );
+    await handle.sql.unsafe('DROP TABLE "oauth_connections"');
+    await handle.sql.unsafe('DROP TYPE "oauth_connection_kind"');
+    await handle.sql.unsafe(
+      `
+        INSERT INTO oauth_authorization_codes (
+          code_hash,
+          account_id,
+          client_id,
+          redirect_uri,
+          scopes,
+          audience,
+          code_challenge,
+          expires_at,
+          created_at
+        )
+        VALUES
+          (repeat('a', 64), $1, 'sharedprefix-client-a', 'http://127.0.0.1:43901/callback', '["profile:read"]'::jsonb, 'attention-mcp', 'challenge-a', '2026-08-11 11:00:00+00', '2026-08-11 10:00:00+00'),
+          (repeat('b', 64), $1, 'sharedprefix-client-b', 'http://127.0.0.1:43902/callback', '["profile:read"]'::jsonb, 'attention-mcp', 'challenge-b', '2026-08-11 11:00:00+00', '2026-08-11 10:00:00+00'),
+          (repeat('c', 64), $1, 'sharedprefix-client-c', 'http://127.0.0.1:43903/callback', '["profile:read"]'::jsonb, 'attention-mcp', 'challenge-c', '2026-08-11 11:00:00+00', '2026-08-11 10:00:00+00')
+      `,
+      [verified.accountId],
+    );
+
+    const root = resolve(import.meta.dirname, "../..");
+    const migration = readFileSync(
+      resolve(root, "packages/db/drizzle/0028_oauth_connection_identity.sql"),
+      "utf8",
+    );
+    for (const statement of migration
+      .split("--> statement-breakpoint")
+      .map((part) => part.trim())
+      .filter(Boolean)) {
+      await handle.sql.unsafe(statement);
+    }
+
+    const connections = await handle.sql<
+      { clientId: string; label: string; normalizedLabel: string }[]
+    >`
+      SELECT
+        client_id AS "clientId",
+        label,
+        normalized_label AS "normalizedLabel"
+      FROM oauth_connections
+      WHERE account_id = ${verified.accountId}
+        AND audience = 'attention-mcp'
+      ORDER BY client_id
+    `;
+    expect(connections).toEqual([
+      {
+        clientId: "sharedprefix-client-a",
+        label: "Agent Name · imported 1",
+        normalizedLabel: "agent name · imported 1",
+      },
+      {
+        clientId: "sharedprefix-client-b",
+        label: "agent name · imported 2",
+        normalizedLabel: "agent name · imported 2",
+      },
+      {
+        clientId: "sharedprefix-client-c",
+        label: "Agent Name · imported 1 · imported 3",
+        normalizedLabel: "agent name · imported 1 · imported 3",
+      },
+    ]);
+
+    const [backfillState] = await handle.sql<
+      { connectedCodes: number; distinctNames: number; totalConnections: number }[]
+    >`
+      SELECT
+        (SELECT count(*)::integer FROM oauth_authorization_codes WHERE connection_id IS NOT NULL) AS "connectedCodes",
+        count(DISTINCT normalized_label)::integer AS "distinctNames",
+        count(*)::integer AS "totalConnections"
+      FROM oauth_connections
+      WHERE account_id = ${verified.accountId}
+        AND audience = 'attention-mcp'
+    `;
+    expect(backfillState).toEqual({
+      connectedCodes: 3,
+      distinctNames: 3,
+      totalConnections: 3,
+    });
+
+    const nullability = await handle.sql<{ isNullable: "YES" | "NO" }[]>`
+      SELECT is_nullable AS "isNullable"
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name IN (
+          'oauth_authorization_codes',
+          'oauth_access_tokens',
+          'oauth_refresh_tokens'
+        )
+        AND column_name = 'connection_id'
+      ORDER BY table_name
+    `;
+    expect(nullability).toEqual([
+      { isNullable: "YES" },
+      { isNullable: "YES" },
+      { isNullable: "YES" },
+    ]);
+
+    const [runtimePrivileges] = await handle.sql<
+      { canInsert: boolean; canSelect: boolean; canUpdate: boolean }[]
+    >`
+      SELECT
+        has_table_privilege('attention_web_runtime', 'oauth_connections', 'INSERT') AS "canInsert",
+        has_table_privilege('attention_web_runtime', 'oauth_connections', 'SELECT') AS "canSelect",
+        has_table_privilege('attention_web_runtime', 'oauth_connections', 'UPDATE') AS "canUpdate"
+    `;
+    expect(runtimePrivileges).toEqual({
+      canInsert: true,
+      canSelect: true,
+      canUpdate: true,
+    });
+
+    await handle.sql.unsafe(
+      `
+        INSERT INTO oauth_authorization_codes (
+          code_hash,
+          account_id,
+          client_id,
+          redirect_uri,
+          scopes,
+          audience,
+          code_challenge,
+          expires_at,
+          created_at
+        )
+        VALUES (
+          repeat('d', 64),
+          $1,
+          'sharedprefix-client-a',
+          'http://127.0.0.1:43901/callback',
+          '["profile:read"]'::jsonb,
+          'attention-mcp',
+          'challenge-d',
+          '2026-08-11 12:00:00+00',
+          '2026-08-11 11:00:00+00'
+        )
+      `,
+      [verified.accountId],
+    );
+    const [expandPhaseWrite] = await handle.sql<{ connectionId: string | null }[]>`
+      SELECT connection_id AS "connectionId"
+      FROM oauth_authorization_codes
+      WHERE code_hash = ${"d".repeat(64)}
+    `;
+    expect(expandPhaseWrite?.connectionId).toBeNull();
+  });
+
   it("rejects duplicate active OAuth connection names after normalization", async () => {
     const challenge = await createLoginChallenge(handle.db, {
       email: "oauth-connection-name@example.com",
@@ -294,7 +470,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
         normalizedLabel: "attention agent",
         lastAuthorizedAt,
       }),
-    ).rejects.toMatchObject({ code: "23505" });
+    ).rejects.toMatchObject({ cause: { code: "23505" } });
   });
 
   async function principalFor(

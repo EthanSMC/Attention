@@ -57,35 +57,60 @@ WITH "oauth_credential_activity" AS (
 	FROM "oauth_credential_activity"
 	GROUP BY "account_id", "client_id", "audience"
 ),
-"ranked_connections" AS (
+"normalized_candidates" AS (
 	SELECT
 		"connection_candidates".*,
 		"oauth_clients"."name" AS "client_name",
-		ROW_NUMBER() OVER (
-			PARTITION BY
-				"connection_candidates"."account_id",
-				"connection_candidates"."audience",
-				LOWER(BTRIM(LEFT("oauth_clients"."name", 80)))
-			ORDER BY
-				"connection_candidates"."first_authorized_at",
-				"connection_candidates"."client_id"
-		) AS "name_ordinal"
+		BTRIM(
+			REGEXP_REPLACE(
+				NORMALIZE("oauth_clients"."name", NFKC),
+				'[[:space:]]+',
+				' ',
+				'g'
+			)
+		) AS "display_client_name",
+		LOWER(
+			BTRIM(
+				REGEXP_REPLACE(
+					NORMALIZE("oauth_clients"."name", NFKC),
+					'[[:space:]]+',
+					' ',
+					'g'
+				)
+			)
+		) AS "normalized_client_name"
 	FROM "connection_candidates"
 	INNER JOIN "oauth_clients"
 		ON "oauth_clients"."client_id" = "connection_candidates"."client_id"
 ),
+"ranked_connections" AS (
+	SELECT
+		"normalized_candidates".*,
+		ROW_NUMBER() OVER (
+			PARTITION BY
+				"normalized_candidates"."account_id",
+				"normalized_candidates"."audience"
+			ORDER BY
+				"normalized_candidates"."first_authorized_at",
+				"normalized_candidates"."normalized_client_name" COLLATE "C",
+				"normalized_candidates"."client_id" COLLATE "C"
+		) AS "import_rank"
+	FROM "normalized_candidates"
+),
 "labeled_connections" AS (
 	SELECT
 		"ranked_connections".*,
-		CASE
-			WHEN "name_ordinal" = 1 THEN LEFT(BTRIM("client_name"), 80)
-			ELSE LEFT(BTRIM("client_name"), 50)
-				|| ' · '
-				|| TO_CHAR("first_authorized_at" AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')
-				|| ' · '
-				|| LEFT("client_id", 8)
-		END AS "connection_label"
+		' · imported ' || "import_rank"::text AS "import_suffix"
 	FROM "ranked_connections"
+),
+"bounded_labels" AS (
+	SELECT
+		"labeled_connections".*,
+		LEFT(
+			"display_client_name",
+			GREATEST(0, 80 - CHAR_LENGTH("import_suffix"))
+		) || "import_suffix" AS "connection_label"
+	FROM "labeled_connections"
 )
 INSERT INTO "oauth_connections" (
 	"account_id",
@@ -108,12 +133,21 @@ SELECT
 		ELSE 'mcp'::"oauth_connection_kind"
 	END,
 	"connection_label",
-	LOWER(BTRIM("connection_label")),
+	LOWER(
+		BTRIM(
+			REGEXP_REPLACE(
+				NORMALIZE("connection_label", NFKC),
+				'[[:space:]]+',
+				' ',
+				'g'
+			)
+		)
+	),
 	"last_authorized_at",
 	"last_used_at",
 	"first_authorized_at",
 	"last_authorized_at"
-FROM "labeled_connections";--> statement-breakpoint
+FROM "bounded_labels";--> statement-breakpoint
 UPDATE "oauth_authorization_codes" AS "credential"
 SET "connection_id" = "connection"."id"
 FROM "oauth_connections" AS "connection"
@@ -132,10 +166,8 @@ FROM "oauth_connections" AS "connection"
 WHERE "connection"."account_id" = "credential"."account_id"
 	AND "connection"."client_id" = "credential"."client_id"
 	AND "connection"."audience" = "credential"."audience";--> statement-breakpoint
-ALTER TABLE "oauth_access_tokens" ALTER COLUMN "connection_id" SET NOT NULL;--> statement-breakpoint
-ALTER TABLE "oauth_authorization_codes" ALTER COLUMN "connection_id" SET NOT NULL;--> statement-breakpoint
-ALTER TABLE "oauth_refresh_tokens" ALTER COLUMN "connection_id" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "oauth_access_tokens" ADD CONSTRAINT "oauth_access_tokens_connection_id_oauth_connections_id_fk" FOREIGN KEY ("connection_id") REFERENCES "public"."oauth_connections"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "oauth_authorization_codes" ADD CONSTRAINT "oauth_authorization_codes_connection_id_oauth_connections_id_fk" FOREIGN KEY ("connection_id") REFERENCES "public"."oauth_connections"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "oauth_refresh_tokens" ADD CONSTRAINT "oauth_refresh_tokens_connection_id_oauth_connections_id_fk" FOREIGN KEY ("connection_id") REFERENCES "public"."oauth_connections"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-CREATE UNIQUE INDEX "oauth_connections_active_name_unique" ON "oauth_connections" USING btree ("account_id", "audience", "normalized_label") WHERE "revoked_at" IS NULL;
+CREATE UNIQUE INDEX "oauth_connections_active_name_unique" ON "oauth_connections" USING btree ("account_id", "audience", "normalized_label") WHERE "revoked_at" IS NULL;--> statement-breakpoint
+GRANT SELECT, INSERT, UPDATE ON TABLE "oauth_connections" TO "attention_web_runtime";
