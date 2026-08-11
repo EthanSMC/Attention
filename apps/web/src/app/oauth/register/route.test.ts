@@ -50,6 +50,10 @@ describe("OAuth dynamic registration request limits", () => {
     const secret = "attention-registration-test-secret-at-least-32-characters";
     const installationId = "11111111-1111-4111-8111-111111111111";
     vi.stubEnv("ATTENTION_HMAC_SECRET", secret);
+    vi.stubEnv(
+      "ATTENTION_CHANNEL_RUNTIME_PUBLIC_URL",
+      "https://attention.example/api/runtime",
+    );
     const inserted: Array<Record<string, unknown>> = [];
     try {
       const response = await handleOAuthRegistrationRequest(

@@ -1449,6 +1449,10 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
         { mode: "create", label: "SHARED DESK" },
       ),
     ]);
+    vi.stubEnv(
+      "ATTENTION_MCP_PUBLIC_URL",
+      oauthResources["attention-mcp"],
+    );
     const tokenRequest = (code: string) => new Request(
       "http://localhost:3000/oauth/token",
       {

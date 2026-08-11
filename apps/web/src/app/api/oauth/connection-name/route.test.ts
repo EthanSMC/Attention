@@ -4,7 +4,7 @@ import type {
 } from "@attention/auth";
 import type { AttentionDatabase } from "@attention/db";
 import type { NextRequest } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { handleOAuthConnectionNameRequest } from "./handler";
 
@@ -64,6 +64,14 @@ function dependencies(result: OAuthConnectionNameResult = {
 describe("OAuth connection-name API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv(
+      "ATTENTION_MCP_PUBLIC_URL",
+      "https://attention.example/mcp",
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("requires an authenticated browser session without querying connection names", async () => {

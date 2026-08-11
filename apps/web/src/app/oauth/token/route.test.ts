@@ -2,7 +2,7 @@ import {
   OAuthConnectionNameConflictError,
 } from "@attention/auth";
 import type { AttentionDatabase } from "@attention/db";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { handleOAuthTokenRequest } from "./route";
 
@@ -22,6 +22,17 @@ function authorizationCodeRequest(): Request {
 }
 
 describe("OAuth token endpoint", () => {
+  beforeEach(() => {
+    vi.stubEnv(
+      "ATTENTION_MCP_PUBLIC_URL",
+      "https://attention.example/mcp",
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("maps a connection-name race to a stable restart-authorization response", async () => {
     const database = {
       transaction: async () => {
