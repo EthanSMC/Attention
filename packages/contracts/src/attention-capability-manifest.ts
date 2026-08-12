@@ -26,6 +26,7 @@ export const ATTENTION_MCP_TOOL_NAMES = [
   "attention_get_membership_status",
   "attention_list_collections",
   "attention_collect_content",
+  "attention_submit_content_enrichment",
   "attention_select_collection_candidate",
   "attention_get_collection_status",
   "attention_update_collection",
@@ -284,6 +285,26 @@ export const attentionCapabilityManifest =
           summary:
             "Collect a URL or platform share text privately, or publicly when the account has live Filter status.",
           tool_name: "attention_collect_content",
+          web_surface: {
+            kind: "page",
+            path: "/collect",
+            shared_policy: true,
+          },
+        },
+        {
+          contract_version: ATTENTION_MCP_TOOL_CONTRACT_VERSION,
+          entitlement: {
+            conditional: null,
+            required: "authenticated_account",
+          },
+          id: "content.enrichment.submit",
+          oauth: {
+            any_of_scopes: ["collection:write"],
+            audience: ATTENTION_MCP_OAUTH_AUDIENCE,
+          },
+          summary:
+            "Submit the first grounded summary and normalized tags for Content owned through an active collection without overwriting an existing shared result.",
+          tool_name: "attention_submit_content_enrichment",
           web_surface: {
             kind: "page",
             path: "/collect",

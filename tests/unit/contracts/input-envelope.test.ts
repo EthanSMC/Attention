@@ -64,7 +64,9 @@ describe("CollectorResponseSchema", () => {
       collection_id: "collection-1",
       source: "generic_web",
       content_type: "web_page",
-      current_visibility: "private"
+      current_visibility: "private",
+      enrichment_action: "generate_summary",
+      summary_status: "pending"
     });
 
     expect(response.status).toBe("already_collected");

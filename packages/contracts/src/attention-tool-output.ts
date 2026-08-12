@@ -185,6 +185,13 @@ export const AttentionToolSuccessOutputSchemas = {
     })
     .strict(),
   attention_collect_content: CollectorResponseSchema,
+  attention_submit_content_enrichment: z
+    .object({
+      content_id: databaseIdSchema,
+      status: z.enum(["enriched", "already_enriched"]),
+      summary_status: z.literal("ready"),
+    })
+    .strict(),
   attention_select_collection_candidate: CollectorResponseSchema,
   attention_get_collection_status: z
     .object({

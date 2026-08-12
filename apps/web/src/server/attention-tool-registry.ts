@@ -21,6 +21,10 @@ import {
   selectCandidateFromWeb,
 } from "./collection-service";
 import {
+  ContentEnrichmentServiceError,
+  submitContentEnrichment,
+} from "./content-enrichment-service";
+import {
   CollectionStatusServiceError,
   getCollectionStatus,
   updateCollectionVisibility,
@@ -43,6 +47,7 @@ export const ATTENTION_TOOL_NAMES = [
   "attention_get_membership_status",
   "attention_list_collections",
   "attention_collect_content",
+  "attention_submit_content_enrichment",
   "attention_select_collection_candidate",
   "attention_get_collection_status",
   "attention_update_collection",
@@ -142,6 +147,7 @@ export interface AttentionToolCoreDependencies {
   reportPublicContent: typeof reportPublicContent;
   retrieveForAgent: typeof retrieveForAgent;
   selectCandidateFromWeb: typeof selectCandidateFromWeb;
+  submitContentEnrichment: typeof submitContentEnrichment;
   updateDigestSettings: typeof updateDigestSettings;
   updateCollectionVisibility: typeof updateCollectionVisibility;
 }
@@ -243,6 +249,9 @@ function auditToolCall(
     collectionId:
       stringField(value, "collection_id") ??
       stringField(collection, "collection_id"),
+    contentId:
+      stringField(value, "content_id") ??
+      stringField(input ?? undefined, "content_id"),
     contractVersion: ATTENTION_TOOL_CONTRACT_VERSION,
     credentialId: context.caller.credentialId,
     credentialKind: context.caller.credentialKind,
@@ -452,6 +461,9 @@ const stableErrorGuidance: Readonly<Record<string, string>> = {
   attempt_not_found: "The collection attempt does not exist for this account.",
   candidate_invalid: "Submit the original content again to refresh its candidates.",
   candidate_not_found: "Choose a candidate returned by the same collection attempt.",
+  content_enrichment_hidden: "This Content cannot accept a replacement summary.",
+  content_not_eligible: "This Content is not eligible for enrichment.",
+  content_not_found: "The Content does not exist in an active collection for this account.",
   case_not_found: "Refresh the moderation case list and choose a current case.",
   case_not_open: "Refresh the moderation case list; this voting round is no longer open.",
   collection_deleted: "The collection has been deleted and cannot be updated.",
@@ -497,6 +509,13 @@ function knownServiceError(error: unknown): AttentionToolResult | null {
         "Attention could not complete this collection operation.",
     );
   }
+  if (error instanceof ContentEnrichmentServiceError) {
+    return toolError(
+      error.code,
+      stableErrorGuidance[error.code] ??
+        "Attention could not submit this Content enrichment.",
+    );
+  }
   if (error instanceof AgentAccessError) {
     return toolError(
       error.code,
@@ -538,6 +557,7 @@ const defaultCoreDependencies: AttentionToolCoreDependencies = {
   reportPublicContent,
   retrieveForAgent,
   selectCandidateFromWeb,
+  submitContentEnrichment,
   updateDigestSettings,
   updateCollectionVisibility,
 };
@@ -732,6 +752,54 @@ export function createAttentionToolRegistry(
       isVisible: (context) => hasScope(context, "collection:write"),
       name: "attention_collect_content",
       title: "Collect a link in Attention",
+    }),
+    defineAttentionTool({
+      annotations: {
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+        readOnlyHint: false,
+      },
+      description: "Submit the first grounded summary and normalized tags for Content in an active collection owned by the authenticated account. An existing shared summary is never overwritten.",
+      execute: async (
+        context,
+        { content_id, idempotency_key, summary, tags },
+      ) => {
+        if (!hasScope(context, "collection:write")) {
+          return insufficientScope("collection:write");
+        }
+        try {
+          const result = await core.submitContentEnrichment(
+            context.getDatabase(),
+            context,
+            { content_id, idempotency_key, summary, tags },
+          );
+          return toolSuccess({
+            content_id: result.contentId,
+            status: result.status,
+            summary_status: result.summaryStatus,
+          });
+        } catch (error) {
+          const known = knownServiceError(error);
+          if (known) return known;
+          throw error;
+        }
+      },
+      inputSchema: z
+        .object({
+          ...attentionClientContextShape,
+          content_id: z.string().uuid(),
+          idempotency_key: z.string().trim().min(8).max(128),
+          summary: z.string().trim().min(1).max(2_000),
+          tags: z
+            .array(z.string().trim().min(1).max(64))
+            .min(1)
+            .max(8),
+        })
+        .strict(),
+      isVisible: (context) => hasScope(context, "collection:write"),
+      name: "attention_submit_content_enrichment",
+      title: "Submit shared Content enrichment",
     }),
     defineAttentionTool({
       annotations: {
