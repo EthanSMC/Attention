@@ -34,7 +34,8 @@ const EstablishedCollectionFieldsSchema = z.object({
   current_visibility: CollectionVisibilitySchema,
   display_title: z.string().max(1_024).optional(),
   summary_status: z.enum(["ready", "pending", "unavailable", "hidden"]),
-  enrichment_action: z.enum(["reuse_summary", "generate_summary", "none"])
+  enrichment_action: z.enum(["reuse_summary", "generate_summary", "none"]),
+  public_read_url: z.string().url().nullable()
 });
 
 export const AcceptedResponseSchema = AttemptResponseBaseSchema.merge(

@@ -156,7 +156,7 @@ publishes the uploadable bundle at:
 
 ```text
 {attention_origin}/skills/attention/bundles/attention-workbuddy-1.6.0.zip
-SHA-256: 42a01d4b81bd1edfb943e7ea5ab2552e71f560fd4559ba04f9633fa1cb4b47d0
+SHA-256: 45b869576feae8e42c06ebe61658496fc9aa26918ab38f81fb54721351bc966c
 ```
 
 The archive contains `SKILL.md` directly at its root, as required by Tencent's
@@ -242,8 +242,8 @@ attention channel start codex --origin {attention_origin} --background
 
 The bridge runs on the user's machine, owns iLink polling after a one-time
 QR scan, and keeps one `codex app-server` process resident in a restricted
-profile that allows only the Attention MCP. It is a local process, not an
-Attention-hosted service:
+profile that allows only the Attention MCP plus the minimum conditional
+public-web reader. It is a local process, not an Attention-hosted service:
 `--background` installs a current-user service after the explicit first QR
 scan, so closing the terminal does not stop inbound delivery. An inbound
 message is not guaranteed to appear as a visible Desktop conversation. A future Codex SDK
@@ -279,9 +279,10 @@ The restricted profile template is published at:
 /skills/attention/installations/v1/templates/restricted-profile.json
 ```
 
-It allows only the Attention MCP and denies shell, code execution, filesystem
-write, browser automation, and arbitrary MCP access. It also avoids inheriting
-the user's normal working directory or session history.
+It allows only the Attention MCP plus the minimum conditional public-web
+reader and denies shell, code execution, filesystem write, browser automation,
+authenticated browser state, and arbitrary MCP access. It also avoids
+inheriting the user's normal working directory or session history.
 
 ## Claude Code and Claude Desktop Code tab
 
@@ -311,9 +312,14 @@ designated Channel conversation.
 The resident process uses `--strict-mcp-config`, exposes only `WebFetch` and
 `WebSearch` from Claude's built-in tools, and allows the same seven Attention
 Channel tools as resident Codex. Public web reading is used only after a
-collection result requests `generate_summary`; `reuse_summary` skips reading
-and submission. It cannot use Shell, local files, browser automation or Chrome,
-hooks, plugins, Skills, or another MCP.
+direct collection or selected-candidate result requests `generate_summary`;
+`reuse_summary` skips reading and submission. A fixed
+`--append-system-prompt` policy treats fetched page text as untrusted data,
+ignores page-supplied tool instructions, and preserves the server-directed
+workflow above the user turn. The public reader receives only the exact
+`public_read_url` in the established MCP result, never an authenticated Web
+Session redirect or a guessed candidate. It cannot use Shell, local files, browser
+automation or Chrome, hooks, plugins, Skills, or another MCP.
 The optional Runtime Reporter uses the same privacy boundary and separate
 Runtime OAuth client as Codex: it reports only device/runtime state and never
 sends iLink credentials, model credentials, session IDs, message text, URLs,

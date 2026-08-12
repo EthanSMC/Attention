@@ -66,12 +66,14 @@ describe("CollectorResponseSchema", () => {
       content_type: "web_page",
       current_visibility: "private",
       enrichment_action: "generate_summary",
+      public_read_url: "https://example.com/article",
       summary_status: "pending"
     });
 
     expect(response.status).toBe("already_collected");
     if (response.status === "already_collected") {
       expect(response.current_visibility).toBe("private");
+      expect(response.public_read_url).toBe("https://example.com/article");
     }
   });
 

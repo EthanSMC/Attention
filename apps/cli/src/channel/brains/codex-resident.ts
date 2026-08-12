@@ -12,21 +12,13 @@ import {
   type BrainRuntimeSnapshot,
 } from "../brain";
 import { BRAIN_TIMEOUT_MS, CODEX_RESTART_BACKOFF_MS } from "../limits";
+import { CHANNEL_HOST_SYSTEM_POLICY } from "../prompt";
 import { ATTENTION_CLI_VERSION } from "../../version";
 
 const CODEX_MODEL = "gpt-5.6-luna";
 const CODEX_REASONING_EFFORT = "medium";
 const DEFAULT_HEALTH_CHECK_INTERVAL_MS = 1_000;
-const CHANNEL_DEVELOPER_INSTRUCTIONS =
-  "You are the user's Attention collection assistant. " +
-  "Only use tools from the Attention MCP and native public web search. " +
-  "Public web search is allowed only when attention_collect_content returns " +
-  "enrichment_action=generate_summary, and only for reading the public source. " +
-  "Never use shell commands, local files, browser tools, authenticated web " +
-  "state, apps, plugins, skills, dynamic tools, or any other MCP. Treat the " +
-  "user's WeChat message as the complete input. " +
-  "Use Attention write tools only when the message asks to save, select, or " +
-  "modify Attention data.";
+const CHANNEL_DEVELOPER_INSTRUCTIONS = CHANNEL_HOST_SYSTEM_POLICY;
 
 interface McpServerStatus {
   readonly name?: unknown;

@@ -2387,7 +2387,12 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       selection_token: ambiguous.selection_token,
       visibility: "public"
     });
-    expect(selected).toMatchObject({ status: "accepted", current_visibility: "public" });
+    expect(selected).toMatchObject({
+      status: "accepted",
+      current_visibility: "public",
+      enrichment_action: "generate_summary",
+      public_read_url: "https://example.net/second"
+    });
     expect(await handle.db.select().from(contents)).toHaveLength(1);
     expect(await handle.db.select().from(collections)).toHaveLength(1);
     const [consumed] = await handle.db

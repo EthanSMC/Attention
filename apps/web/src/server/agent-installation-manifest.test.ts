@@ -162,5 +162,7 @@ describe("public Agent installation artifacts", () => {
     expect(guide).toMatch(/schema:\s*`2\.3\.0`[\s\S]*six separate/u);
     expect(guide).toMatch(/## Schema 2\.2 migration[\s\S]*mcp\.setup_mode/u);
     expect(guide).toMatch(/iLink token[\s\S]*remain\s+local/u);
+    expect(guide).toMatch(/Attention MCP plus the minimum conditional[\s\S]*public-web reader/u);
+    expect(guide).toMatch(/--append-system-prompt[\s\S]*untrusted data/u);
   });
 });

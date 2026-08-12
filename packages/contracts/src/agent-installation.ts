@@ -21,11 +21,11 @@ export const ATTENTION_SKILL_TOOL_CONTRACT_VERSION = "1.4.0" as const;
 export const ATTENTION_SKILL_PUBLIC_PATH =
   "/skills/attention/SKILL.md" as const;
 export const ATTENTION_SKILL_DOCUMENT_SHA256 =
-  "03f030b23ebad68ffda5676e7658a42a51f0ae8d70b5f58a0820f70938d431fe" as const;
+  "aeded3e3984ab669da1e5ed72fc209fa88cb9e6fa8583d45c018f800b5064755" as const;
 export const ATTENTION_WORKBUDDY_SKILL_BUNDLE_PUBLIC_PATH =
   "/skills/attention/bundles/attention-workbuddy-1.6.0.zip" as const;
 export const ATTENTION_WORKBUDDY_SKILL_BUNDLE_SHA256 =
-  "42a01d4b81bd1edfb943e7ea5ab2552e71f560fd4559ba04f9633fa1cb4b47d0" as const;
+  "45b869576feae8e42c06ebe61658496fc9aa26918ab38f81fb54721351bc966c" as const;
 export const ATTENTION_WORKBUDDY_SKILL_BUNDLE_SKILL_PATH =
   "SKILL.md" as const;
 export const ATTENTION_INSTALL_GUIDE_PUBLIC_PATH =

@@ -506,8 +506,9 @@ function enrichmentResponseFields(content: {
   publicSafetyStatus: "allowed" | "blocked";
   summaryStatus: "failed" | "hidden" | "pending" | "ready" | "unavailable";
   takedownStatus: "none" | "removed";
-}): {
+}, publicReadUrl: string): {
   enrichment_action: "reuse_summary" | "generate_summary" | "none";
+  public_read_url: string | null;
   summary_status: "ready" | "pending" | "unavailable" | "hidden";
 } {
   const ineligible =
@@ -516,16 +517,27 @@ function enrichmentResponseFields(content: {
     content.takedownStatus !== "none" ||
     content.communityModerationStatus !== "clear";
   if (content.summaryStatus === "hidden" || ineligible) {
-    return { enrichment_action: "none", summary_status: "hidden" };
+    return {
+      enrichment_action: "none",
+      public_read_url: null,
+      summary_status: "hidden",
+    };
   }
   if (content.summaryStatus === "ready") {
-    return { enrichment_action: "reuse_summary", summary_status: "ready" };
+    return {
+      enrichment_action: "reuse_summary",
+      public_read_url: null,
+      summary_status: "ready",
+    };
   }
+  const enrichmentAction =
+    content.aiSummary === null || content.aiSummary.trim() === ""
+      ? "generate_summary"
+      : "none";
   return {
-    enrichment_action:
-      content.aiSummary === null || content.aiSummary.trim() === ""
-        ? "generate_summary"
-        : "none",
+    enrichment_action: enrichmentAction,
+    public_read_url:
+      enrichmentAction === "generate_summary" ? publicReadUrl : null,
     summary_status:
       content.summaryStatus === "failed"
         ? "unavailable"
@@ -571,7 +583,7 @@ async function establishedResponse(
     .parse(attempt.status);
   return CollectorResponseSchema.parse({
     ...baseResponse(attempt),
-    ...enrichmentResponseFields(content),
+    ...enrichmentResponseFields(content, content.outboundUrl),
     content_id: content.id,
     collection_id: collection.id,
     content_type: contentType,
@@ -931,7 +943,10 @@ async function establishCollection(
 
   return CollectorResponseSchema.parse({
     ...baseResponse(attempt),
-    ...enrichmentResponseFields(established.contentResult.content),
+    ...enrichmentResponseFields(
+      established.contentResult.content,
+      candidate.outboundUrl,
+    ),
     collection_id: established.collectionResult.collection.id,
     content_id: established.contentResult.content.id,
     content_type: candidate.identity.contentType,

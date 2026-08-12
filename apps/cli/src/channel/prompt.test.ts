@@ -35,4 +35,29 @@ describe("channel intent", () => {
     expect(prompt).toMatch(/只提交摘要和标签/u);
     expect(prompt).toMatch(/不要[^\n]*页面正文[^\n]*原始 URL[^\n]*Cookie[^\n]*授权信息[^\n]*浏览器状态/u);
   });
+
+  it("re-enters the established-result workflow after candidate selection", () => {
+    const prompt = buildFirstTurnPrompt({
+      messageRef: "msg-ambiguous",
+      userMessage:
+        "https://example.com/one https://example.net/two",
+    });
+
+    expect(prompt).toMatch(
+      /ambiguous[\s\S]*不要读取任何候选原文[\s\S]*等待用户选择/u,
+    );
+    expect(prompt).toMatch(
+      /attention_select_collection_candidate[\s\S]*同一个已建立收藏结果处理流程/u,
+    );
+    expect(prompt).toMatch(
+      /选择结果.*reuse_summary[\s\S]*不要读取原文[\s\S]*不要调用 attention_submit_content_enrichment/u,
+    );
+    expect(prompt).toMatch(
+      /选择结果.*generate_summary[\s\S]*public_read_url[\s\S]*公开读取[\s\S]*attention_submit_content_enrichment/u,
+    );
+    expect(prompt).not.toMatch(
+      /选择结果.*generate_summary[^\n]*attention_get_collection_status/u,
+    );
+    expect(prompt).toMatch(/不要从原始多链接文案猜测/u);
+  });
 });
