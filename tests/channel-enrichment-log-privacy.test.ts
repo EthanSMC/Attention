@@ -2,6 +2,7 @@ import {
   chmodSync,
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -14,6 +15,7 @@ const script = new URL(
   "../scripts/check-channel-enrichment-log-privacy.sh",
   import.meta.url,
 ).pathname;
+const repositoryRoot = new URL("../", import.meta.url).pathname;
 const roots: string[] = [];
 
 function temporaryDirectory(): string {
@@ -94,6 +96,37 @@ describe("channel enrichment log privacy acceptance", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("could not read Linux channel journal");
+    expect(result.stdout).not.toContain("ok:");
+  });
+
+  it("preserves checker failure through the documented wrapper", () => {
+    const home = temporaryDirectory();
+    const bin = join(home, "bin");
+    mkdirSync(bin);
+    const fakeUname = join(bin, "uname");
+    writeFileSync(fakeUname, "#!/bin/sh\nprintf 'Darwin\\n'\n");
+    chmodSync(fakeUname, 0o700);
+    const acceptance = readFileSync(
+      join(repositoryRoot, "docs/local-agent-wechat-device-acceptance.md"),
+      "utf8",
+    );
+    const wrapper = acceptance.match(
+      /验收完成后检查后台服务日志[\s\S]*?```bash\n(?<script>[\s\S]*?)\n```/u,
+    )?.groups?.script;
+
+    expect(wrapper).toBeTruthy();
+    const result = spawnSync("bash", ["-c", wrapper ?? ""], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: `${bin}:/usr/bin:/bin`,
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("cannot read expected macOS channel log");
     expect(result.stdout).not.toContain("ok:");
   });
 });
