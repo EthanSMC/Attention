@@ -97,6 +97,7 @@ export interface ChannelCommandOptions {
     options: {
       readonly codexHomeDirectory?: string;
       readonly mcpUrl: string;
+      readonly runtimeDirectory?: string;
     },
   ) => BrainAdapter;
   readonly codexHomePreparer?: (input: {
@@ -346,6 +347,7 @@ export async function channelStart(
     const activeBrain = (options.brainFactory ?? createBrainAdapter)(hostId, {
       ...(codexHomeDirectory ? { codexHomeDirectory } : {}),
       mcpUrl,
+      runtimeDirectory: cwd,
     });
     brain = activeBrain;
     setRuntimeStarting(state);

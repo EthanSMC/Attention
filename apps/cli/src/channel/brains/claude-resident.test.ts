@@ -1,0 +1,350 @@
+import { describe, expect, it } from "vitest";
+
+import type {
+  ClaudeStreamMessage,
+  ClaudeStreamSnapshot,
+} from "../claude-stream-rpc";
+import {
+  createClaudeResidentBrain,
+  type ClaudeResidentRpc,
+} from "./claude-resident";
+
+class ScriptedClaudeRpc implements ClaudeResidentRpc {
+  closeCount = 0;
+  readonly sent: ClaudeStreamMessage[] = [];
+  startCount = 0;
+  #listener: ((message: ClaudeStreamMessage) => void) | null = null;
+  #phase: ClaudeStreamSnapshot["phase"] = "idle";
+  #pid: number | null = null;
+
+  constructor(
+    readonly requestedSessionId: string | null,
+    readonly generatedSessionId: string,
+  ) {}
+
+  async start(): Promise<void> {
+    this.startCount += 1;
+    this.#phase = "running";
+    this.#pid = 7_000 + this.startCount;
+    queueMicrotask(() => {
+      this.emit({
+        session_id: this.requestedSessionId ?? this.generatedSessionId,
+        subtype: "init",
+        type: "system",
+      });
+    });
+  }
+
+  onMessage(listener: (message: ClaudeStreamMessage) => void): () => void {
+    this.#listener = listener;
+    return () => {
+      if (this.#listener === listener) this.#listener = null;
+    };
+  }
+
+  send(message: ClaudeStreamMessage): void {
+    this.sent.push(message);
+  }
+
+  snapshot(): ClaudeStreamSnapshot {
+    return {
+      exitCode: null,
+      lastErrorCode: null,
+      phase: this.#phase,
+      pid: this.#pid,
+      signal: null,
+      stderr: "",
+    };
+  }
+
+  async close(): Promise<void> {
+    this.closeCount += 1;
+    this.#phase = "stopped";
+    this.#pid = null;
+  }
+
+  emit(message: ClaudeStreamMessage): void {
+    this.#listener?.(message);
+  }
+
+  complete(
+    reply: string,
+    options: { readonly isError?: boolean; readonly sessionId?: string } = {},
+  ): void {
+    const sessionId =
+      options.sessionId ?? this.requestedSessionId ?? this.generatedSessionId;
+    this.emit({
+      message: {
+        content: [{ text: reply, type: "text" }],
+        role: "assistant",
+      },
+      session_id: sessionId,
+      type: "assistant",
+    });
+    this.emit({
+      is_error: options.isError ?? false,
+      result: reply,
+      session_id: sessionId,
+      subtype: options.isError ? "error" : "success",
+      type: "result",
+    });
+  }
+
+  crash(): void {
+    this.#phase = "stopped";
+    this.#pid = null;
+  }
+}
+
+function fixture() {
+  const rpcs: ScriptedClaudeRpc[] = [];
+  const brain = createClaudeResidentBrain({
+    healthCheckIntervalMs: 5,
+    mcpUrl: "https://attention.example/mcp",
+    restartBackoffMs: [1],
+    rpcFactory: ({ sessionId }) => {
+      const rpc = new ScriptedClaudeRpc(sessionId, `session-${rpcs.length + 1}`);
+      rpcs.push(rpc);
+      return rpc;
+    },
+    runtimeDirectory: "/tmp/channel",
+    turnTimeoutMs: 50,
+  });
+  return { brain, rpcs };
+}
+
+async function nextTurn(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+describe("resident Claude Code brain", () => {
+  it("reuses one stream-json process and one session for consecutive turns", async () => {
+    const { brain, rpcs } = fixture();
+    await brain.start();
+
+    const firstPromise = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "one",
+      sessionId: null,
+    });
+    await nextTurn();
+    rpcs[0]?.complete("first reply");
+    const first = await firstPromise;
+
+    const secondPromise = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "two",
+      sessionId: first.sessionId,
+    });
+    await nextTurn();
+    rpcs[0]?.complete("second reply");
+    const second = await secondPromise;
+
+    expect(rpcs).toHaveLength(1);
+    expect(rpcs[0]?.startCount).toBe(1);
+    expect(rpcs[0]?.sent).toEqual([
+      {
+        message: {
+          content: [{ text: "one", type: "text" }],
+          role: "user",
+        },
+        type: "user",
+      },
+      {
+        message: {
+          content: [{ text: "two", type: "text" }],
+          role: "user",
+        },
+        type: "user",
+      },
+    ]);
+    expect(first).toMatchObject({
+      ok: true,
+      reply: "first reply",
+      sessionId: "session-1",
+    });
+    expect(second).toMatchObject({
+      ok: true,
+      reply: "second reply",
+      sessionId: "session-1",
+    });
+    await brain.shutdown();
+  });
+
+  it("starts a fresh process after disposable preflight instead of leaking its session", async () => {
+    const { brain, rpcs } = fixture();
+    await brain.start();
+    const preflightPromise = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "verify account",
+      sessionId: null,
+    });
+    await nextTurn();
+    rpcs[0]?.complete("verified");
+    await preflightPromise;
+
+    const firstRealTurn = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "save this",
+      sessionId: null,
+    });
+    await nextTurn();
+    expect(rpcs).toHaveLength(2);
+    expect(rpcs[0]?.closeCount).toBe(1);
+    rpcs[1]?.complete("saved");
+
+    await expect(firstRealTurn).resolves.toMatchObject({
+      ok: true,
+      sessionId: "session-2",
+    });
+    await brain.shutdown();
+  });
+
+  it("resumes the stored session when the bridge process restarts", async () => {
+    const { brain, rpcs } = fixture();
+    const turn = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "continue",
+      sessionId: "stored-session",
+    });
+    await nextTurn();
+
+    expect(rpcs[0]?.requestedSessionId).toBe("stored-session");
+    rpcs[0]?.complete("continued", { sessionId: "stored-session" });
+    await expect(turn).resolves.toMatchObject({
+      ok: true,
+      sessionId: "stored-session",
+    });
+    await brain.shutdown();
+  });
+
+  it("restarts a crashed process with the latest Claude session", async () => {
+    const { brain, rpcs } = fixture();
+    await brain.start();
+
+    const firstTurn = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "remember this",
+      sessionId: null,
+    });
+    await nextTurn();
+    rpcs[0]?.complete("remembered", { sessionId: "resident-session" });
+    await expect(firstTurn).resolves.toMatchObject({
+      ok: true,
+      sessionId: "resident-session",
+    });
+
+    rpcs[0]?.crash();
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(rpcs).toHaveLength(2);
+    expect(rpcs[1]?.requestedSessionId).toBe("resident-session");
+    expect(brain.runtimeSnapshot()).toMatchObject({
+      lastErrorCode: null,
+      phase: "healthy",
+    });
+    await brain.shutdown();
+  });
+
+  it("marks an unavailable resume so the shared pipeline can replay 20 turns", async () => {
+    const { brain, rpcs } = fixture();
+    const turn = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "continue",
+      sessionId: "missing-session",
+    });
+    await nextTurn();
+    rpcs[0]?.complete("No conversation found with session ID", {
+      isError: true,
+      sessionId: "missing-session",
+    });
+
+    await expect(turn).resolves.toMatchObject({
+      ok: false,
+      resumeFailed: true,
+      sessionId: "missing-session",
+    });
+    expect(brain.runtimeSnapshot()).toMatchObject({
+      lastErrorCode: "claude_session_missing",
+      phase: "replaying_history",
+    });
+    await brain.shutdown();
+  });
+
+  it("does not report an errored result with partial text as success", async () => {
+    const { brain, rpcs } = fixture();
+    const turn = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "save",
+      sessionId: null,
+    });
+    await nextTurn();
+    rpcs[0]?.complete("MCP unavailable", { isError: true });
+
+    await expect(turn).resolves.toMatchObject({
+      ok: false,
+      reply: "",
+      resumeFailed: false,
+    });
+    await brain.shutdown();
+  });
+
+  it("times out one turn without resolving queued work as success", async () => {
+    const { brain, rpcs } = fixture();
+    const first = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "slow",
+      sessionId: null,
+    });
+    const second = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "queued",
+      sessionId: null,
+    });
+
+    await expect(first).resolves.toMatchObject({ ok: false, timedOut: true });
+    await nextTurn();
+    expect(rpcs).toHaveLength(2);
+    rpcs[1]?.complete("queued reply");
+    await expect(second).resolves.toMatchObject({
+      ok: true,
+      reply: "queued reply",
+    });
+    await brain.shutdown();
+  });
+
+  it("supports shutdown then start and rejects work queued in the old lifecycle", async () => {
+    const { brain, rpcs } = fixture();
+    await brain.start();
+    const active = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "active",
+      sessionId: null,
+    });
+    const queued = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "queued",
+      sessionId: null,
+    });
+    await nextTurn();
+    await brain.shutdown();
+
+    await expect(active).resolves.toMatchObject({ ok: false });
+    await expect(queued).resolves.toMatchObject({ ok: false });
+    expect(brain.runtimeSnapshot().phase).toBe("stopped");
+
+    await brain.start();
+    const fresh = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "fresh",
+      sessionId: null,
+    });
+    await nextTurn();
+    rpcs.at(-1)?.complete("fresh reply");
+    await expect(fresh).resolves.toMatchObject({
+      ok: true,
+      reply: "fresh reply",
+    });
+    await brain.shutdown();
+  });
+});

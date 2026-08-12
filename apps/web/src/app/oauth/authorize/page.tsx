@@ -13,6 +13,7 @@ import {
   OAuthAuthorizationForm,
   type OAuthConnectionNameResultClient,
 } from "../../../components/oauth-authorization-form";
+import { OAuthScopeDisclosure } from "../../../components/oauth-scope-disclosure";
 import { PageIntro } from "../../../components/page-intro";
 import { accountIdentityLabel } from "../../../lib/attention";
 import { getWebDatabase } from "../../../server/db";
@@ -58,27 +59,6 @@ async function authorizationOrigin(): Promise<string> {
   const protocol = forwardedProtocol || (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
   return new URL(`${protocol}://${host}`).origin;
 }
-
-const scopeLabels: Record<string, string> = {
-  "ai:search": "使用托管 AI 检索（需要实时 Member 权益）",
-  "channel:bind:report": "报告本地渠道绑定与验证结果",
-  "channel:disconnect:report": "报告本地渠道断开与凭证删除结果",
-  "collection:read": "读取你的个人收藏",
-  "collection:write": "替你新增私人收藏",
-  "digest:read": "读取你的日报订阅与发送时间",
-  "digest:write": "修改你的日报订阅与发送时间",
-  "moderation:write": "按你的要求举报公开内容",
-  "moderation:court:read": "读取 Filter 小法庭的当前案件与票数",
-  "moderation:court:vote": "在你逐次明确确认后提交不可更改的小法庭投票",
-  "profile:read": "读取你的公开资料和会员状态",
-  "public:full": "读取完整公开流（需要实时 Member 权益）",
-  "public:read": "读取当前可见的公开内容",
-  "runtime:heartbeat": "上报本地 Runtime 与渠道健康状态",
-  "runtime:register": "注册当前本地 Agent 安装",
-  "subscription:read": "读取订阅状态",
-  "sync:read": "下载你的同步变更",
-  "sync:write": "上传你的同步变更",
-};
 
 export default async function OAuthAuthorizePage({
   searchParams,
@@ -134,27 +114,29 @@ export default async function OAuthAuthorizePage({
   const defaultLabel = submittedLabel || trustedRuntimeDeviceName || "";
   let initialNameResult: OAuthConnectionNameResultClient | null = null;
   let initialErrorCode = single(params.connection_error) || null;
-  try {
-    const result = await checkOAuthConnectionName(database, {
-      accountId: principal.accountId,
-      audience: authorization.audience,
-      label: defaultLabel,
-    });
-    initialNameResult = result.status === "available"
-      ? result
-      : {
-          ...result,
-          existing: {
-            ...result.existing,
-            createdAt: result.existing.createdAt.toISOString(),
-            lastUsedAt: result.existing.lastUsedAt?.toISOString() ?? null,
-          },
-        };
-  } catch (error) {
-    if (error instanceof Error && error.message === "invalid_connection_label") {
-      initialErrorCode = "invalid_connection_label";
-    } else {
-      initialErrorCode = "connection_name_check_failed";
+  if (defaultLabel.trim()) {
+    try {
+      const result = await checkOAuthConnectionName(database, {
+        accountId: principal.accountId,
+        audience: authorization.audience,
+        label: defaultLabel,
+      });
+      initialNameResult = result.status === "available"
+        ? result
+        : {
+            ...result,
+            existing: {
+              ...result.existing,
+              createdAt: result.existing.createdAt.toISOString(),
+              lastUsedAt: result.existing.lastUsedAt?.toISOString() ?? null,
+            },
+          };
+    } catch (error) {
+      if (error instanceof Error && error.message === "invalid_connection_label") {
+        initialErrorCode = "invalid_connection_label";
+      } else {
+        initialErrorCode = "connection_name_check_failed";
+      }
     }
   }
   const authorizationFields = {
@@ -177,7 +159,7 @@ export default async function OAuthAuthorizePage({
       <section className="authorization-card">
         <div className="authorization-card__client"><span>{authorization.clientName.slice(0, 1).toUpperCase()}</span><div><strong>{authorization.clientName}</strong><small>{authorization.resource}</small></div></div>
         <h2>这个客户端将可以</h2>
-        <ul>{authorization.scopes.map((scope) => <li key={scope}>{scopeLabels[scope] ?? scope}</li>)}</ul>
+        <OAuthScopeDisclosure scopes={authorization.scopes} />
         <p>高级 scope 仍会在每次调用时检查当前会员权益；授权不会自动开通会员。</p>
         <OAuthAuthorizationForm
           cancelHref={`/oauth/authorize/cancel?${queryString(authorizationFields)}`}

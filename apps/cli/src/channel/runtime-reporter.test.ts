@@ -50,7 +50,7 @@ const installation = {
   registered_at: observedAt,
   revoked_at: null,
   runtime_checkpoint: null,
-  skill_version: "1.4.0",
+  skill_version: "1.5.0",
   status: "registered",
   tool_contract_version: "2026-08-10",
 };
@@ -86,7 +86,7 @@ function identity(binding: string | null = bindingId) {
     installationId,
     provider: "wechat_ilink" as const,
     restrictedProfile: true,
-    skillVersion: "1.4.0",
+    skillVersion: "1.5.0",
     toolContractVersion: "2026-08-10",
   };
 }
@@ -173,7 +173,7 @@ describe("RuntimeReporter bootstrap", () => {
       },
       device_name: "Ethan Mac",
       installation_id: installationId,
-      skill_version: "1.4.0",
+      skill_version: "1.5.0",
       tool_contract_version: "2026-08-10",
     });
     expect(requests[1]?.body).toEqual({

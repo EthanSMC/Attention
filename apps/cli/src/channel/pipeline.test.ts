@@ -131,6 +131,20 @@ describe("handleInboundMessage", () => {
     expect(state.history).toEqual([]);
   });
 
+  it("names the selected resident host in local status replies", async () => {
+    const state = defaultChannelState();
+    state.runtimeState.phase = "healthy";
+    const output = await handleInboundMessage({
+      brain: fakeBrain("claude-code"),
+      cwd: "/tmp",
+      message: textMessage("状态"),
+      state,
+    });
+
+    expect(output.replies.join("\n")).toContain("Claude Code Runtime");
+    expect(output.replies.join("\n")).not.toContain("Codex Runtime");
+  });
+
   it("intercepts only the exact ephemeral Runtime pairing code", async () => {
     const state = defaultChannelState();
     let calls = 0;

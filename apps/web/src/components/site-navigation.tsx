@@ -32,6 +32,14 @@ function isStandaloneDocumentationPath(pathname: string): boolean {
   return pathname.startsWith("/doc");
 }
 
+function isFocusedSecurityPath(pathname: string): boolean {
+  return pathname.startsWith("/oauth/");
+}
+
+export function shouldShowCollectAction(pathname: string): boolean {
+  return pathname === "/account" || pathname === "/ai" || pathname.startsWith("/ai/");
+}
+
 export interface NavigationIdentity {
   isFilter: boolean;
   isMember: boolean;
@@ -104,9 +112,27 @@ export function SiteHeader({ identity }: { identity: NavigationIdentity | null }
   const pathname = usePathname();
   const [collectOpen, setCollectOpen] = useState(false);
   const settingsActive = isSettingsPath(pathname);
+  const focusedSecurityPath = isFocusedSecurityPath(pathname);
+  const showCollectAction = shouldShowCollectAction(pathname);
   const closeCollect = useCallback(() => setCollectOpen(false), []);
 
   if (isStandaloneDocumentationPath(pathname)) return null;
+
+  if (focusedSecurityPath) {
+    return (
+      <header className="site-header site-header--focused">
+        <div className="site-header__inner">
+          <Link className="brand" href="/ai" aria-label="Attention 首页">
+            <SignalLogo />
+            <span>Attention</span>
+          </Link>
+          <Link className="site-header__focused-back" href="/ai">
+            返回 Attention
+          </Link>
+        </div>
+      </header>
+    );
+  }
 
   return (
     <>
@@ -140,7 +166,7 @@ export function SiteHeader({ identity }: { identity: NavigationIdentity | null }
             ) : null}
           </div>
         </div>
-        {collectOpen ? (
+        {showCollectAction && collectOpen ? (
           <CollectModal
             allowPublic={identity?.isFilter ?? false}
             authenticated={identity !== null}
@@ -148,18 +174,22 @@ export function SiteHeader({ identity }: { identity: NavigationIdentity | null }
           />
         ) : null}
       </header>
-      <CollectTrigger
-        className="collect-fab"
-        expanded={collectOpen}
-        onOpen={() => setCollectOpen(true)}
-      />
+      {showCollectAction ? (
+        <CollectTrigger
+          className="collect-fab"
+          expanded={collectOpen}
+          onOpen={() => setCollectOpen(true)}
+        />
+      ) : null}
     </>
   );
 }
 
 export function MobileNavigation() {
   const pathname = usePathname();
-  if (isStandaloneDocumentationPath(pathname)) return null;
+  if (isStandaloneDocumentationPath(pathname) || isFocusedSecurityPath(pathname)) {
+    return null;
+  }
 
   return (
     <nav aria-label="移动端主导航" className="mobile-nav">

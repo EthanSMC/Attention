@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
-import { homedir, hostname, tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   ATTENTION_WORKBUDDY_SKILL_BUNDLE_PUBLIC_PATH,
@@ -12,7 +12,6 @@ import {
 } from "@attention/contracts";
 
 import type { CommandRunner } from "./command-runner";
-import { defaultChannelState, loadChannelState, saveChannelState } from "./channel/state";
 import {
   applyConfigurePlan,
   buildConfigurePlan,
@@ -187,196 +186,34 @@ describe("Agent configuration plans", () => {
 });
 
 describe("Skill staging and apply", () => {
-  it("authorizes the dedicated Runtime client after Codex MCP login", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "attention-cli-"));
-    temporaryDirectories.push(directory);
-    const installationId = "11111111-1111-4111-8111-111111111111";
-    const state = defaultChannelState();
-    state.runtimeReporter.installationId = installationId;
-    await saveChannelState(state, directory);
-    const events: string[] = [];
-    const plan = buildConfigurePlan({
-      hostId: "codex",
-      origin: "https://attention.example",
-      skillDirectory: directory,
-    });
+  it.each(["codex", "claude-code"] as const)(
+    "finishes %s MCP setup without starting optional device status sync",
+    async (hostId) => {
+      const directory = await mkdtemp(join(tmpdir(), "attention-cli-"));
+      temporaryDirectories.push(directory);
+      const plan = buildConfigurePlan({
+        hostId,
+        origin: "https://attention.example",
+        skillDirectory: directory,
+      });
 
-    const results = await applyConfigurePlan(plan, {
-      authorizeRuntime: async ({ deviceName, installationId: receivedId, origin }) => {
-        events.push(`runtime-oauth ${origin} ${receivedId} ${deviceName}`);
-        return {
-          access_token: "not-rendered",
-          access_token_expires_at: "2026-08-10T11:00:00.000Z",
-          audience: "attention-channel-runtime",
-          authorization_server: "https://attention.example",
-          client_id: "runtime-client",
-          protected_resource_metadata_url:
-            "https://attention.example/.well-known/oauth-protected-resource/api/runtime",
-          refresh_token: "not-rendered",
-          resource: "https://attention.example/api/runtime",
-          scopes: [
-            "runtime:register",
-            "runtime:heartbeat",
-            "channel:bind:report",
-            "channel:disconnect:report",
-          ],
-          token_type: "Bearer",
-          version: 1,
-        };
-      },
-      channelBaseDirectory: directory,
-      fetchImpl: async () => {
-        events.push("fetch-skill");
-        return new Response(validSkillDocument, { status: 200 });
-      },
-      login: true,
-      runner: async (invocation) => {
-        events.push([invocation.executable, ...invocation.args].join(" "));
-        return {
+      const results = await applyConfigurePlan(plan, {
+        fetchImpl: async () => new Response(validSkillDocument, { status: 200 }),
+        login: true,
+        runner: async () => ({
           exitCode: 0,
           signal: null,
           stderr: "",
           stdout: "ok",
           timedOut: false,
-        };
-      },
-    });
+        }),
+      });
 
-    expect(events.at(-2)).toMatch(/mcp login|mcp auth/u);
-    const expectedDeviceName = hostname()
-      .normalize("NFKC")
-      .trim()
-      .replace(/\s+/gu, " ")
-      .slice(0, 80) || "Attention device";
-    expect(events.at(-1)).toBe(
-      `runtime-oauth https://attention.example ${installationId} ${expectedDeviceName}`,
-    );
-    expect(results.at(-1)).toMatchObject({
-      id: "authorize_runtime",
-      status: "applied",
-    });
-    expect(JSON.stringify(results)).not.toContain("not-rendered");
-  });
-
-  it("creates and persists one opaque Runtime installation ID before DCR", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "attention-cli-"));
-    temporaryDirectories.push(directory);
-    const receivedIds: string[] = [];
-    const plan = buildConfigurePlan({
-      hostId: "codex",
-      origin: "https://attention.example",
-      skillDirectory: directory,
-    });
-
-    const results = await applyConfigurePlan(plan, {
-      authorizeRuntime: async (input) => {
-        receivedIds.push(input.installationId);
-        throw new Error("stop after observing DCR identity");
-      },
-      channelBaseDirectory: directory,
-      fetchImpl: async () => new Response(validSkillDocument, { status: 200 }),
-      login: true,
-      runner: async () => ({
-        exitCode: 0,
-        signal: null,
-        stderr: "",
-        stdout: "ok",
-        timedOut: false,
-      }),
-    });
-
-    expect(results.at(-1)).toMatchObject({
-      id: "authorize_runtime",
-      status: "failed",
-    });
-    expect(receivedIds).toEqual([expect.stringMatching(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
-    )]);
-    expect((await loadChannelState(directory)).runtimeReporter.installationId)
-      .toBe(receivedIds[0]);
-  });
-
-  it("does not open Runtime OAuth without the explicit login flag", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "attention-cli-"));
-    temporaryDirectories.push(directory);
-    const authorizeRuntime = vi.fn();
-    const plan = buildConfigurePlan({
-      hostId: "codex",
-      origin: "https://attention.example",
-      skillDirectory: directory,
-    });
-
-    const results = await applyConfigurePlan(plan, {
-      authorizeRuntime,
-      fetchImpl: async () => new Response(validSkillDocument, { status: 200 }),
-      login: false,
-      runner: async () => ({
-        exitCode: 0,
-        signal: null,
-        stderr: "",
-        stdout: "ok",
-        timedOut: false,
-      }),
-    });
-
-    expect(authorizeRuntime).not.toHaveBeenCalled();
-    expect(results.at(-1)).toMatchObject({
-      id: "authorize_runtime",
-      status: "manual",
-    });
-  });
-
-  it("does not start Runtime OAuth after MCP login failure or expose OAuth secrets", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "attention-cli-"));
-    temporaryDirectories.push(directory);
-    const plan = buildConfigurePlan({
-      hostId: "codex",
-      origin: "https://attention.example",
-      skillDirectory: directory,
-    });
-    const authorizeRuntime = vi.fn(async () => {
-      throw new Error("refresh_token=runtime-refresh-token-secret");
-    });
-    let failLogin = true;
-    const runner: CommandRunner = async (invocation) => ({
-      exitCode:
-        failLogin && invocation.args.includes("login") ? 1 : 0,
-      signal: null,
-      stderr: failLogin && invocation.args.includes("login")
-        ? "login failed"
-        : "",
-      stdout: "",
-      timedOut: false,
-    });
-
-    const failedLogin = await applyConfigurePlan(plan, {
-      authorizeRuntime,
-      fetchImpl: async () => new Response(validSkillDocument, { status: 200 }),
-      login: true,
-      runner,
-    });
-    expect(failedLogin.at(-1)).toMatchObject({
-      id: "authorize_mcp",
-      status: "failed",
-    });
-    expect(authorizeRuntime).not.toHaveBeenCalled();
-
-    failLogin = false;
-    const failedRuntime = await applyConfigurePlan(plan, {
-      authorizeRuntime,
-      fetchImpl: async () => new Response(validSkillDocument, { status: 200 }),
-      forceSkill: true,
-      login: true,
-      runner,
-    });
-    expect(failedRuntime.at(-1)).toMatchObject({
-      id: "authorize_runtime",
-      status: "failed",
-    });
-    expect(JSON.stringify(failedRuntime)).not.toContain(
-      "runtime-refresh-token-secret",
-    );
-  });
+      expect(results.some((result) => result.id === "authorize_runtime")).toBe(false);
+      expect(results.find((result) => result.id === "authorize_mcp"))
+        .toMatchObject({ status: "applied" });
+    },
+  );
 
   it("stages a bounded, validated SKILL.md atomically", async () => {
     const directory = await mkdtemp(join(tmpdir(), "attention-cli-"));
@@ -402,10 +239,10 @@ describe("Skill staging and apply", () => {
   it.each([
     {
       document: validSkillDocument.replace(
-        "Skill version: `1.4.0`",
+        "Skill version: `1.5.0`",
         "Skill version: `1.2.0`",
       ),
-      expectedError: /Skill version mismatch.*expected 1\.4\.0.*received 1\.2\.0/i,
+      expectedError: /Skill version mismatch.*expected 1\.5\.0.*received 1\.2\.0/i,
       name: "Skill package version",
     },
     {

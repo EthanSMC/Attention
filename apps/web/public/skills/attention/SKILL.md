@@ -9,7 +9,7 @@ Use the configured `attention` MCP server for cloud data. Never ask the user to 
 
 Skill ID: `attention`
 
-Skill version: `1.4.0`
+Skill version: `1.5.0`
 
 Tool contract version: `1.3.0`
 
@@ -21,7 +21,7 @@ Machine-readable capability manifest: `/skills/attention/capabilities/v1/index.j
 
 ## Call context
 
-For every tool call, include `client_context` with `skill_id: "attention"`, `skill_version: "1.4.0"`, and one opaque `workflow_run_id` reused across that user workflow. Use only letters, numbers, `.`, `_`, `:`, or `-`; never put user text, a URL, a query, or a credential in these fields.
+For every tool call, include `client_context` with `skill_id: "attention"`, `skill_version: "1.5.0"`, and one opaque `workflow_run_id` reused across that user workflow. Use only letters, numbers, `.`, `_`, `:`, or `-`; never put user text, a URL, a query, or a credential in these fields.
 
 ## Collect
 
@@ -37,6 +37,12 @@ For every tool call, include `client_context` with `skill_id: "attention"`, `ski
 ## Designated collection channels
 
 A host runtime may declare a conversation as a designated collection channel — for example, the local Attention channel bridge started with `attention channel start <host>`, or a host-managed WeChat assistant whose owner configured it for collection. Inside such a declared conversation only, every link or platform share text the user sends is itself an explicit save request: call `attention_collect_content` directly without asking for confirmation, and keep replying conversation by conversation so follow-up turns (candidate selection, questions about saved items) stay in context. This exception never applies to ordinary interactive sessions: outside a declared collection channel, rule 1 of Collect still governs. The runtime provides the per-message reference used to derive a stable `idempotency_key`; reuse it for retries of the same message.
+
+## Optional device status sync
+
+After both the Attention MCP acceptance call and the local WeChat/iLink pairing have succeeded, tell the user that collection already works, then recommend device status sync once. Explain that enabling it lets Attention Web show whether the local Agent, Bridge, and WeChat binding are healthy, along with last-online time, last success, bounded pending-queue counts, and a privacy-safe failure checkpoint. Also state that it never uploads chat text, collected URLs, iLink credentials, contacts, model credentials, or Agent session IDs, and that declining does not affect collection or WeChat.
+
+Do not open Runtime OAuth automatically and do not describe it as part of MCP authorization. Only after the user explicitly agrees, run or ask them to run `attention device sync enable --origin <attention-origin>`. If they decline, end successfully without a warning or incomplete-setup message. Codex and Claude Code follow this same workflow.
 
 ## Retrieve and update
 

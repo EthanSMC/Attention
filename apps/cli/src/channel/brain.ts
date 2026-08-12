@@ -156,10 +156,16 @@ export function createBrainAdapter(
   options: {
     readonly codexHomeDirectory?: string;
     readonly mcpUrl: string;
+    readonly runtimeDirectory?: string;
   },
 ): BrainAdapter {
   return hostId === "claude-code"
-    ? createClaudeCodeBrain({ mcpUrl: options.mcpUrl })
+    ? createClaudeCodeBrain({
+        mcpUrl: options.mcpUrl,
+        ...(options.runtimeDirectory
+          ? { runtimeDirectory: options.runtimeDirectory }
+          : {}),
+      })
     : createCodexBrain({
         ...(options.codexHomeDirectory
           ? { codexHomeDirectory: options.codexHomeDirectory }
