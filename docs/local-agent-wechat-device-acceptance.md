@@ -114,6 +114,9 @@ collect → reuse_summary → stop (no public read, no submit)
 验收完成后检查后台服务日志；命令只检查日志，不检查本地加密/权限隔离的会话状态：
 
 ```bash
+(
+set -euo pipefail
+
 export E2E_TEST_URL='本次公开测试链接'
 export E2E_PAGE_SENTINEL='原文中的独特短句'
 export E2E_SUMMARY_SENTINEL='摘要中的独特短句'
@@ -126,8 +129,7 @@ case "$(uname -s)" in
   Linux) ./scripts/check-channel-enrichment-log-privacy.sh linux ;;
   *) echo 'FAIL: unsupported acceptance platform' >&2; exit 1 ;;
 esac
-
-unset E2E_TEST_URL E2E_PAGE_SENTINEL E2E_SUMMARY_SENTINEL E2E_TAG_SENTINEL
+)
 ```
 
 服务端 MCP 审计只允许出现账号、工具名、结果状态、稳定错误码、时间与 Content ID；
@@ -144,8 +146,9 @@ unset E2E_TEST_URL E2E_PAGE_SENTINEL E2E_SUMMARY_SENTINEL E2E_TAG_SENTINEL
    复用同一 session。结束宿主进程后，两者都优先恢复原 ID。
 2. Codex 的隔离 `CODEX_HOME` 只加载 Attention MCP；初始化后的
    `mcpServerStatus/list` 必须恰好只有 `attention`，否则拒绝 turn。
-   Claude Code 必须使用 strict MCP config、空 built-in tool set 和与 Codex
-   相同的 6 个 Attention Channel 工具。
+   Claude Code 必须使用 strict MCP config，内置工具只允许 `WebFetch` 和
+   `WebSearch`，并使用与 Codex 相同的 7 个 Attention Channel MCP 工具；
+   Chrome、Shell、本地文件和其他 MCP 必须全部拒绝。
 3. 杀死宿主 Runtime 但保持 Bridge 在线：精确的“状态”命令立即本地回复，
    普通消息安全排队；重启后优先恢复原 thread。
 4. 伪造失效 thread/session ID 后，Bridge 回放本地最近 20 轮
