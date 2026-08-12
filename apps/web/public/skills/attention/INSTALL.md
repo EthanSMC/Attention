@@ -155,8 +155,8 @@ WeChat assistant and uploading a local Skill bundle through its UI. Attention
 publishes the uploadable bundle at:
 
 ```text
-{attention_origin}/skills/attention/bundles/attention-workbuddy-1.5.0.zip
-SHA-256: fdc294e8e5f4921629db2b64cc7f79fd39aa5e4f82db1836344da90088055b01
+{attention_origin}/skills/attention/bundles/attention-workbuddy-1.6.0.zip
+SHA-256: 42a01d4b81bd1edfb943e7ea5ab2552e71f560fd4559ba04f9633fa1cb4b47d0
 ```
 
 The archive contains `SKILL.md` directly at its root, as required by Tencent's
@@ -249,7 +249,7 @@ scan, so closing the terminal does not stop inbound delivery. An inbound
 message is not guaranteed to appear as a visible Desktop conversation. A future Codex SDK
 companion remains a separate `contract_only` design alternative.
 
-Attention CLI `0.3.1` keeps the same local bridge as the sole iLink owner and
+Attention CLI `0.3.2` keeps the same local bridge as the sole iLink owner and
 keeps one `codex app-server` resident. It first resumes the locally
 persisted thread ID; if that thread cannot be resumed, it creates a thread after
 replaying the local last 20 user/assistant exchanges. Its Channel defaults are
@@ -261,9 +261,12 @@ to Attention. Normal authenticated MCP collection does send the URL and
 collection metadata that the user explicitly asks Attention to save.
 Within that one MCP, the resident Channel may perform the account-scoped
 collection writes the user authorized, including collecting a link, selecting
-a candidate, and updating a collection. Attention still enforces the account's
-entitlements and visibility rules. This does not grant Shell, local filesystem
-write, browser automation, code execution, or access to another MCP server.
+a candidate, updating a collection, and submitting the first grounded shared
+summary and tags only when the collection result requests `generate_summary`.
+Codex may use native public web search for that conditional enrichment step; it
+cannot use browser automation or authenticated browser state. Attention still
+enforces the account's entitlements and visibility rules. This does not grant
+Shell, local filesystem write, code execution, or access to another MCP server.
 
 The published CLI manifest and its SHA-256 digest remain the source of truth
 for the exact artifact users install. Run `attention doctor codex` after
@@ -305,9 +308,12 @@ into a fresh process only when Claude explicitly reports that the session no
 longer exists. The disposable account preflight is isolated from the user's
 designated Channel conversation.
 
-The resident process uses `--strict-mcp-config`, removes built-in tools, and
-allows the same six Attention Channel tools as resident Codex. It cannot use
-Shell, local files, browser automation, hooks, plugins, Skills, or another MCP.
+The resident process uses `--strict-mcp-config`, exposes only `WebFetch` and
+`WebSearch` from Claude's built-in tools, and allows the same seven Attention
+Channel tools as resident Codex. Public web reading is used only after a
+collection result requests `generate_summary`; `reuse_summary` skips reading
+and submission. It cannot use Shell, local files, browser automation or Chrome,
+hooks, plugins, Skills, or another MCP.
 The optional Runtime Reporter uses the same privacy boundary and separate
 Runtime OAuth client as Codex: it reports only device/runtime state and never
 sends iLink credentials, model credentials, session IDs, message text, URLs,
@@ -371,7 +377,7 @@ logout` stops/removes the background service and deletes the local iLink
 state. If iLink expires, the service exits without opening an unattended QR
 prompt; rerun the same `--background` command in a terminal.
 
-In Attention CLI `0.3.1`, a local Agent process failure does not transfer iLink
+In Attention CLI `0.3.2`, a local Agent process failure does not transfer iLink
 ownership: the bridge keeps polling, queues normal messages, and can answer
 exact local status/help/retry/continue commands. If the whole device or bridge
 is offline, WeChat receives no Attention reply. When the optional Runtime
@@ -386,7 +392,7 @@ Privacy boundary for the bridge:
 - The iLink bot identifier is not an Attention identity and is never used
   for login, entitlements, or global identity.
 - Bridge logs omit tokens and full message bodies.
-- CLI `0.3.1` can optionally authorize a separate Runtime OAuth client. Its
+- CLI `0.3.2` can optionally authorize a separate Runtime OAuth client. Its
   reporter sends privacy-safe runtime status, timestamps, bounded queue counts,
   checkpoints, and device-pairing results only.
 - The reporter never sends iLink credentials, Codex credentials or thread IDs,
@@ -429,7 +435,7 @@ and successful setup: MCP, local WeChat, and collection keep working.
 ## Runtime OAuth boundary
 
 The backend exposes a separate Local Channel Runtime resource. Attention CLI
-`0.3.1` may authorize it for privacy-safe runtime reporting and device-pairing
+`0.3.2` may authorize it for privacy-safe runtime reporting and device-pairing
 results:
 
 ```text
@@ -456,7 +462,7 @@ receive a reply and Web can show only the last heartbeat and checkpoint.
 
 - iLink token, context token, sync cursor, contact data, and media keys remain
   local to the Channel Owner.
-- Attention receives normal authenticated MCP calls. The optional CLI `0.3.1`
+- Attention receives normal authenticated MCP calls. The optional CLI `0.3.2`
   Runtime reporter may submit installation metadata, opaque fingerprints,
   pairing results, health timestamps, bounded queue counts, and checkpoints—but
   never the channel credential, Codex thread, message, URL, or reply. Normal MCP
@@ -552,5 +558,6 @@ Claude Code. Consumers moving from `2.2.0` should:
   does not inherit the user's normal working directory or session history;
 - keep treating `codex_sdk_companion` and `claude_channel_preview` as
   valid engine values for future or host-managed alternatives; and
-- read Skill `1.5.0` "Designated collection channels" for the conversation
-  semantics the bridge declares (tool contract version remains `1.3.0`).
+- read Skill `1.6.0` "Designated collection channels" for the conversation
+  semantics and conditional shared enrichment workflow the bridge declares
+  (tool contract version `1.4.0`).

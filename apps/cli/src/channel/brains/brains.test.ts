@@ -16,7 +16,7 @@ import {
 import type { CodexResidentRpc } from "./codex-resident";
 
 describe("claude-code brain", () => {
-  it("builds a resident stream-json invocation restricted to the same six tools as Codex", () => {
+  it("allows only public web reads and the same Attention tools as Codex", () => {
     expect(
       buildClaudeResidentArgs("https://attention.example/mcp", null),
     ).toEqual([
@@ -37,9 +37,12 @@ describe("claude-code brain", () => {
           },
         },
       }),
+      "--no-chrome",
       "--tools",
-      "",
+      "WebFetch,WebSearch",
       "--allowedTools",
+      "WebFetch",
+      "WebSearch",
       ...ATTENTION_CHANNEL_MCP_TOOL_NAMES.map(
         (name) => `mcp__attention__${name}`,
       ),
@@ -152,6 +155,7 @@ describe("codex brain", () => {
     expect(captured.rpcOptions?.args).toContain(
       `mcp_servers.attention.enabled_tools=${JSON.stringify(ATTENTION_CHANNEL_MCP_TOOL_NAMES)}`,
     );
+    expect(captured.rpcOptions?.args).toContain('web_search="live"');
     expect(captured.rpcOptions?.args).toContain('model="gpt-5.6-luna"');
     expect(captured.rpcOptions?.args).toContain(
       'model_reasoning_effort="medium"',
@@ -186,6 +190,12 @@ describe("codex brain", () => {
         `mcp_servers.attention.tools.${tool}.approval_mode="approve"`,
       );
     }
+    expect(ATTENTION_CHANNEL_MCP_TOOL_NAMES).toContain(
+      "attention_submit_content_enrichment",
+    );
+    expect(ATTENTION_CHANNEL_APPROVED_WRITE_TOOLS).toContain(
+      "attention_submit_content_enrichment",
+    );
     for (const tool of ATTENTION_MCP_TOOL_NAMES.filter(
       (name) => !ATTENTION_CHANNEL_APPROVED_WRITE_TOOLS.includes(name as never),
     )) {
