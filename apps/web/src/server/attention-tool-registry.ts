@@ -462,6 +462,8 @@ const stableErrorGuidance: Readonly<Record<string, string>> = {
   candidate_invalid: "Submit the original content again to refresh its candidates.",
   candidate_not_found: "Choose a candidate returned by the same collection attempt.",
   content_enrichment_hidden: "This Content cannot accept a replacement summary.",
+  content_enrichment_unavailable:
+    "This Content has a terminal summary result and cannot be regenerated.",
   content_not_eligible: "This Content is not eligible for enrichment.",
   content_not_found: "The Content does not exist in an active collection for this account.",
   case_not_found: "Refresh the moderation case list and choose a current case.",

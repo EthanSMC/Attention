@@ -4,7 +4,35 @@ import {
 } from "@attention/collector";
 import { describe, expect, it } from "vitest";
 
-import { selectCandidateOutboundUrl } from "./collection-service";
+import {
+  enrichmentResponseFields,
+  selectCandidateOutboundUrl,
+} from "./collection-service";
+
+describe("collection enrichment response", () => {
+  it.each(["unavailable", "failed"] as const)(
+    "does not offer terminal %s Content for local enrichment",
+    (summaryStatus) => {
+      expect(
+        enrichmentResponseFields(
+          {
+            aiSummary: null,
+            communityModerationStatus: "clear",
+            contentStatus: "active",
+            publicSafetyStatus: "allowed",
+            summaryStatus,
+            takedownStatus: "none",
+          },
+          "https://example.com/terminal",
+        ),
+      ).toEqual({
+        enrichment_action: "none",
+        public_read_url: null,
+        summary_status: "unavailable",
+      });
+    },
+  );
+});
 
 describe("collection candidate outbound URL", () => {
   it("keeps Xiaohongshu access parameters while identity remains query-free", () => {

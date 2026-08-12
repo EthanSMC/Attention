@@ -35,6 +35,7 @@ export interface SubmitContentEnrichmentResult {
 
 export type ContentEnrichmentServiceErrorCode =
   | "content_enrichment_hidden"
+  | "content_enrichment_unavailable"
   | "content_not_eligible"
   | "content_not_found";
 
@@ -110,6 +111,15 @@ export async function submitContentEnrichment(
       owned.communityModerationStatus !== "clear"
     ) {
       throw new ContentEnrichmentServiceError("content_not_eligible", 409);
+    }
+    if (
+      owned.summaryStatus === "unavailable" ||
+      owned.summaryStatus === "failed"
+    ) {
+      throw new ContentEnrichmentServiceError(
+        "content_enrichment_unavailable",
+        409,
+      );
     }
     if (owned.summaryStatus === "ready") {
       return {

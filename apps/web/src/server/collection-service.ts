@@ -499,7 +499,7 @@ function baseResponse(attempt: InputAttempt) {
   };
 }
 
-function enrichmentResponseFields(content: {
+export function enrichmentResponseFields(content: {
   aiSummary: string | null;
   communityModerationStatus: "clear" | "hidden" | "pending_review";
   contentStatus: "active" | "merged";
@@ -530,6 +530,16 @@ function enrichmentResponseFields(content: {
       summary_status: "ready",
     };
   }
+  if (
+    content.summaryStatus === "unavailable" ||
+    content.summaryStatus === "failed"
+  ) {
+    return {
+      enrichment_action: "none",
+      public_read_url: null,
+      summary_status: "unavailable",
+    };
+  }
   const enrichmentAction =
     content.aiSummary === null || content.aiSummary.trim() === ""
       ? "generate_summary"
@@ -538,10 +548,7 @@ function enrichmentResponseFields(content: {
     enrichment_action: enrichmentAction,
     public_read_url:
       enrichmentAction === "generate_summary" ? publicReadUrl : null,
-    summary_status:
-      content.summaryStatus === "failed"
-        ? "unavailable"
-        : content.summaryStatus,
+    summary_status: content.summaryStatus,
   };
 }
 

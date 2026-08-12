@@ -2359,6 +2359,42 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
   });
 
+  it.each(["unavailable", "failed"] as const)(
+    "returns no enrichment action for genuine terminal %s Content",
+    async (summaryStatus) => {
+      const { redeemed } = await createRedeemedAccount(
+        "filter",
+        `web-terminal-${summaryStatus}`,
+      );
+      const normalizedUrl = `https://example.org/web-terminal-${summaryStatus}`;
+      const existing = await upsertContentByIdentity(handle.db, {
+        adapterVersion: "v1",
+        dedupeKey: `generic_web:v1:url:${normalizedUrl}`,
+        normalizedUrl,
+        outboundUrl: normalizedUrl,
+        source: "generic_web",
+        sourceAdapter: "generic_web",
+      });
+      await handle.db
+        .update(contents)
+        .set({ enrichmentStatus: "partial", summaryStatus })
+        .where(eq(contents.id, existing.content.id));
+
+      await expect(
+        collectFromWeb(handle.db, await principalFor(redeemed), {
+          idempotency_key: `web-terminal-${summaryStatus}`,
+          raw_input: normalizedUrl,
+          visibility: "private",
+        }),
+      ).resolves.toMatchObject({
+        content_id: existing.content.id,
+        enrichment_action: "none",
+        public_read_url: null,
+        summary_status: "unavailable",
+      });
+    },
+  );
+
   it("creates no Content for an ambiguous share until the Filter selects a candidate", async () => {
     const { redeemed } = await createRedeemedAccount("filter", "web-ambiguous");
     const principal = await principalFor(redeemed);
@@ -2669,7 +2705,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     expect(await handle.db.select().from(contents)).toHaveLength(1);
   });
 
-  it("repairs only active unmoderated no-summary legacy rows without replaying jobs", async () => {
+  it("repairs only exact legacy provider-absence rows without replaying jobs", async () => {
     const createLegacyContent = async (suffix: string) =>
       upsertContentByIdentity(handle.db, {
         adapterVersion: "1",
@@ -2679,8 +2715,16 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
         source: "example.org",
         sourceAdapter: "generic_web",
       });
-    const eligibleUnavailable = await createLegacyContent("eligible-unavailable");
-    const completedJobs = await createLegacyContent("completed-jobs");
+    const legacyProviderAbsence = await createLegacyContent(
+      "provider-absence",
+    );
+    const terminalUnavailable = await createLegacyContent(
+      "terminal-unavailable",
+    );
+    const terminalFailed = await createLegacyContent("terminal-failed");
+    const unavailableWithoutHistory = await createLegacyContent(
+      "unavailable-without-history",
+    );
     const ready = await createLegacyContent("ready");
     const hidden = await createLegacyContent("hidden");
     const hasSummary = await createLegacyContent("has-summary");
@@ -2692,12 +2736,20 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     const restrictedAt = new Date("2026-08-12T00:00:00.000Z");
 
     await Promise.all([
-      handle.db.update(contents).set({ summaryStatus: "unavailable" })
-        .where(eq(contents.id, eligibleUnavailable.content.id)),
       handle.db.update(contents).set({
-        enrichmentStatus: "complete",
+        enrichmentStatus: "partial",
+        summaryStatus: "unavailable",
+      }).where(eq(contents.id, legacyProviderAbsence.content.id)),
+      handle.db.update(contents).set({
+        enrichmentStatus: "partial",
+        summaryStatus: "unavailable",
+      }).where(eq(contents.id, terminalUnavailable.content.id)),
+      handle.db.update(contents).set({
+        enrichmentStatus: "partial",
         summaryStatus: "failed",
-      }).where(eq(contents.id, completedJobs.content.id)),
+      }).where(eq(contents.id, terminalFailed.content.id)),
+      handle.db.update(contents).set({ summaryStatus: "unavailable" })
+        .where(eq(contents.id, unavailableWithoutHistory.content.id)),
       handle.db.update(contents).set({
         aiSummary: "ready summary",
         summaryStatus: "ready",
@@ -2730,13 +2782,42 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
         summaryStatus: "failed",
       }).where(eq(contents.id, merged.content.id)),
     ]);
-    await handle.db.insert(jobs).values({
-      idempotencyKey: `content.summary.v1:${completedJobs.content.id}`,
-      payload: { contentId: completedJobs.content.id },
-      queue: "content-enrichment",
-      status: "completed",
-      taskType: "content.summary.v1",
-    });
+    await handle.db.insert(jobs).values([
+      {
+        completedAt: new Date("2026-08-12T00:00:00.000Z"),
+        idempotencyKey: `content.summary.v1:${legacyProviderAbsence.content.id}`,
+        payload: { contentId: legacyProviderAbsence.content.id },
+        queue: "content-enrichment",
+        status: "completed",
+        taskType: "content.summary.v1",
+      },
+      {
+        completedAt: new Date("2026-08-11T23:59:00.000Z"),
+        idempotencyKey: `content.metadata.v1:${terminalUnavailable.content.id}`,
+        payload: { contentId: terminalUnavailable.content.id },
+        queue: "content-enrichment",
+        status: "completed",
+        taskType: "content.metadata.v1",
+      },
+      {
+        completedAt: new Date("2026-08-12T00:00:00.000Z"),
+        idempotencyKey: `content.summary.v1:${terminalUnavailable.content.id}`,
+        lastErrorCode: "ai_provider_unauthorized",
+        payload: { contentId: terminalUnavailable.content.id },
+        queue: "content-enrichment",
+        status: "failed",
+        taskType: "content.summary.v1",
+      },
+      {
+        completedAt: new Date("2026-08-12T00:00:00.000Z"),
+        idempotencyKey: `content.summary.v1:${terminalFailed.content.id}`,
+        lastErrorCode: "lease_expired",
+        payload: { contentId: terminalFailed.content.id },
+        queue: "content-enrichment",
+        status: "failed",
+        taskType: "content.summary.v1",
+      },
+    ]);
     const jobsBefore = await handle.db.select({ id: jobs.id }).from(jobs);
 
     await handle.sql.unsafe(
@@ -2756,8 +2837,10 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       })
       .from(contents);
     const byId = new Map(statuses.map((row) => [row.id, row.summaryStatus]));
-    expect(byId.get(eligibleUnavailable.content.id)).toBe("pending");
-    expect(byId.get(completedJobs.content.id)).toBe("pending");
+    expect(byId.get(legacyProviderAbsence.content.id)).toBe("pending");
+    expect(byId.get(terminalUnavailable.content.id)).toBe("unavailable");
+    expect(byId.get(terminalFailed.content.id)).toBe("failed");
+    expect(byId.get(unavailableWithoutHistory.content.id)).toBe("unavailable");
     expect(byId.get(ready.content.id)).toBe("ready");
     expect(byId.get(hidden.content.id)).toBe("hidden");
     expect(byId.get(hasSummary.content.id)).toBe("unavailable");
@@ -2922,9 +3005,14 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     expect(storedContent?.summaryStatus).toBe("pending");
   });
 
-  it.each(["ready", "hidden"] as const)(
-    "preserves a local %s summary state written while metadata is running",
-    async (summaryStatus) => {
+  it.each([
+    ["ready", "local winner", ["local"]],
+    ["hidden", "local winner", ["local"]],
+    ["unavailable", null, []],
+    ["failed", null, []],
+  ] as const)(
+    "preserves a concurrent %s summary state while metadata is running",
+    async (summaryStatus, summary, tags) => {
     const suffix = `metadata-local-race-${summaryStatus}`;
     const { redeemed } = await createRedeemedAccount("member", suffix);
     const content = await upsertContentByIdentity(handle.db, {
@@ -2980,9 +3068,9 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     await handle.db
       .update(contents)
       .set({
-        aiSummary: "local winner",
-        aiTags: ["local"],
-        enrichmentStatus: "complete",
+        aiSummary: summary,
+        aiTags: [...tags],
+        enrichmentStatus: summaryStatus === "ready" ? "complete" : "partial",
         summaryStatus,
       })
       .where(eq(contents.id, content.content.id));
@@ -3004,9 +3092,9 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       .from(contents)
       .where(eq(contents.id, content.content.id));
     expect(stored).toEqual({
-      summary: "local winner",
+      summary,
       summaryStatus,
-      tags: ["local"],
+      tags: [...tags],
       title: "Metadata Title",
     });
     expect(await handle.db.select().from(jobs)).toHaveLength(1);

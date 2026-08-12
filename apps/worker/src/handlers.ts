@@ -230,10 +230,7 @@ async function finalizeMetadata(
     }
 
     const now = new Date();
-    const summaryStatus = currentContent.summaryStatus === "ready" ||
-        currentContent.summaryStatus === "hidden"
-      ? currentContent.summaryStatus
-      : "pending";
+    const summaryStatus = currentContent.summaryStatus;
     const [updatedContent] = await tx
       .update(contents)
       .set({
