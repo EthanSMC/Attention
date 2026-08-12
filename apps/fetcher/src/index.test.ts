@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "./index.js";
 
@@ -15,6 +15,10 @@ function authorizedRequest(url = "https://example.com"): RequestInit {
   };
 }
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("fetcher API", () => {
   it("requires the shared secret", async () => {
     const response = await createApp(secret).request("/v1/fetch", {
@@ -27,6 +31,7 @@ describe("fetcher API", () => {
   });
 
   it("rejects private literal addresses without issuing a request", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const response = await createApp(secret).request("/v1/fetch", {
       body: JSON.stringify({ url: "http://127.0.0.1/private" }),
       headers: {
@@ -37,12 +42,26 @@ describe("fetcher API", () => {
     });
 
     expect(response.status).toBe(422);
-    await expect(response.json()).resolves.toEqual({
-      error: { code: "unsafe_address" }
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: "unsafe_address",
+        request_id: expect.stringMatching(/^[0-9a-f-]{36}$/u),
+      },
     });
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining(
+      '"event":"fetcher.request_rejected"',
+    ));
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining(
+      '"code":"unsafe_address"',
+    ));
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining(
+      '"host":"127.0.0.1"',
+    ));
+    expect(warning).not.toHaveBeenCalledWith(expect.stringContaining("/private"));
   });
 
   it("does not echo unsafe credentials", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const response = await createApp(secret).request("/v1/fetch", {
       body: JSON.stringify({
         url: "https://example.com/?access_token=never-echo-this"
@@ -56,6 +75,9 @@ describe("fetcher API", () => {
 
     expect(response.status).toBe(422);
     expect(await response.text()).not.toContain("never-echo-this");
+    expect(warning).not.toHaveBeenCalledWith(
+      expect.stringContaining("never-echo-this"),
+    );
   });
 
   it("cancels an oversized chunked body at 16 KiB and returns 413", async () => {

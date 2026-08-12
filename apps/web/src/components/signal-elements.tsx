@@ -33,14 +33,18 @@ export function SourceSignal({
 
 export function EnrichmentBadge({ status }: { status: EnrichmentStatus }) {
   const labels: Record<EnrichmentStatus, string> = {
-    processing: "摘要尚未就绪",
+    processing: "摘要待补全",
     ready: "AI 摘要可用",
     unavailable: "无可用摘要",
   };
 
   return (
     <span className={`status-label status-label--${status}`}>
-      {status === "unavailable" ? <WarningIcon /> : <BotIcon />}
+      {status === "unavailable" ? (
+        <WarningIcon data-enrichment-icon="warning" />
+      ) : (
+        <BotIcon data-enrichment-icon="assistant" />
+      )}
       {labels[status]}
     </span>
   );

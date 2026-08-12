@@ -118,6 +118,183 @@ async function nextTurn(): Promise<void> {
 }
 
 describe("resident Claude Code brain", () => {
+  it("returns a content-free collection control from stream-json MCP results", async () => {
+    const { brain, rpcs } = fixture();
+    const pending = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "collect",
+      sessionId: null,
+    });
+    await nextTurn();
+    const rpc = rpcs[0];
+    rpc?.emit({
+      message: {
+        content: [
+          {
+            id: "select-1",
+            input: {},
+            name: "mcp__attention__attention_select_collection_candidate",
+            type: "tool_use",
+          },
+        ],
+        role: "assistant",
+      },
+      session_id: "session-1",
+      type: "assistant",
+    });
+    rpc?.emit({
+      message: {
+        content: [
+          {
+            content: JSON.stringify({
+              enrichment_action: "reuse_summary",
+              status: "accepted",
+              title: "RAW TITLE",
+              public_read_url: null,
+            }),
+            tool_use_id: "select-1",
+            type: "tool_result",
+          },
+        ],
+        role: "user",
+      },
+      session_id: "session-1",
+      type: "user",
+    });
+    rpc?.complete("RAW TITLE https://example.com/raw BODY SUMMARY #TAG");
+
+    await expect(pending).resolves.toMatchObject({
+      collectionReplyControl: {
+        collectionStatus: "accepted",
+        enrichmentAction: "reuse_summary",
+        enrichmentCompleted: false,
+        kind: "established",
+      },
+    });
+    await brain.shutdown();
+  });
+
+  it("returns a fixed content-free unsafe failure instead of model prose", async () => {
+    const { brain, rpcs } = fixture();
+    const pending = brain.invoke({ cwd: "/tmp/channel", prompt: "collect", sessionId: null });
+    await nextTurn();
+    const rpc = rpcs[0];
+    rpc?.emit({
+      message: { content: [{ id: "collect-unsafe", input: {}, name: "mcp__attention__attention_collect_content", type: "tool_use" }], role: "assistant" },
+      session_id: "session-1", type: "assistant",
+    });
+    rpc?.emit({
+      message: { content: [{ content: JSON.stringify({ status: "unsafe" }), tool_use_id: "collect-unsafe", type: "tool_result" }], role: "user" },
+      session_id: "session-1", type: "user",
+    });
+    rpc?.complete("RAW TITLE https://example.com BODY");
+    await expect(pending).resolves.toMatchObject({
+      collectionReplyControl: { kind: "fixed", reply: "未保存：链接未通过安全检查。" },
+    });
+    await brain.shutdown();
+  });
+
+  it("fails closed when a collection tool has no result event", async () => {
+    const { brain, rpcs } = fixture();
+    const pending = brain.invoke({ cwd: "/tmp/channel", prompt: "collect", sessionId: null });
+    await nextTurn();
+    rpcs[0]?.emit({
+      message: { content: [{ id: "collect-lost", input: {}, name: "mcp__attention__attention_collect_content", type: "tool_use" }], role: "assistant" },
+      session_id: "session-1", type: "assistant",
+    });
+    rpcs[0]?.complete("RAW TITLE https://example.com BODY");
+    await expect(pending).resolves.toMatchObject({
+      collectionReplyControl: { kind: "fixed", reply: "收藏结果无法确认，请稍后重试。" },
+    });
+    await brain.shutdown();
+  });
+
+  it("ignores a parseable payload from an errored tool_result block", async () => {
+    const { brain, rpcs } = fixture();
+    const pending = brain.invoke({ cwd: "/tmp/channel", prompt: "collect", sessionId: null });
+    await nextTurn();
+    rpcs[0]?.emit({
+      message: { content: [{ id: "select-error", input: {}, name: "mcp__attention__attention_select_collection_candidate", type: "tool_use" }], role: "assistant" },
+      session_id: "session-1", type: "assistant",
+    });
+    rpcs[0]?.emit({
+      message: { content: [{ content: JSON.stringify({ enrichment_action: "generate_summary", status: "accepted" }), is_error: true, tool_use_id: "select-error", type: "tool_result" }], role: "user" },
+      session_id: "session-1", type: "user",
+    });
+    rpcs[0]?.complete("RAW TITLE https://example.com BODY SUMMARY #TAG");
+    await expect(pending).resolves.toMatchObject({
+      collectionReplyControl: { kind: "fixed", reply: "收藏结果无法确认，请稍后重试。" },
+    });
+    await brain.shutdown();
+  });
+
+  it("accepts an established selected result without final model text", async () => {
+    const { brain, rpcs } = fixture();
+    const pending = brain.invoke({ cwd: "/tmp/channel", prompt: "select", sessionId: null });
+    await nextTurn();
+    rpcs[0]?.emit({
+      message: { content: [{ id: "select-empty", input: {}, name: "mcp__attention__attention_select_collection_candidate", type: "tool_use" }], role: "assistant" },
+      session_id: "session-1", type: "assistant",
+    });
+    rpcs[0]?.emit({
+      message: { content: [{ content: JSON.stringify({ enrichment_action: "none", status: "merged_with_existing_content" }), tool_use_id: "select-empty", type: "tool_result" }], role: "user" },
+      session_id: "session-1", type: "user",
+    });
+    rpcs[0]?.complete("");
+    await expect(pending).resolves.toMatchObject({
+      ok: true,
+      reply: "",
+      collectionReplyControl: {
+        collectionStatus: "merged_with_existing_content",
+        enrichmentAction: "none",
+        kind: "established",
+      },
+    });
+    await brain.shutdown();
+  });
+
+  it("does not carry an unresolved timed-out collection tool into normal chat", async () => {
+    const { brain, rpcs } = fixture();
+    const timedOut = brain.invoke({ cwd: "/tmp/channel", prompt: "collect", sessionId: null });
+    await nextTurn();
+    rpcs[0]?.emit({
+      message: { content: [{ id: "collect-timeout", input: {}, name: "mcp__attention__attention_collect_content", type: "tool_use" }], role: "assistant" },
+      session_id: "session-1", type: "assistant",
+    });
+    await expect(timedOut).resolves.toMatchObject({ ok: false, timedOut: true });
+
+    const normal = brain.invoke({ cwd: "/tmp/channel", prompt: "你好", sessionId: null });
+    await nextTurn();
+    rpcs.at(-1)?.complete("普通对话回答");
+    await expect(normal).resolves.toMatchObject({
+      ok: true,
+      reply: "普通对话回答",
+    });
+    expect(await normal).not.toHaveProperty("collectionReplyControl");
+    await brain.shutdown();
+  });
+
+  it("does not carry an unresolved crashed collection tool into normal chat", async () => {
+    const { brain, rpcs } = fixture();
+    await brain.start();
+    const crashed = brain.invoke({ cwd: "/tmp/channel", prompt: "collect", sessionId: null });
+    await nextTurn();
+    rpcs[0]?.emit({
+      message: { content: [{ id: "collect-crash", input: {}, name: "mcp__attention__attention_collect_content", type: "tool_use" }], role: "assistant" },
+      session_id: "session-1", type: "assistant",
+    });
+    rpcs[0]?.crash();
+    await expect(crashed).resolves.toMatchObject({ ok: false });
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    const normal = brain.invoke({ cwd: "/tmp/channel", prompt: "你好", sessionId: null });
+    await nextTurn();
+    rpcs.at(-1)?.complete("普通对话回答");
+    await expect(normal).resolves.toMatchObject({ ok: true, reply: "普通对话回答" });
+    expect(await normal).not.toHaveProperty("collectionReplyControl");
+    await brain.shutdown();
+  });
+
   it("reuses one stream-json process and one session for consecutive turns", async () => {
     const { brain, rpcs } = fixture();
     await brain.start();

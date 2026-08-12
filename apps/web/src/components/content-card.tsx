@@ -21,7 +21,7 @@ const collectedFormatter = new Intl.DateTimeFormat("zh-CN", {
 
 function Summary({ content }: { content: PublicContent }) {
   if (content.summaryStatus === "processing") {
-    return <p className="summary-placeholder">AI 摘要尚未就绪，链接已可访问。</p>;
+    return <p className="summary-placeholder">摘要仍在补全，原文已可查看。</p>;
   }
 
   if (content.summaryStatus === "unavailable" || !content.summary) {

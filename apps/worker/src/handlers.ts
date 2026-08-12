@@ -32,6 +32,7 @@ export interface ContentHandlerContext {
 export interface JobHandlers {
   metadata(context: ContentHandlerContext): Promise<MetadataResult>;
   summary(context: ContentHandlerContext): Promise<SummaryResult>;
+  readonly summaryConfigured: boolean;
 }
 
 export function createStubHandlers(): JobHandlers {
@@ -46,6 +47,7 @@ export function createStubHandlers(): JobHandlers {
         retryable: false,
       });
     },
+    summaryConfigured: false,
   };
 }
 
@@ -67,7 +69,6 @@ async function loadEligibleContent(db: AttentionDatabase, contentId: string) {
       publicSafetyStatus: contents.publicSafetyStatus,
       publishedAt: contents.publishedAt,
       source: contents.source,
-      summaryStatus: contents.summaryStatus,
       takedownStatus: contents.takedownStatus,
       title: contents.title,
     })
@@ -194,7 +195,6 @@ async function finalizeMetadata(
   contentId: string,
   result: MetadataResult,
   scheduleSummary: boolean,
-  summaryStatus: "failed" | "hidden" | "pending" | "ready" | "unavailable",
 ) {
   const completed = await db.transaction(async (tx) => {
     const [lease] = await tx
@@ -212,19 +212,33 @@ async function finalizeMetadata(
 
     if (!lease) return false;
 
+    const [currentContent] = await tx
+      .select({ summaryStatus: contents.summaryStatus })
+      .from(contents)
+      .where(
+        and(
+          eq(contents.id, contentId),
+          eq(contents.contentStatus, "active"),
+          eq(contents.publicSafetyStatus, "allowed"),
+          eq(contents.takedownStatus, "none"),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!currentContent) {
+      throw new JobExecutionError("content_became_ineligible", { retryable: false });
+    }
+
     const now = new Date();
+    const summaryStatus = currentContent.summaryStatus;
     const [updatedContent] = await tx
       .update(contents)
       .set({
         author: result.author,
         cachedFaviconAssetKey: result.cachedFaviconAssetKey,
-        enrichmentStatus: "partial",
+        enrichmentStatus: summaryStatus === "ready" ? "complete" : "partial",
         publishedAt: result.publishedAt,
-        summaryStatus: summaryStatus === "ready" || summaryStatus === "hidden"
-          ? summaryStatus
-          : scheduleSummary
-            ? "pending"
-            : "unavailable",
+        summaryStatus,
         title: result.title,
         updatedAt: now,
       })
@@ -242,7 +256,7 @@ async function finalizeMetadata(
       throw new JobExecutionError("content_became_ineligible", { retryable: false });
     }
 
-    if (scheduleSummary && summaryStatus !== "ready" && summaryStatus !== "hidden") {
+    if (scheduleSummary && summaryStatus === "pending") {
       await tx
         .insert(jobs)
         .values({
@@ -294,16 +308,9 @@ async function finalizeSummary(
 
     if (!lease) return false;
 
-    const now = new Date();
-    const [updatedContent] = await tx
-      .update(contents)
-      .set({
-        aiSummary: result.summary,
-        aiTags: result.tags,
-        enrichmentStatus: result.status === "ready" ? "complete" : "partial",
-        summaryStatus: result.status,
-        updatedAt: now,
-      })
+    const [currentContent] = await tx
+      .select({ summaryStatus: contents.summaryStatus })
+      .from(contents)
       .where(
         and(
           eq(contents.id, contentId),
@@ -312,10 +319,24 @@ async function finalizeSummary(
           eq(contents.takedownStatus, "none"),
         ),
       )
-      .returning({ id: contents.id });
-
-    if (!updatedContent) {
+      .for("update")
+      .limit(1);
+    if (!currentContent) {
       throw new JobExecutionError("content_became_ineligible", { retryable: false });
+    }
+
+    const now = new Date();
+    if (currentContent.summaryStatus !== "ready" && currentContent.summaryStatus !== "hidden") {
+      await tx
+        .update(contents)
+        .set({
+          aiSummary: result.summary,
+          aiTags: result.tags,
+          enrichmentStatus: result.status === "ready" ? "complete" : "partial",
+          summaryStatus: result.status,
+          updatedAt: now,
+        })
+        .where(eq(contents.id, contentId));
     }
 
     await tx
@@ -333,6 +354,41 @@ async function finalizeSummary(
     return true;
   });
 
+  if (!completed) throw new LostLeaseError();
+}
+
+async function completeSummaryWithoutExecution(
+  db: AttentionDatabase,
+  job: ClaimedJob,
+) {
+  const completed = await db.transaction(async (tx) => {
+    const [lease] = await tx
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.id, job.id),
+          eq(jobs.status, "running"),
+          eq(jobs.lockedBy, job.lockedBy),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!lease) return false;
+    const now = new Date();
+    await tx
+      .update(jobs)
+      .set({
+        completedAt: now,
+        lastErrorCode: null,
+        lockedAt: null,
+        lockedBy: null,
+        status: "completed",
+        updatedAt: now,
+      })
+      .where(and(eq(jobs.id, job.id), eq(jobs.lockedBy, job.lockedBy)));
+    return true;
+  });
   if (!completed) throw new LostLeaseError();
 }
 
@@ -356,24 +412,20 @@ export async function executeClaimedJob(
 
   if (job.taskType === METADATA_TASK_TYPE) {
     const result = validateMetadata(await handlers.metadata(context));
-    const scheduleSummary = await shouldScheduleHostedAi(db, content.id);
+    const scheduleSummary = handlers.summaryConfigured &&
+      await shouldScheduleHostedAi(db, content.id);
     await finalizeMetadata(
       db,
       job,
       content.id,
       result,
       scheduleSummary,
-      content.summaryStatus,
     );
     return;
   }
 
-  if (!(await shouldScheduleHostedAi(db, content.id))) {
-    await finalizeSummary(db, job, content.id, {
-      status: "unavailable",
-      summary: null,
-      tags: [],
-    });
+  if (!handlers.summaryConfigured || !(await shouldScheduleHostedAi(db, content.id))) {
+    await completeSummaryWithoutExecution(db, job);
     return;
   }
   const result = validateSummary(await handlers.summary(context));

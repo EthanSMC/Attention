@@ -124,21 +124,21 @@
   },
   "skill": {
     "availability": "available",
-    "bundle_path": "/skills/attention/bundles/attention-workbuddy-1.5.0.zip",
-    "bundle_sha256": "f07a3385a11a5bef933ca3986968ce7f46c2399d286f98dbdfd4d6b48020f01e",
+    "bundle_path": "/skills/attention/bundles/attention-workbuddy-1.6.0.zip",
+    "bundle_sha256": "45b869576feae8e42c06ebe61658496fc9aa26918ab38f81fb54721351bc966c",
     "bundle_skill_path": "SKILL.md",
     "delivery": "host_upload_bundle",
     "docs_url": "https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Skills-Market",
-    "document_sha256": "a10eee0bb10a3724a319fb0f968d2d1302e92abef134c63611588c2383f750ed",
+    "document_sha256": "aeded3e3984ab669da1e5ed72fc209fa88cb9e6fa8583d45c018f800b5064755",
     "format": "skill_md",
     "id": "attention",
     "install": "upload_bundle",
     "install_command_template": null,
     "local_path": null,
-    "package_ref": "/skills/attention/bundles/attention-workbuddy-1.5.0.zip",
+    "package_ref": "/skills/attention/bundles/attention-workbuddy-1.6.0.zip",
     "source_kind": "upload_bundle",
     "source_path": "/skills/attention/SKILL.md",
-    "tool_contract_version": "1.3.0",
-    "version": "1.5.0"
+    "tool_contract_version": "1.4.0",
+    "version": "1.6.0"
   }
 }

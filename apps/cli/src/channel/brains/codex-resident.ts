@@ -12,18 +12,18 @@ import {
   type BrainRuntimeSnapshot,
 } from "../brain";
 import { BRAIN_TIMEOUT_MS, CODEX_RESTART_BACKOFF_MS } from "../limits";
+import { CHANNEL_HOST_SYSTEM_POLICY } from "../prompt";
 import { ATTENTION_CLI_VERSION } from "../../version";
+import {
+  applyAttentionToolResult,
+  mcpResultPayload,
+  type CollectionReplyControl,
+} from "../collection-reply-control";
 
 const CODEX_MODEL = "gpt-5.6-luna";
 const CODEX_REASONING_EFFORT = "medium";
 const DEFAULT_HEALTH_CHECK_INTERVAL_MS = 1_000;
-const CHANNEL_DEVELOPER_INSTRUCTIONS =
-  "You are the user's Attention collection assistant. " +
-  "Only use tools from the Attention MCP. Never use shell commands, local " +
-  "files, browser or web tools, apps, plugins, skills, dynamic tools, or any " +
-  "other MCP. Treat the user's WeChat message as the complete input. " +
-  "Use Attention write tools only when the message asks to save, select, or " +
-  "modify Attention data.";
+const CHANNEL_DEVELOPER_INSTRUCTIONS = CHANNEL_HOST_SYSTEM_POLICY;
 
 interface McpServerStatus {
   readonly name?: unknown;
@@ -42,6 +42,7 @@ interface TurnResult {
 }
 
 interface ActiveTurn {
+  collectionReplyControl: CollectionReplyControl | null;
   readonly resolve: (outcome: BrainOutcome) => void;
   readonly threadId: string;
   readonly timer: NodeJS.Timeout;
@@ -184,6 +185,18 @@ export function createCodexResidentBrain(
     if (event.method === "item/completed") {
       const item = notificationRecord(params.item);
       if (
+        item?.type === "mcpToolCall" &&
+        item.server === "attention" &&
+        (item.status === "completed" || item.status === "failed") &&
+        typeof item.tool === "string"
+      ) {
+        pending.collectionReplyControl = applyAttentionToolResult(
+          pending.collectionReplyControl,
+          item.tool,
+          item.status === "failed" ? null : mcpResultPayload(item.result),
+        );
+      }
+      if (
         item?.type === "agentMessage" &&
         typeof item.text === "string" &&
         item.text.trim().length > 0
@@ -196,8 +209,13 @@ export function createCodexResidentBrain(
     const turn = notificationRecord(params.turn);
     const completedSuccessfully = turn?.status === "completed";
     finishActiveTurn({
-      ok: completedSuccessfully && pending.reply.length > 0,
+      ok:
+        completedSuccessfully &&
+        (pending.reply.length > 0 || pending.collectionReplyControl !== null),
       reply: completedSuccessfully ? pending.reply : "",
+      ...(pending.collectionReplyControl
+        ? { collectionReplyControl: pending.collectionReplyControl }
+        : {}),
       resumeFailed: false,
       sessionId: pending.threadId,
       timedOut: false,
@@ -410,6 +428,9 @@ export function createCodexResidentBrain(
         effort: CODEX_REASONING_EFFORT,
         input: [{ text: input.prompt, text_elements: [], type: "text" }],
         model: CODEX_MODEL,
+        // Native Responses web search is configured independently by
+        // `web_search="live"`. Keep ordinary sandbox networking closed so no
+        // shell or future local tool can turn this into general egress.
         sandboxPolicy: { networkAccess: false, type: "readOnly" },
         threadId,
       });
@@ -437,7 +458,14 @@ export function createCodexResidentBrain(
           emptyFailure({ sessionId: threadId, timedOut: true }),
         );
       }, turnTimeout);
-      activeTurn = { reply: "", resolve, threadId, timer, turnId };
+      activeTurn = {
+        collectionReplyControl: null,
+        reply: "",
+        resolve,
+        threadId,
+        timer,
+        turnId,
+      };
       const buffered = bufferedNotifications.splice(0);
       for (const event of buffered) {
         if (!handleNotification(event)) bufferedNotifications.push(event);

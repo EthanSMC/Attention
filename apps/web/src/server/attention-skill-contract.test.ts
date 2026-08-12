@@ -25,6 +25,7 @@ const expectedPublicTools = [
   "attention_report_content",
   "attention_search_content",
   "attention_select_collection_candidate",
+  "attention_submit_content_enrichment",
   "attention_update_collection",
   "attention_update_digest_settings",
 ] as const;
@@ -42,14 +43,49 @@ describe("public Attention Skill contract", () => {
     const skill = await readPublicSkill();
     const registryNames = [...ATTENTION_PUBLIC_TOOL_NAMES].sort();
 
-    expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe("1.3.0");
+    expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe("1.4.0");
     expect(skill).toContain("Skill ID: `attention`");
-    expect(skill).toContain("Skill version: `1.5.0`");
+    expect(skill).toContain("Skill version: `1.6.0`");
     expect(skill).toContain(
       `Tool contract version: \`${ATTENTION_TOOL_CONTRACT_VERSION}\``,
     );
     expect(registryNames).toEqual([...expectedPublicTools]);
     expect(declaredToolNames(skill)).toEqual(registryNames);
+  });
+
+  it("pins the server-directed shared enrichment workflow and privacy boundary", async () => {
+    const skill = await readPublicSkill();
+
+    expect(skill).toMatch(/`reuse_summary`[\s\S]*do not read the source[\s\S]*do not call `attention_submit_content_enrichment`/u);
+    expect(skill).toMatch(/`generate_summary`[\s\S]*publicly accessible source/u);
+    expect(skill).toMatch(/summary[^\n]*2,000 characters/u);
+    expect(skill).toMatch(/between 1 and 8 normalized tags/u);
+    expect(skill).toMatch(/`already_enriched`[\s\S]*successful reuse/u);
+    expect(skill).toMatch(/cannot be read publicly[\s\S]*leave the summary pending/u);
+    expect(skill).toMatch(/never fabricate/u);
+    expect(skill).toMatch(/only the summary and tags/u);
+    expect(skill).toMatch(/Do not submit[^\n]*page text[^\n]*raw URL[^\n]*cookies[^\n]*authorization headers[^\n]*browser state/u);
+  });
+
+  it("re-enters the same enrichment workflow after candidate selection", async () => {
+    const skill = await readPublicSkill();
+
+    expect(skill).toMatch(
+      /For `ambiguous`[\s\S]*Do not read any candidate source before the user selects/u,
+    );
+    expect(skill).toMatch(
+      /`attention_select_collection_candidate`[\s\S]*same established-result handler/u,
+    );
+    expect(skill).toMatch(
+      /selected result is `reuse_summary`[\s\S]*do not read[\s\S]*do not submit/u,
+    );
+    expect(skill).toMatch(
+      /selected result is `generate_summary`[\s\S]*`public_read_url`[\s\S]*public reader[\s\S]*`attention_submit_content_enrichment`/u,
+    );
+    expect(skill).not.toMatch(
+      /selected result is `generate_summary`[^\n]*`attention_get_collection_status`/u,
+    );
+    expect(skill).toMatch(/Never guess from the original multi-link share text/u);
   });
 
   it("pins safe collection, recovery, and permission workflows", async () => {
@@ -62,8 +98,8 @@ describe("public Attention Skill contract", () => {
     expect(skill).toMatch(/For `ambiguous`[\s\S]*ask the user to choose/u);
     expect(skill).toMatch(/Never guess a candidate/u);
     expect(skill).toMatch(/at most two automatic retries/u);
-    expect(skill).toMatch(/still call `attention_collect_content` with the original URL/u);
-    expect(skill).toMatch(/Agent's own Browser, Computer Use, or Web Search/u);
+    expect(skill).toMatch(/Pass every established result[\s\S]*same established-result handler/u);
+    expect(skill).toMatch(/Agent's own minimum public-web reader/u);
     expect(skill).toMatch(/Third-party extraction is not trusted Attention acquisition evidence/u);
     expect(skill).toMatch(/Only an active Filter may make a collection public/u);
     expect(skill).toMatch(/Do not invent allegations/u);
@@ -85,7 +121,7 @@ describe("public Attention Skill contract", () => {
     expect(skill).not.toMatch(/att_pat_[A-Za-z0-9_-]+/u);
     expect(skill).not.toMatch(/Bearer\s+[A-Za-z0-9._~-]+/u);
     expect(skill).not.toMatch(/store (?:the )?(?:full )?(?:page|article|original|HTML)/iu);
-    expect(skill).toMatch(/Do not submit copied page text, extracted full content, cookies, authorization headers, or browser state/u);
+    expect(skill).toMatch(/Do not submit copied page text, extracted full content, the raw URL, cookies, authorization headers, or browser state/u);
     expect(skill).toMatch(/stores collected URLs and necessary metadata, not a third-party original/u);
   });
 });

@@ -24,8 +24,8 @@ describe("Attention Web and MCP capability manifest", () => {
       ({ tool_name }) => tool_name,
     );
     expect(manifestNames).toEqual(ATTENTION_TOOL_NAMES);
-    expect(manifestNames).toHaveLength(14);
-    expect(new Set(manifestNames).size).toBe(14);
+    expect(manifestNames).toHaveLength(15);
+    expect(new Set(manifestNames).size).toBe(15);
   });
 
   it("uses only scopes authorized for the attention-mcp audience", () => {

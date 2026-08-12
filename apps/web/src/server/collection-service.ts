@@ -312,7 +312,31 @@ async function resolveCandidate(rawUrl: string): Promise<ResolvedCandidate | nul
     redirectChain = resolved.redirectChain;
   } catch (error) {
     if (error instanceof FetcherClientError && error.unsafe) {
-      throw new CandidateUnsafeError("unsafe_target");
+      // A recognized direct platform URL is safe to retain when the isolated
+      // Fetcher declines to connect solely because DNS currently resolves to
+      // a non-public address. This fallback performs no network request;
+      // enrichment stays pending and must pass Fetcher validation on retry.
+      if (error.code === "unsafe_address") {
+        const fallback = fallbackDirectCandidate(currentUrl, match);
+        if (fallback) {
+          console.warn(JSON.stringify({
+            code: error.code,
+            event: "collection.fetcher_safety_fallback",
+            fetcher_request_id: error.requestId,
+            source: initialSource,
+            url_fingerprint: urlFingerprint(currentUrl),
+          }));
+          return fallback;
+        }
+      }
+      console.warn(JSON.stringify({
+        code: error.code,
+        event: "collection.fetcher_safety_rejection",
+        fetcher_request_id: error.requestId,
+        source: initialSource,
+        url_fingerprint: urlFingerprint(currentUrl),
+      }));
+      throw new CandidateUnsafeError(error.code);
     }
     if (
       error instanceof FetcherClientError &&
@@ -475,6 +499,59 @@ function baseResponse(attempt: InputAttempt) {
   };
 }
 
+export function enrichmentResponseFields(content: {
+  aiSummary: string | null;
+  communityModerationStatus: "clear" | "hidden" | "pending_review";
+  contentStatus: "active" | "merged";
+  publicSafetyStatus: "allowed" | "blocked";
+  summaryStatus: "failed" | "hidden" | "pending" | "ready" | "unavailable";
+  takedownStatus: "none" | "removed";
+}, publicReadUrl: string): {
+  enrichment_action: "reuse_summary" | "generate_summary" | "none";
+  public_read_url: string | null;
+  summary_status: "ready" | "pending" | "unavailable" | "hidden";
+} {
+  const ineligible =
+    content.contentStatus !== "active" ||
+    content.publicSafetyStatus !== "allowed" ||
+    content.takedownStatus !== "none" ||
+    content.communityModerationStatus !== "clear";
+  if (content.summaryStatus === "hidden" || ineligible) {
+    return {
+      enrichment_action: "none",
+      public_read_url: null,
+      summary_status: "hidden",
+    };
+  }
+  if (content.summaryStatus === "ready") {
+    return {
+      enrichment_action: "reuse_summary",
+      public_read_url: null,
+      summary_status: "ready",
+    };
+  }
+  if (
+    content.summaryStatus === "unavailable" ||
+    content.summaryStatus === "failed"
+  ) {
+    return {
+      enrichment_action: "none",
+      public_read_url: null,
+      summary_status: "unavailable",
+    };
+  }
+  const enrichmentAction =
+    content.aiSummary === null || content.aiSummary.trim() === ""
+      ? "generate_summary"
+      : "none";
+  return {
+    enrichment_action: enrichmentAction,
+    public_read_url:
+      enrichmentAction === "generate_summary" ? publicReadUrl : null,
+    summary_status: content.summaryStatus,
+  };
+}
+
 async function establishedResponse(
   db: AttentionDatabase,
   principal: CollectionPrincipal,
@@ -513,6 +590,7 @@ async function establishedResponse(
     .parse(attempt.status);
   return CollectorResponseSchema.parse({
     ...baseResponse(attempt),
+    ...enrichmentResponseFields(content, content.outboundUrl),
     content_id: content.id,
     collection_id: collection.id,
     content_type: contentType,
@@ -848,29 +926,6 @@ async function establishCollection(
         taskType: "content.metadata.v1",
       })
       .onConflictDoNothing({ target: jobs.idempotencyKey });
-    if (
-      principal.isMember &&
-      !contentResult.created &&
-      contentResult.content.summaryStatus !== "ready" &&
-      contentResult.content.summaryStatus !== "hidden"
-    ) {
-      const [summaryJob] = await tx
-        .insert(jobs)
-        .values({
-          idempotencyKey: `content.summary.v1:${contentResult.content.id}`,
-          payload: { contentId: contentResult.content.id },
-          queue: "content-enrichment",
-          taskType: "content.summary.v1",
-        })
-        .onConflictDoNothing({ target: jobs.idempotencyKey })
-        .returning({ id: jobs.id });
-      if (summaryJob) {
-        await tx
-          .update(contents)
-          .set({ enrichmentStatus: "partial", summaryStatus: "pending", updatedAt: now })
-          .where(eq(contents.id, contentResult.content.id));
-      }
-    }
     const [updatedAttempt] = await tx
       .update(inputAttempts)
       .set({
@@ -895,6 +950,10 @@ async function establishCollection(
 
   return CollectorResponseSchema.parse({
     ...baseResponse(attempt),
+    ...enrichmentResponseFields(
+      established.contentResult.content,
+      candidate.outboundUrl,
+    ),
     collection_id: established.collectionResult.collection.id,
     content_id: established.contentResult.content.id,
     content_type: candidate.identity.contentType,

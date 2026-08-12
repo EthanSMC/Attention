@@ -15,6 +15,39 @@ import { describe, expect, it } from "vitest";
 import * as schema from "../packages/db/src/schema";
 
 describe("Drizzle migration snapshot", () => {
+  it("registers the data-only local enrichment repair migration", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migrationPath = resolve(
+      root,
+      "packages/db/drizzle/0032_local_agent_enrichment_repair.sql",
+    );
+    const journal = JSON.parse(
+      readFileSync(resolve(root, "packages/db/drizzle/meta/_journal.json"), "utf8"),
+    ) as { entries: { tag: string }[] };
+
+    expect(existsSync(migrationPath)).toBe(true);
+    expect(journal.entries.at(-1)?.tag).toBe("0032_local_agent_enrichment_repair");
+    if (!existsSync(migrationPath)) return;
+    const migration = readFileSync(migrationPath, "utf8");
+    expect(migration).toContain('"summary_status" = \'unavailable\'');
+    expect(migration).toContain('"enrichment_status" = \'partial\'');
+    expect(migration).toContain(
+      '"summary_job"."task_type" = \'content.summary.v1\'',
+    );
+    expect(migration).toContain('"summary_job"."status" = \'completed\'');
+    expect(migration).toContain('"summary_job"."completed_at" IS NOT NULL');
+    expect(migration).toContain('"summary_job"."last_error_code" IS NULL');
+    expect(migration).toContain(
+      "'content.summary.v1:' || \"content\".\"id\"::text",
+    );
+    expect(migration).toContain(
+      '"summary_job"."payload" ->> \'contentId\' = "content"."id"::text',
+    );
+    expect(migration).not.toContain('"summary_status" IN');
+    expect(migration).not.toContain("'failed'");
+    expect(migration).not.toMatch(/INSERT\s+INTO\s+"?jobs"?/iu);
+  });
+
   it("enforces one active Runtime connection per trusted installation", () => {
     const root = resolve(import.meta.dirname, "..");
     const migrationPath = resolve(
