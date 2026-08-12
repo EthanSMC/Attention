@@ -1169,9 +1169,9 @@ main {
 }
 
 .status-label--processing {
-  border-color: #aab6eb;
-  background: var(--ai-soft);
-  color: var(--ai-signal);
+  border-color: var(--line);
+  background: var(--surface-muted);
+  color: var(--muted);
 }
 
 .status-label--paused {
@@ -2497,7 +2497,8 @@ main {
 }
 
 .status-label--processing {
-  background: var(--ai-soft);
+  background: var(--surface-muted);
+  color: var(--muted);
 }
 
 .status-label--blocked,
