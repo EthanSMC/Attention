@@ -32,6 +32,7 @@ import {
   type ChannelState,
   rememberProcessedMessage,
 } from "./state";
+import { safeCollectionReply } from "./collection-reply-control";
 
 export interface PipelineInput {
   readonly brain: BrainAdapter;
@@ -193,12 +194,15 @@ export async function handleInboundMessage(
 
   state.runtimeState.activeTurnMessageRef = null;
   state.runtimeState.lastSuccessfulMessageAt = state.lastActivityAt;
-  appendHistory(state, text, outcome.reply.trim());
+  const safeReply = outcome.collectionReplyControl
+    ? safeCollectionReply(outcome.collectionReplyControl)
+    : outcome.reply.trim();
+  appendHistory(state, text, safeReply);
   rememberProcessedMessage(state, messageId);
   return {
     completed: true,
     processed: true,
-    replies: splitReply(outcome.reply.trim()),
+    replies: splitReply(safeReply),
   };
 }
 

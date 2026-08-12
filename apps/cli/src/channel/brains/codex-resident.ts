@@ -14,6 +14,11 @@ import {
 import { BRAIN_TIMEOUT_MS, CODEX_RESTART_BACKOFF_MS } from "../limits";
 import { CHANNEL_HOST_SYSTEM_POLICY } from "../prompt";
 import { ATTENTION_CLI_VERSION } from "../../version";
+import {
+  applyAttentionToolResult,
+  mcpResultPayload,
+  type CollectionReplyControl,
+} from "../collection-reply-control";
 
 const CODEX_MODEL = "gpt-5.6-luna";
 const CODEX_REASONING_EFFORT = "medium";
@@ -37,6 +42,7 @@ interface TurnResult {
 }
 
 interface ActiveTurn {
+  collectionReplyControl: CollectionReplyControl | null;
   readonly resolve: (outcome: BrainOutcome) => void;
   readonly threadId: string;
   readonly timer: NodeJS.Timeout;
@@ -179,6 +185,18 @@ export function createCodexResidentBrain(
     if (event.method === "item/completed") {
       const item = notificationRecord(params.item);
       if (
+        item?.type === "mcpToolCall" &&
+        item.server === "attention" &&
+        (item.status === "completed" || item.status === "failed") &&
+        typeof item.tool === "string"
+      ) {
+        pending.collectionReplyControl = applyAttentionToolResult(
+          pending.collectionReplyControl,
+          item.tool,
+          mcpResultPayload(item.result),
+        );
+      }
+      if (
         item?.type === "agentMessage" &&
         typeof item.text === "string" &&
         item.text.trim().length > 0
@@ -193,6 +211,9 @@ export function createCodexResidentBrain(
     finishActiveTurn({
       ok: completedSuccessfully && pending.reply.length > 0,
       reply: completedSuccessfully ? pending.reply : "",
+      ...(pending.collectionReplyControl
+        ? { collectionReplyControl: pending.collectionReplyControl }
+        : {}),
       resumeFailed: false,
       sessionId: pending.threadId,
       timedOut: false,
@@ -435,7 +456,14 @@ export function createCodexResidentBrain(
           emptyFailure({ sessionId: threadId, timedOut: true }),
         );
       }, turnTimeout);
-      activeTurn = { reply: "", resolve, threadId, timer, turnId };
+      activeTurn = {
+        collectionReplyControl: null,
+        reply: "",
+        resolve,
+        threadId,
+        timer,
+        turnId,
+      };
       const buffered = bufferedNotifications.splice(0);
       for (const event of buffered) {
         if (!handleNotification(event)) bufferedNotifications.push(event);

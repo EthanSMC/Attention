@@ -17,6 +17,11 @@ import {
 } from "../limits";
 import { CHANNEL_HOST_SYSTEM_POLICY } from "../prompt";
 import { ATTENTION_CHANNEL_MCP_TOOL_NAMES } from "./codex";
+import {
+  applyAttentionToolResult,
+  mcpResultPayload,
+  type CollectionReplyControl,
+} from "../collection-reply-control";
 
 const DEFAULT_HEALTH_CHECK_INTERVAL_MS = 1_000;
 
@@ -45,6 +50,7 @@ export interface ClaudeResidentBrainOptions {
 }
 
 interface ActiveTurn {
+  collectionReplyControl: CollectionReplyControl | null;
   reply: string;
   readonly requestedSessionId: string | null;
   readonly resolve: (outcome: BrainOutcome) => void;
@@ -91,6 +97,49 @@ function assistantText(message: ClaudeStreamMessage): string {
     })
     .join("")
     .trim();
+}
+
+function observeClaudeAttentionTools(
+  message: ClaudeStreamMessage,
+  current: CollectionReplyControl | null,
+  pendingToolNames: Map<string, string>,
+): CollectionReplyControl | null {
+  const content = objectRecord(message.message)?.content;
+  if (!Array.isArray(content)) return current;
+  let next = current;
+  for (const entry of content) {
+    const block = objectRecord(entry);
+    if (!block) continue;
+    if (
+      block.type === "tool_use" &&
+      typeof block.id === "string" &&
+      typeof block.name === "string" &&
+      block.name.startsWith("mcp__attention__")
+    ) {
+      pendingToolNames.set(block.id, block.name);
+      continue;
+    }
+    if (block.type !== "tool_result" || typeof block.tool_use_id !== "string") {
+      continue;
+    }
+    const toolName = pendingToolNames.get(block.tool_use_id);
+    if (!toolName) continue;
+    pendingToolNames.delete(block.tool_use_id);
+    next = applyAttentionToolResult(
+      next,
+      toolName,
+      mcpResultPayload(block.content),
+    );
+  }
+  return next;
+}
+
+function unresolvedCollectionTool(
+  pendingToolNames: ReadonlyMap<string, string>,
+): boolean {
+  return [...pendingToolNames.values()].some((name) =>
+    /attention_(?:collect_content|select_collection_candidate)$/u.test(name),
+  );
 }
 
 function isMissingSessionText(text: string): boolean {
@@ -177,6 +226,7 @@ export function createClaudeResidentBrain(
     phase: "starting",
     retryAttempt: 0,
   };
+  const pendingToolNames = new Map<string, string>();
 
   const transition = (
     phase: BrainRuntimeSnapshot["phase"],
@@ -197,6 +247,13 @@ export function createClaudeResidentBrain(
   const handleMessage = (message: ClaudeStreamMessage): void => {
     const sessionId = stringField(message, "session_id");
     if (sessionId) currentSessionId = sessionId;
+    if (activeTurn) {
+      activeTurn.collectionReplyControl = observeClaudeAttentionTools(
+        message,
+        activeTurn.collectionReplyControl,
+        pendingToolNames,
+      );
+    }
     if (message.type === "assistant" && activeTurn) {
       const text = assistantText(message);
       if (text) activeTurn.reply = text;
@@ -209,6 +266,16 @@ export function createClaudeResidentBrain(
     const isError = message.is_error === true || subtype?.startsWith("error") === true;
     const resolvedSessionId =
       sessionId ?? currentSessionId ?? pending.requestedSessionId;
+    if (
+      pending.collectionReplyControl === null &&
+      unresolvedCollectionTool(pendingToolNames)
+    ) {
+      pending.collectionReplyControl = {
+        kind: "fixed",
+        reply: "收藏结果无法确认，请稍后重试。",
+      };
+    }
+    pendingToolNames.clear();
     processCompletedTurn = true;
     if (isError) {
       const missingSession =
@@ -236,6 +303,9 @@ export function createClaudeResidentBrain(
     finishActiveTurn({
       ok: resultText.trim().length > 0,
       reply: resultText.trim(),
+      ...(pending.collectionReplyControl
+        ? { collectionReplyControl: pending.collectionReplyControl }
+        : {}),
       resumeFailed: false,
       sessionId: resolvedSessionId,
       timedOut: false,
@@ -400,6 +470,7 @@ export function createClaudeResidentBrain(
         );
       }, turnTimeout);
       activeTurn = {
+        collectionReplyControl: null,
         reply: "",
         requestedSessionId: input.sessionId,
         resolve,
