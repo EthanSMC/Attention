@@ -202,6 +202,14 @@ function normalizeOAuthConnectionLabel(value: string): string {
     .toLowerCase();
 }
 
+function deferred<T>() {
+  let resolvePromise!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: resolvePromise };
+}
+
 describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
   let handle: DatabaseHandle;
 
@@ -1707,6 +1715,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       "attention_get_membership_status",
       "attention_list_collections",
       "attention_collect_content",
+      "attention_submit_content_enrichment",
       "attention_select_collection_candidate",
       "attention_get_collection_status",
       "attention_update_collection",
@@ -2655,6 +2664,105 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     expect(await handle.db.select().from(contents)).toHaveLength(1);
   });
 
+  it("repairs only active unmoderated no-summary legacy rows without replaying jobs", async () => {
+    const createLegacyContent = async (suffix: string) =>
+      upsertContentByIdentity(handle.db, {
+        adapterVersion: "1",
+        dedupeKey: `generic:v1:https://example.org/enrichment-repair-${suffix}`,
+        normalizedUrl: `https://example.org/enrichment-repair-${suffix}`,
+        outboundUrl: `https://example.org/enrichment-repair-${suffix}`,
+        source: "example.org",
+        sourceAdapter: "generic_web",
+      });
+    const eligibleUnavailable = await createLegacyContent("eligible-unavailable");
+    const completedJobs = await createLegacyContent("completed-jobs");
+    const ready = await createLegacyContent("ready");
+    const hidden = await createLegacyContent("hidden");
+    const hasSummary = await createLegacyContent("has-summary");
+    const blocked = await createLegacyContent("blocked");
+    const removed = await createLegacyContent("removed");
+    const pendingReview = await createLegacyContent("pending-review");
+    const mergedTarget = await createLegacyContent("merged-target");
+    const merged = await createLegacyContent("merged");
+    const restrictedAt = new Date("2026-08-12T00:00:00.000Z");
+
+    await Promise.all([
+      handle.db.update(contents).set({ summaryStatus: "unavailable" })
+        .where(eq(contents.id, eligibleUnavailable.content.id)),
+      handle.db.update(contents).set({
+        enrichmentStatus: "complete",
+        summaryStatus: "failed",
+      }).where(eq(contents.id, completedJobs.content.id)),
+      handle.db.update(contents).set({
+        aiSummary: "ready summary",
+        summaryStatus: "ready",
+      }).where(eq(contents.id, ready.content.id)),
+      handle.db.update(contents).set({ summaryStatus: "hidden" })
+        .where(eq(contents.id, hidden.content.id)),
+      handle.db.update(contents).set({
+        aiSummary: "legacy retained summary",
+        summaryStatus: "unavailable",
+      }).where(eq(contents.id, hasSummary.content.id)),
+      handle.db.update(contents).set({
+        publicSafetyStatus: "blocked",
+        restrictedAt,
+        restrictionReasonCode: "safety_block",
+        summaryStatus: "unavailable",
+      }).where(eq(contents.id, blocked.content.id)),
+      handle.db.update(contents).set({
+        restrictedAt,
+        restrictionReasonCode: "legal_takedown",
+        summaryStatus: "failed",
+        takedownStatus: "removed",
+      }).where(eq(contents.id, removed.content.id)),
+      handle.db.update(contents).set({
+        communityModerationStatus: "pending_review",
+        summaryStatus: "unavailable",
+      }).where(eq(contents.id, pendingReview.content.id)),
+      handle.db.update(contents).set({
+        contentStatus: "merged",
+        mergedIntoContentId: mergedTarget.content.id,
+        summaryStatus: "failed",
+      }).where(eq(contents.id, merged.content.id)),
+    ]);
+    await handle.db.insert(jobs).values({
+      idempotencyKey: `content.summary.v1:${completedJobs.content.id}`,
+      payload: { contentId: completedJobs.content.id },
+      queue: "content-enrichment",
+      status: "completed",
+      taskType: "content.summary.v1",
+    });
+    const jobsBefore = await handle.db.select({ id: jobs.id }).from(jobs);
+
+    await handle.sql.unsafe(
+      readFileSync(
+        new URL(
+          "../../packages/db/drizzle/0032_local_agent_enrichment_repair.sql",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+
+    const statuses = await handle.db
+      .select({
+        id: contents.id,
+        summaryStatus: contents.summaryStatus,
+      })
+      .from(contents);
+    const byId = new Map(statuses.map((row) => [row.id, row.summaryStatus]));
+    expect(byId.get(eligibleUnavailable.content.id)).toBe("pending");
+    expect(byId.get(completedJobs.content.id)).toBe("pending");
+    expect(byId.get(ready.content.id)).toBe("ready");
+    expect(byId.get(hidden.content.id)).toBe("hidden");
+    expect(byId.get(hasSummary.content.id)).toBe("unavailable");
+    expect(byId.get(blocked.content.id)).toBe("unavailable");
+    expect(byId.get(removed.content.id)).toBe("failed");
+    expect(byId.get(pendingReview.content.id)).toBe("unavailable");
+    expect(byId.get(merged.content.id)).toBe("failed");
+    expect(await handle.db.select({ id: jobs.id }).from(jobs)).toEqual(jobsBefore);
+  });
+
   it("resolves platform shortlinks only through the internal Fetcher", async () => {
     const { redeemed } = await createRedeemedAccount("filter", "web-shortlink");
     const principal = await principalFor(redeemed);
@@ -2694,7 +2802,304 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     }
   });
 
-  it("claims enrichment jobs and exposes an honest unavailable state when handlers are absent", async () => {
+  it("does not enqueue a summary directly when a Member collects existing Content", async () => {
+    const { redeemed } = await createRedeemedAccount("member", "existing-no-summary-job");
+    const existing = await upsertContentByIdentity(handle.db, {
+      adapterVersion: "v1",
+      contentType: "web_page",
+      dedupeKey: "generic_web:v1:url:https://example.org/existing-no-summary-job",
+      normalizedUrl: "https://example.org/existing-no-summary-job",
+      outboundUrl: "https://example.org/existing-no-summary-job",
+      source: "generic_web",
+      sourceAdapter: "generic_web",
+    });
+
+    const response = await collectFromWeb(handle.db, await principalFor(redeemed), {
+      idempotency_key: "existing-no-summary-job",
+      raw_input: "https://example.org/existing-no-summary-job",
+      visibility: "private",
+    });
+    expect(response).toMatchObject({
+      content_id: existing.content.id,
+      status: "merged_with_existing_content",
+    });
+    expect(
+      await handle.db.select({ taskType: jobs.taskType }).from(jobs),
+    ).toEqual([{ taskType: "content.metadata.v1" }]);
+  });
+
+  it("does not schedule hosted summary execution when the handler has no provider", async () => {
+    const { redeemed } = await createRedeemedAccount("member", "worker-no-provider");
+    const response = await collectFromWeb(handle.db, await principalFor(redeemed), {
+      idempotency_key: "worker-no-provider-content",
+      raw_input: "https://example.org/worker-no-provider-content",
+      visibility: "private",
+    });
+    if (response.status !== "accepted" && response.status !== "merged_with_existing_content") {
+      throw new Error("Expected an established collection");
+    }
+    const claimed = await claimNextJob(handle.sql, {
+      leaseMs: 5_000,
+      queue: "content-enrichment",
+      workerId: "worker-no-provider",
+    });
+    if (!claimed) throw new Error("Expected the metadata job");
+    await executeClaimedJob(
+      handle.db,
+      claimed,
+      createProductionHandlers(),
+      new AbortController().signal,
+    );
+
+    expect(await handle.db.select({ taskType: jobs.taskType }).from(jobs)).toEqual([
+      { taskType: "content.metadata.v1" },
+    ]);
+    const [content] = await handle.db
+      .select({
+        enrichmentStatus: contents.enrichmentStatus,
+        summaryStatus: contents.summaryStatus,
+      })
+      .from(contents)
+      .where(eq(contents.id, response.content_id));
+    expect(content).toEqual({
+      enrichmentStatus: "partial",
+      summaryStatus: "pending",
+    });
+  });
+
+  it("completes a queued legacy summary job without a provider and keeps Content pending", async () => {
+    const { redeemed } = await createRedeemedAccount("member", "legacy-summary-no-provider");
+    const content = await upsertContentByIdentity(handle.db, {
+      adapterVersion: "1",
+      dedupeKey: "generic:v1:https://example.org/legacy-summary-no-provider",
+      normalizedUrl: "https://example.org/legacy-summary-no-provider",
+      outboundUrl: "https://example.org/legacy-summary-no-provider",
+      source: "example.org",
+      sourceAdapter: "generic_web",
+    });
+    await upsertCollection(handle.db, {
+      accountId: redeemed.accountId,
+      contentId: content.content.id,
+      domainId: await aiDomainId(),
+      sourceChannel: "web",
+      visibility: "private",
+    });
+    await handle.db.insert(jobs).values({
+      availableAt: new Date("2026-08-12T00:00:00.000Z"),
+      idempotencyKey: `content.summary.v1:${content.content.id}`,
+      payload: { contentId: content.content.id },
+      queue: "content-enrichment",
+      taskType: "content.summary.v1",
+    });
+    const claimed = await claimNextJob(handle.sql, {
+      leaseMs: 5_000,
+      now: new Date("2026-08-12T00:01:00.000Z"),
+      queue: "content-enrichment",
+      workerId: "legacy-summary-no-provider",
+    });
+    if (!claimed) throw new Error("Expected the legacy summary job");
+    await executeClaimedJob(
+      handle.db,
+      claimed,
+      createProductionHandlers(),
+      new AbortController().signal,
+    );
+
+    const [storedJob] = await handle.db
+      .select({ status: jobs.status })
+      .from(jobs)
+      .where(eq(jobs.id, claimed.id));
+    const [storedContent] = await handle.db
+      .select({ summaryStatus: contents.summaryStatus })
+      .from(contents)
+      .where(eq(contents.id, content.content.id));
+    expect(storedJob?.status).toBe("completed");
+    expect(storedContent?.summaryStatus).toBe("pending");
+  });
+
+  it.each(["ready", "hidden"] as const)(
+    "preserves a local %s summary state written while metadata is running",
+    async (summaryStatus) => {
+    const suffix = `metadata-local-race-${summaryStatus}`;
+    const { redeemed } = await createRedeemedAccount("member", suffix);
+    const content = await upsertContentByIdentity(handle.db, {
+      adapterVersion: "1",
+      dedupeKey: `generic:v1:https://example.org/${suffix}`,
+      normalizedUrl: `https://example.org/${suffix}`,
+      outboundUrl: `https://example.org/${suffix}`,
+      source: "example.org",
+      sourceAdapter: "generic_web",
+    });
+    await upsertCollection(handle.db, {
+      accountId: redeemed.accountId,
+      contentId: content.content.id,
+      domainId: await aiDomainId(),
+      sourceChannel: "web",
+      visibility: "private",
+    });
+    await handle.db.insert(jobs).values({
+      availableAt: new Date("2026-08-12T00:00:00.000Z"),
+      idempotencyKey: `content.metadata.v1:${content.content.id}`,
+      payload: { contentId: content.content.id },
+      queue: "content-enrichment",
+      taskType: "content.metadata.v1",
+    });
+    const claimed = await claimNextJob(handle.sql, {
+      leaseMs: 5_000,
+      now: new Date("2026-08-12T00:01:00.000Z"),
+      queue: "content-enrichment",
+      workerId: "metadata-local-race",
+    });
+    if (!claimed) throw new Error("Expected the metadata job");
+    const metadataStarted = deferred<void>();
+    const metadataResult = deferred<{
+      author: string | null;
+      cachedFaviconAssetKey: string | null;
+      publishedAt: Date | null;
+      title: string | null;
+    }>();
+    const execution = executeClaimedJob(
+      handle.db,
+      claimed,
+      {
+        metadata: async () => {
+          metadataStarted.resolve();
+          return metadataResult.promise;
+        },
+        summary: async () => ({ status: "ready", summary: "hosted", tags: ["hosted"] }),
+        summaryConfigured: true,
+      },
+      new AbortController().signal,
+    );
+    await metadataStarted.promise;
+    await handle.db
+      .update(contents)
+      .set({
+        aiSummary: "local winner",
+        aiTags: ["local"],
+        enrichmentStatus: "complete",
+        summaryStatus,
+      })
+      .where(eq(contents.id, content.content.id));
+    metadataResult.resolve({
+      author: "Metadata Author",
+      cachedFaviconAssetKey: null,
+      publishedAt: null,
+      title: "Metadata Title",
+    });
+    await execution;
+
+    const [stored] = await handle.db
+      .select({
+        summary: contents.aiSummary,
+        summaryStatus: contents.summaryStatus,
+        tags: contents.aiTags,
+        title: contents.title,
+      })
+      .from(contents)
+      .where(eq(contents.id, content.content.id));
+    expect(stored).toEqual({
+      summary: "local winner",
+      summaryStatus,
+      tags: ["local"],
+      title: "Metadata Title",
+    });
+    expect(await handle.db.select().from(jobs)).toHaveLength(1);
+    },
+  );
+
+  it.each(["ready", "hidden"] as const)(
+    "does not let a hosted summary overwrite a local %s first writer",
+    async (summaryStatus) => {
+    const suffix = `summary-local-race-${summaryStatus}`;
+    const { redeemed } = await createRedeemedAccount("member", suffix);
+    const content = await upsertContentByIdentity(handle.db, {
+      adapterVersion: "1",
+      dedupeKey: `generic:v1:https://example.org/${suffix}`,
+      normalizedUrl: `https://example.org/${suffix}`,
+      outboundUrl: `https://example.org/${suffix}`,
+      source: "example.org",
+      sourceAdapter: "generic_web",
+    });
+    await upsertCollection(handle.db, {
+      accountId: redeemed.accountId,
+      contentId: content.content.id,
+      domainId: await aiDomainId(),
+      sourceChannel: "web",
+      visibility: "private",
+    });
+    await handle.db.insert(jobs).values({
+      availableAt: new Date("2026-08-12T00:00:00.000Z"),
+      idempotencyKey: `content.summary.v1:${content.content.id}`,
+      payload: { contentId: content.content.id },
+      queue: "content-enrichment",
+      taskType: "content.summary.v1",
+    });
+    const claimed = await claimNextJob(handle.sql, {
+      leaseMs: 5_000,
+      now: new Date("2026-08-12T00:01:00.000Z"),
+      queue: "content-enrichment",
+      workerId: "summary-local-race",
+    });
+    if (!claimed) throw new Error("Expected the summary job");
+    const summaryStarted = deferred<void>();
+    const hostedResult = deferred<{
+      status: "ready";
+      summary: string;
+      tags: string[];
+    }>();
+    const execution = executeClaimedJob(
+      handle.db,
+      claimed,
+      {
+        metadata: async () => ({
+          author: null,
+          cachedFaviconAssetKey: null,
+          publishedAt: null,
+          title: null,
+        }),
+        summary: async () => {
+          summaryStarted.resolve();
+          return hostedResult.promise;
+        },
+        summaryConfigured: true,
+      },
+      new AbortController().signal,
+    );
+    await summaryStarted.promise;
+    await handle.db
+      .update(contents)
+      .set({
+        aiSummary: "local winner",
+        aiTags: ["local"],
+        enrichmentStatus: "complete",
+        summaryStatus,
+      })
+      .where(eq(contents.id, content.content.id));
+    hostedResult.resolve({
+      status: "ready",
+      summary: "hosted loser",
+      tags: ["hosted"],
+    });
+    await execution;
+
+    const [stored] = await handle.db
+      .select({
+        summary: contents.aiSummary,
+        summaryStatus: contents.summaryStatus,
+        tags: contents.aiTags,
+      })
+      .from(contents)
+      .where(eq(contents.id, content.content.id));
+    expect(stored).toEqual({
+      summary: "local winner",
+      summaryStatus,
+      tags: ["local"],
+    });
+    },
+  );
+
+  it("keeps summaries pending when metadata handlers are absent", async () => {
     const { redeemed } = await createRedeemedAccount("member", "worker-stub");
     const principal = await principalFor(redeemed);
     const response = await collectFromWeb(handle.db, principal, {
@@ -2753,7 +3158,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       .where(eq(contents.id, response.content_id));
     expect(content).toEqual({
       enrichmentStatus: "failed",
-      summaryStatus: "unavailable"
+      summaryStatus: "pending"
     });
   });
 
@@ -2802,7 +3207,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       .where(eq(contents.id, response.content_id));
     expect(beforeUpgrade).toEqual({
       enrichmentStatus: "partial",
-      summaryStatus: "unavailable",
+      summaryStatus: "pending",
     });
 
     await handle.db.insert(entitlements).values({
@@ -2872,7 +3277,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     expect(stored).toEqual({
       enrichmentStatus: "partial",
       summary: null,
-      summaryStatus: "unavailable",
+      summaryStatus: "pending",
     });
   });
 
@@ -3056,6 +3461,169 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
   });
 
+  it("does not let terminal summary failure overwrite a ready Content", async () => {
+    const content = await upsertContentByIdentity(handle.db, {
+      dedupeKey: "generic:v1:https://example.com/summary-terminal-ready",
+      normalizedUrl: "https://example.com/summary-terminal-ready",
+      outboundUrl: "https://example.com/summary-terminal-ready",
+      source: "example.com",
+      sourceAdapter: "generic_web",
+      adapterVersion: "1",
+    });
+    await handle.db
+      .update(contents)
+      .set({
+        aiSummary: "local winner",
+        aiTags: ["local"],
+        enrichmentStatus: "complete",
+        summaryStatus: "ready",
+      })
+      .where(eq(contents.id, content.content.id));
+    await handle.db.insert(jobs).values({
+      availableAt: new Date("2026-08-12T00:00:00.000Z"),
+      idempotencyKey: `content.summary.v1:${content.content.id}`,
+      maxAttempts: 1,
+      payload: { contentId: content.content.id },
+      queue: "content-enrichment",
+      taskType: "content.summary.v1",
+    });
+    const claimed = await claimNextJob(handle.sql, {
+      leaseMs: 5_000,
+      now: new Date("2026-08-12T00:01:00.000Z"),
+      queue: "content-enrichment",
+      workerId: "summary-terminal-ready",
+    });
+    if (!claimed) throw new Error("Expected a summary job");
+    await failJob(handle.sql, {
+      baseRetryMs: 100,
+      errorCode: "ai_provider_unauthorized",
+      job: claimed,
+      maxRetryMs: 1_000,
+      retryable: false,
+    });
+
+    const [stored] = await handle.db
+      .select({
+        enrichmentStatus: contents.enrichmentStatus,
+        summary: contents.aiSummary,
+        summaryStatus: contents.summaryStatus,
+        tags: contents.aiTags,
+      })
+      .from(contents)
+      .where(eq(contents.id, content.content.id));
+    expect(stored).toEqual({
+      enrichmentStatus: "complete",
+      summary: "local winner",
+      summaryStatus: "ready",
+      tags: ["local"],
+    });
+  });
+
+  it.each(["ready", "hidden"] as const)(
+    "preserves a %s summary when metadata fails terminally",
+    async (summaryStatus) => {
+      const content = await upsertContentByIdentity(handle.db, {
+        dedupeKey: `generic:v1:https://example.com/metadata-terminal-${summaryStatus}`,
+        normalizedUrl: `https://example.com/metadata-terminal-${summaryStatus}`,
+        outboundUrl: `https://example.com/metadata-terminal-${summaryStatus}`,
+        source: "example.com",
+        sourceAdapter: "generic_web",
+        adapterVersion: "1",
+      });
+      await handle.db
+        .update(contents)
+        .set({
+          aiSummary: "local winner",
+          aiTags: ["local"],
+          enrichmentStatus: "complete",
+          summaryStatus,
+        })
+        .where(eq(contents.id, content.content.id));
+      await handle.db.insert(jobs).values({
+        availableAt: new Date("2026-08-12T00:00:00.000Z"),
+        idempotencyKey: `content.metadata.v1:${content.content.id}`,
+        maxAttempts: 1,
+        payload: { contentId: content.content.id },
+        queue: "content-enrichment",
+        taskType: "content.metadata.v1",
+      });
+      const claimed = await claimNextJob(handle.sql, {
+        leaseMs: 5_000,
+        now: new Date("2026-08-12T00:01:00.000Z"),
+        queue: "content-enrichment",
+        workerId: `metadata-terminal-${summaryStatus}`,
+      });
+      if (!claimed) throw new Error("Expected a metadata job");
+      await failJob(handle.sql, {
+        baseRetryMs: 100,
+        errorCode: "metadata_terminal_failure",
+        job: claimed,
+        maxRetryMs: 1_000,
+        retryable: false,
+      });
+
+      const [stored] = await handle.db
+        .select({
+          enrichmentStatus: contents.enrichmentStatus,
+          summary: contents.aiSummary,
+          summaryStatus: contents.summaryStatus,
+          tags: contents.aiTags,
+        })
+        .from(contents)
+        .where(eq(contents.id, content.content.id));
+      expect(stored).toEqual({
+        enrichmentStatus: "failed",
+        summary: "local winner",
+        summaryStatus,
+        tags: ["local"],
+      });
+    },
+  );
+
+  it("does not let a stale summary-job reap overwrite hidden Content", async () => {
+    const content = await upsertContentByIdentity(handle.db, {
+      dedupeKey: "generic:v1:https://example.com/summary-reap-hidden",
+      normalizedUrl: "https://example.com/summary-reap-hidden",
+      outboundUrl: "https://example.com/summary-reap-hidden",
+      source: "example.com",
+      sourceAdapter: "generic_web",
+      adapterVersion: "1",
+    });
+    await handle.db
+      .update(contents)
+      .set({ enrichmentStatus: "partial", summaryStatus: "hidden" })
+      .where(eq(contents.id, content.content.id));
+    const staleAt = new Date("2026-07-31T12:30:00.000Z");
+    await handle.db.insert(jobs).values({
+      attempts: 1,
+      idempotencyKey: `content.summary.v1:${content.content.id}`,
+      lockedAt: staleAt,
+      lockedBy: "summary-reap-hidden:claim",
+      maxAttempts: 1,
+      payload: { contentId: content.content.id },
+      queue: "content-enrichment",
+      status: "running",
+      taskType: "content.summary.v1",
+    });
+
+    await expect(reapExhaustedJobs(handle.sql, {
+      leaseMs: 5_000,
+      now: new Date("2026-07-31T12:30:06.000Z"),
+      queue: "content-enrichment",
+    })).resolves.toBe(1);
+    const [stored] = await handle.db
+      .select({
+        enrichmentStatus: contents.enrichmentStatus,
+        summaryStatus: contents.summaryStatus,
+      })
+      .from(contents)
+      .where(eq(contents.id, content.content.id));
+    expect(stored).toEqual({
+      enrichmentStatus: "partial",
+      summaryStatus: "hidden",
+    });
+  });
+
   it("reaps an exhausted stale job and updates its Content in the same operation", async () => {
     const content = await upsertContentByIdentity(handle.db, {
       dedupeKey: "generic:v1:https://example.com/worker-stale-reaper",
@@ -3113,7 +3681,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
     expect(storedContent).toEqual({
       enrichmentStatus: "failed",
-      summaryStatus: "unavailable"
+      summaryStatus: "pending"
     });
   });
 

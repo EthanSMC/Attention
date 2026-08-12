@@ -15,6 +15,23 @@ import { describe, expect, it } from "vitest";
 import * as schema from "../packages/db/src/schema";
 
 describe("Drizzle migration snapshot", () => {
+  it("registers the data-only local enrichment repair migration", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migrationPath = resolve(
+      root,
+      "packages/db/drizzle/0032_local_agent_enrichment_repair.sql",
+    );
+    const journal = JSON.parse(
+      readFileSync(resolve(root, "packages/db/drizzle/meta/_journal.json"), "utf8"),
+    ) as { entries: { tag: string }[] };
+
+    expect(existsSync(migrationPath)).toBe(true);
+    expect(journal.entries.at(-1)?.tag).toBe("0032_local_agent_enrichment_repair");
+    if (!existsSync(migrationPath)) return;
+    const migration = readFileSync(migrationPath, "utf8");
+    expect(migration).not.toMatch(/INSERT\s+INTO\s+"?jobs"?/iu);
+  });
+
   it("enforces one active Runtime connection per trusted installation", () => {
     const root = resolve(import.meta.dirname, "..");
     const migrationPath = resolve(
