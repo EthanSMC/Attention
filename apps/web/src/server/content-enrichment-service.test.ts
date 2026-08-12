@@ -169,6 +169,29 @@ describe.skipIf(!databaseUrl)("content enrichment service with PostgreSQL", () =
     ).rejects.toMatchObject({ code });
   });
 
+  it.each(["unavailable", "failed"] as const)(
+    "rejects genuine terminal %s Content without replacing it",
+    async (summaryStatus) => {
+      await handle.db
+        .update(contents)
+        .set({ enrichmentStatus: "partial", summaryStatus })
+        .where(eq(contents.id, contentId));
+
+      await expect(
+        submitContentEnrichment(handle.db, { accountId }, input),
+      ).rejects.toMatchObject({
+        code: "content_enrichment_unavailable",
+        httpStatus: 409,
+      });
+      const [stored] = await handle.db.select().from(contents);
+      expect(stored).toMatchObject({
+        aiSummary: null,
+        aiTags: [],
+        summaryStatus,
+      });
+    },
+  );
+
   it("makes a retry successful without overwriting the first result", async () => {
     await submitContentEnrichment(handle.db, { accountId }, input);
 

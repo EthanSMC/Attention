@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CollectionItem } from "../lib/attention";
 import { AgentAccessError } from "./agent-retrieval";
 import { CollectionServiceError } from "./collection-service";
+import { ContentEnrichmentServiceError } from "./content-enrichment-service";
 import { DigestSettingsError } from "./digest-settings";
 import {
   createAttentionToolRegistry,
@@ -160,6 +161,34 @@ describe("Attention Tool Registry execution contract", () => {
         tags: ["Agents", "agents", "MCP"],
       },
     );
+  });
+
+  it("returns a stable non-retryable error for terminal summary Content", async () => {
+    const core = dependencies({
+      submitContentEnrichment: vi.fn(async () => {
+        throw new ContentEnrichmentServiceError(
+          "content_enrichment_unavailable",
+          409,
+        );
+      }),
+    });
+
+    await expect(
+      tool(core, "attention_submit_content_enrichment").invoke(
+        context({ scopes: ["collection:write"] }),
+        {
+          content_id: collectionId,
+          idempotency_key: "terminal-enrichment-1",
+          summary: "This must not replace a terminal result.",
+          tags: ["terminal"],
+        },
+      ),
+    ).resolves.toEqual({
+      code: "content_enrichment_unavailable",
+      guidance:
+        "This Content has a terminal summary result and cannot be regenerated.",
+      ok: false,
+    });
   });
 
   it("exposes only public profile fields and live capabilities", async () => {

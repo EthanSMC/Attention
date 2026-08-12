@@ -29,6 +29,22 @@ describe("Drizzle migration snapshot", () => {
     expect(journal.entries.at(-1)?.tag).toBe("0032_local_agent_enrichment_repair");
     if (!existsSync(migrationPath)) return;
     const migration = readFileSync(migrationPath, "utf8");
+    expect(migration).toContain('"summary_status" = \'unavailable\'');
+    expect(migration).toContain('"enrichment_status" = \'partial\'');
+    expect(migration).toContain(
+      '"summary_job"."task_type" = \'content.summary.v1\'',
+    );
+    expect(migration).toContain('"summary_job"."status" = \'completed\'');
+    expect(migration).toContain('"summary_job"."completed_at" IS NOT NULL');
+    expect(migration).toContain('"summary_job"."last_error_code" IS NULL');
+    expect(migration).toContain(
+      "'content.summary.v1:' || \"content\".\"id\"::text",
+    );
+    expect(migration).toContain(
+      '"summary_job"."payload" ->> \'contentId\' = "content"."id"::text',
+    );
+    expect(migration).not.toContain('"summary_status" IN');
+    expect(migration).not.toContain("'failed'");
     expect(migration).not.toMatch(/INSERT\s+INTO\s+"?jobs"?/iu);
   });
 
