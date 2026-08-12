@@ -242,7 +242,7 @@ describe("resident Codex brain", () => {
       params: {
         item: {
           arguments: {}, id: "collect-bad", result: { content: [] }, server: "attention",
-          status: "failed", tool: "attention_collect_content", type: "mcpToolCall",
+          status: "completed", tool: "attention_collect_content", type: "mcpToolCall",
         },
         threadId: "thread-1", turnId: "turn-1",
       },
@@ -250,6 +250,60 @@ describe("resident Codex brain", () => {
     rpc.complete("thread-1", "turn-1", "RAW TITLE https://example.com BODY");
     await expect(pending).resolves.toMatchObject({
       collectionReplyControl: { kind: "fixed", reply: "收藏结果无法确认，请稍后重试。" },
+    });
+    await brain.shutdown();
+  });
+
+  it("ignores a parseable payload on a failed collection tool event", async () => {
+    const rpc = new ScriptedRpc();
+    rpc.autoCompleteTurns = false;
+    const brain = createCodexResidentBrain({ mcpUrl: "https://attention.example/mcp", rpc });
+    const pending = brain.invoke({ cwd: "/tmp/channel", prompt: "collect", sessionId: null });
+    await nextTurn();
+    rpc.emit({
+      method: "item/completed",
+      params: {
+        item: {
+          arguments: {}, id: "collect-failed",
+          result: { content: [], structuredContent: { enrichment_action: "generate_summary", status: "accepted" } },
+          server: "attention", status: "failed", tool: "attention_collect_content", type: "mcpToolCall",
+        },
+        threadId: "thread-1", turnId: "turn-1",
+      },
+    });
+    rpc.complete("thread-1", "turn-1", "RAW TITLE https://example.com BODY SUMMARY #TAG");
+    await expect(pending).resolves.toMatchObject({
+      collectionReplyControl: { kind: "fixed", reply: "收藏结果无法确认，请稍后重试。" },
+    });
+    await brain.shutdown();
+  });
+
+  it("accepts an established tool result without a final Agent message", async () => {
+    const rpc = new ScriptedRpc();
+    rpc.autoCompleteTurns = false;
+    const brain = createCodexResidentBrain({ mcpUrl: "https://attention.example/mcp", rpc });
+    const pending = brain.invoke({ cwd: "/tmp/channel", prompt: "collect", sessionId: null });
+    await nextTurn();
+    rpc.emit({
+      method: "item/completed",
+      params: {
+        item: {
+          arguments: {}, id: "collect-empty",
+          result: { content: [], structuredContent: { enrichment_action: "reuse_summary", status: "already_collected" } },
+          server: "attention", status: "completed", tool: "attention_collect_content", type: "mcpToolCall",
+        },
+        threadId: "thread-1", turnId: "turn-1",
+      },
+    });
+    rpc.emit({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } } });
+    await expect(pending).resolves.toMatchObject({
+      ok: true,
+      reply: "",
+      collectionReplyControl: {
+        collectionStatus: "already_collected",
+        enrichmentAction: "reuse_summary",
+        kind: "established",
+      },
     });
     await brain.shutdown();
   });

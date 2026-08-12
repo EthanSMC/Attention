@@ -30,6 +30,11 @@ export type CollectionReplyControl =
         | "收藏结果无法确认，请稍后重试。";
     };
 
+const UNCONFIRMED_COLLECTION_REPLY = {
+  kind: "fixed",
+  reply: "收藏结果无法确认，请稍后重试。",
+} as const satisfies CollectionReplyControl;
+
 function record(value: unknown): Readonly<Record<string, unknown>> | null {
   return value !== null && typeof value === "object"
     ? (value as Readonly<Record<string, unknown>>)
@@ -94,10 +99,8 @@ export function applyAttentionToolResult(
     normalizedToolName === "attention_collect_content" ||
     normalizedToolName === "attention_select_collection_candidate"
   ) {
-    const status = establishedStatus(payload?.status);
-    const action = enrichmentAction(payload?.enrichment_action);
     if (!payload) {
-      return { kind: "fixed", reply: "收藏结果无法确认，请稍后重试。" };
+      return UNCONFIRMED_COLLECTION_REPLY;
     }
     if (payload.status === "invalid") {
       return { kind: "fixed", reply: "未保存：链接无效。" };
@@ -108,6 +111,9 @@ export function applyAttentionToolResult(
     if (payload.status === "resolution_pending") {
       return { kind: "fixed", reply: "链接仍在解析，收藏尚未完成。" };
     }
+    if (payload.status === "ambiguous") return current;
+    const status = establishedStatus(payload.status);
+    const action = enrichmentAction(payload.enrichment_action);
     return status && action
       ? {
           collectionStatus: status,
@@ -115,7 +121,7 @@ export function applyAttentionToolResult(
           enrichmentCompleted: false,
           kind: "established",
         }
-      : current;
+      : UNCONFIRMED_COLLECTION_REPLY;
   }
   if (
     normalizedToolName === "attention_submit_content_enrichment" &&

@@ -182,7 +182,10 @@ export async function handleInboundMessage(
   const outcome = await invokeWithFallback(input, text, messageRef);
 
   state.lastActivityAt = new Date().toISOString();
-  if (!outcome.ok || !outcome.reply.trim()) {
+  if (
+    !outcome.collectionReplyControl &&
+    (!outcome.ok || !outcome.reply.trim())
+  ) {
     return {
       completed: false,
       processed: true,

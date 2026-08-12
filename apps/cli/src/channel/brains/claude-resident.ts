@@ -51,6 +51,7 @@ export interface ClaudeResidentBrainOptions {
 
 interface ActiveTurn {
   collectionReplyControl: CollectionReplyControl | null;
+  readonly pendingToolNames: Map<string, string>;
   reply: string;
   readonly requestedSessionId: string | null;
   readonly resolve: (outcome: BrainOutcome) => void;
@@ -125,6 +126,10 @@ function observeClaudeAttentionTools(
     const toolName = pendingToolNames.get(block.tool_use_id);
     if (!toolName) continue;
     pendingToolNames.delete(block.tool_use_id);
+    if (block.is_error === true) {
+      next = applyAttentionToolResult(next, toolName, null);
+      continue;
+    }
     next = applyAttentionToolResult(
       next,
       toolName,
@@ -226,8 +231,6 @@ export function createClaudeResidentBrain(
     phase: "starting",
     retryAttempt: 0,
   };
-  const pendingToolNames = new Map<string, string>();
-
   const transition = (
     phase: BrainRuntimeSnapshot["phase"],
     lastErrorCode: string | null,
@@ -251,7 +254,7 @@ export function createClaudeResidentBrain(
       activeTurn.collectionReplyControl = observeClaudeAttentionTools(
         message,
         activeTurn.collectionReplyControl,
-        pendingToolNames,
+        activeTurn.pendingToolNames,
       );
     }
     if (message.type === "assistant" && activeTurn) {
@@ -268,14 +271,14 @@ export function createClaudeResidentBrain(
       sessionId ?? currentSessionId ?? pending.requestedSessionId;
     if (
       pending.collectionReplyControl === null &&
-      unresolvedCollectionTool(pendingToolNames)
+      unresolvedCollectionTool(pending.pendingToolNames)
     ) {
       pending.collectionReplyControl = {
         kind: "fixed",
         reply: "收藏结果无法确认，请稍后重试。",
       };
     }
-    pendingToolNames.clear();
+    pending.pendingToolNames.clear();
     processCompletedTurn = true;
     if (isError) {
       const missingSession =
@@ -301,7 +304,9 @@ export function createClaudeResidentBrain(
     }
     transition("healthy", null, 0);
     finishActiveTurn({
-      ok: resultText.trim().length > 0,
+      ok:
+        resultText.trim().length > 0 ||
+        pending.collectionReplyControl !== null,
       reply: resultText.trim(),
       ...(pending.collectionReplyControl
         ? { collectionReplyControl: pending.collectionReplyControl }
@@ -471,6 +476,7 @@ export function createClaudeResidentBrain(
       }, turnTimeout);
       activeTurn = {
         collectionReplyControl: null,
+        pendingToolNames: new Map(),
         reply: "",
         requestedSessionId: input.sessionId,
         resolve,
