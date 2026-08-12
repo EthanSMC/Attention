@@ -65,6 +65,92 @@ Filter 新收藏默认公开，Member 新收藏默认私密；用户在消息中
    `--background` 命令扫码后恢复。
 7. 第二个桥实例必须被本地锁拒绝；崩溃留下的旧锁必须可自动恢复。
 
+## 本地 Agent 补全共享摘要
+
+以下验收分别用 `codex` 和 `claude-code` 执行。使用两个 Attention 账号和两个此前
+没有被 Attention 收藏过的公开测试页面；不要用已存在摘要的链接冒充首次补全。
+页面应包含一段可人工核对、但不会出现在其他页面中的事实，以判断摘要是否真的
+来自原文。宿主没有提供可观察的公开网页读取证据时，记录为“读取不可观察”，不得
+仅凭 Agent 自述判定公开页面读取成功。
+
+### 首次补全与第二账号复用
+
+1. 账号 A 从指定微信收藏会话发送测试链接。首次调用必须是
+   `attention_collect_content`，成功结果包含同一 `content_id`、
+   `summary_status=pending` 和 `enrichment_action=generate_summary`。
+2. 只有在收到 `generate_summary` 后，宿主才可用最小公开网页读取能力读取该链接。
+   不得使用 Shell、本地文件、登录态浏览器、Cookie 或其他 MCP。Agent 基于公开原文
+   生成不超过 2,000 字符的摘要和 1–8 个标签，并调用
+   `attention_submit_content_enrichment`。返回必须是 `enriched`，Web 卡片随后显示
+   “AI 摘要可用”、同一摘要与标签。
+3. 账号 B（先用 Member，再用 Filter 复验）收藏同一链接。Collect 结果必须是
+   `summary_status=ready` 和 `enrichment_action=reuse_summary`；本轮不得读取网页，
+   也不得调用补全工具。Web 复用账号 A 生成的摘要和标签。Member 的卡片仍为私密，
+   Filter 的卡片仍按 Filter 规则公开；摘要来源不得改变卡片可见范围。
+
+### 并发首写、读取失败与遗留修复
+
+1. 为另一个从未收藏过的公开链接准备账号 A/B，两边在五秒内同时发送。若两边均
+   收到 `generate_summary`，允许两边各自读取并提交；提交结果必须恰好包含一个
+   `enriched`，另一个为 `already_enriched`。后提交者不得覆盖先写入的共享摘要或标签。
+2. 发送一个可由 Attention 保存、但宿主公开网页工具无法读取的链接。收藏必须保留；
+   Agent 不得猜测摘要或上传整页内容，也不得把读取失败说成收藏失败。Web 卡片显示
+   中性的“摘要待补全”，不显示警告图标或错误色。之后同一链接被可读取的本地 Agent
+   收藏时，仍可收到 `generate_summary` 并完成补全。
+3. 部署迁移后抽查历史 `summary_status=unavailable|failed`、无摘要且仍安全可见的
+   Content：应已变为 `pending` 并显示“摘要待补全”。真正终态不可用、隐藏、不安全、
+   已下架或审核中的 Content 不得被迁移或本地 Agent 补写。
+
+### Codex / Claude Code 对等与隐私证据
+
+两种宿主各保存一份脱敏验收表，逐项记录 collect 的 `enrichment_action`、补全结果、
+Web 卡片状态和宿主公开网页工具的可观察调用记录。两者必须满足同一顺序与边界：
+
+```text
+collect → generate_summary → public read → submit enrichment
+collect → reuse_summary → stop (no public read, no submit)
+```
+
+验收完成后检查后台服务日志；命令只检查日志，不检查本地加密/权限隔离的会话状态：
+
+```bash
+export E2E_TEST_URL='本次公开测试链接'
+export E2E_PAGE_SENTINEL='原文中的独特短句'
+export E2E_SUMMARY_SENTINEL='摘要中的独特短句'
+export E2E_TAG_SENTINEL='本次独特标签'
+
+# macOS 后台服务日志；无匹配才通过。
+if grep -F -e "$E2E_TEST_URL" \
+    -e "$E2E_PAGE_SENTINEL" \
+    -e "$E2E_SUMMARY_SENTINEL" \
+    -e "$E2E_TAG_SENTINEL" \
+    "$HOME/.attention/channel/service.log" \
+    "$HOME/.attention/channel/service-error.log" 2>/dev/null; then
+  echo 'FAIL: macOS channel log leaked enrichment content' >&2
+  false
+else
+  echo 'ok: macOS channel logs contain no enrichment content'
+fi
+
+# Linux 用户服务日志；无匹配才通过。
+if journalctl --user -u attention-channel.service --no-pager | \
+    grep -F -e "$E2E_TEST_URL" \
+      -e "$E2E_PAGE_SENTINEL" \
+      -e "$E2E_SUMMARY_SENTINEL" \
+      -e "$E2E_TAG_SENTINEL"; then
+  echo 'FAIL: Linux channel log leaked enrichment content' >&2
+  false
+else
+  echo 'ok: Linux channel logs contain no enrichment content'
+fi
+
+unset E2E_TEST_URL E2E_PAGE_SENTINEL E2E_SUMMARY_SENTINEL E2E_TAG_SENTINEL
+```
+
+服务端 MCP 审计只允许出现账号、工具名、结果状态、稳定错误码、时间与 Content ID；
+不得出现原始 URL、原文、摘要或标签。`attention channel status --json` 仍须满足前述
+脱敏边界。任何一项只在 Codex 或只在 Claude Code 通过，都不算完成。
+
 ### Codex / Claude Code 常驻 Runtime 附加门槛
 
 以下项目只在公开 CLI manifest 已切换到常驻候选产物后执行，不得用
