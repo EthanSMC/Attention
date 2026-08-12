@@ -118,12 +118,16 @@ collect → reuse_summary → stop (no public read, no submit)
 set -euo pipefail
 
 export E2E_TEST_URL='本次公开测试链接'
+export E2E_TITLE_SENTINEL='本次原文标题'
 export E2E_PAGE_SENTINEL='原文中的独特短句'
 export E2E_SUMMARY_SENTINEL='摘要中的独特短句'
 export E2E_TAG_SENTINEL='本次独特标签'
+export E2E_LOG_SINCE='1 hour ago'
 
 # 从仓库根目录运行。脚本启用 `set -euo pipefail`；日志不存在、不可读、
-# journalctl 失败或命中任一哨兵都会以非零状态退出，不会被当成“无泄漏”。
+# 指定时间窗内没有 attention-channel.service 运行证据、journalctl 失败，
+# 或命中任一哨兵都会以非零状态退出，不会被当成“无泄漏”。
+# 请在真机验收完成后一小时内执行；若验收更早开始，请显式扩大但不要取消时间窗。
 case "$(uname -s)" in
   Darwin) ./scripts/check-channel-enrichment-log-privacy.sh macos ;;
   Linux) ./scripts/check-channel-enrichment-log-privacy.sh linux ;;
