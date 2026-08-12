@@ -125,11 +125,11 @@
   "skill": {
     "availability": "available",
     "bundle_path": "/skills/attention/bundles/attention-workbuddy-1.6.0.zip",
-    "bundle_sha256": "42a01d4b81bd1edfb943e7ea5ab2552e71f560fd4559ba04f9633fa1cb4b47d0",
+    "bundle_sha256": "45b869576feae8e42c06ebe61658496fc9aa26918ab38f81fb54721351bc966c",
     "bundle_skill_path": "SKILL.md",
     "delivery": "host_upload_bundle",
     "docs_url": "https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Skills-Market",
-    "document_sha256": "03f030b23ebad68ffda5676e7658a42a51f0ae8d70b5f58a0820f70938d431fe",
+    "document_sha256": "aeded3e3984ab669da1e5ed72fc209fa88cb9e6fa8583d45c018f800b5064755",
     "format": "skill_md",
     "id": "attention",
     "install": "upload_bundle",

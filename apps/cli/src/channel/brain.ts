@@ -3,8 +3,8 @@
  * restricted subprocess. Two adapters ship in this release (Codex CLI and
  * Claude Code); both must honor the restricted profile semantics from
  * `installations/v1/templates/restricted-profile.json`: only the Attention
- * MCP, no shell/code execution/filesystem write, no inherited session or
- * working directory.
+ * MCP plus the minimum conditional public-web reader, no shell/code
+ * execution/filesystem write, no inherited session or working directory.
  */
 
 import { spawn } from "node:child_process";

@@ -15,6 +15,7 @@ import {
   BRAIN_TIMEOUT_MS,
   CLAUDE_RESTART_BACKOFF_MS,
 } from "../limits";
+import { CHANNEL_HOST_SYSTEM_POLICY } from "../prompt";
 import { ATTENTION_CHANNEL_MCP_TOOL_NAMES } from "./codex";
 
 const DEFAULT_HEALTH_CHECK_INTERVAL_MS = 1_000;
@@ -124,6 +125,8 @@ export function buildClaudeResidentArgs(
       },
     }),
     "--no-chrome",
+    "--append-system-prompt",
+    CHANNEL_HOST_SYSTEM_POLICY,
     "--tools",
     "WebFetch,WebSearch",
     "--allowedTools",

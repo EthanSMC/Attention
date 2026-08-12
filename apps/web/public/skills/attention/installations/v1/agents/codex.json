@@ -238,7 +238,7 @@
     "bundle_skill_path": null,
     "delivery": "host_user_directory",
     "docs_url": "https://learn.chatgpt.com/docs/build-skills",
-    "document_sha256": "03f030b23ebad68ffda5676e7658a42a51f0ae8d70b5f58a0820f70938d431fe",
+    "document_sha256": "aeded3e3984ab669da1e5ed72fc209fa88cb9e6fa8583d45c018f800b5064755",
     "format": "skill_md",
     "id": "attention",
     "install": "filesystem_directory",

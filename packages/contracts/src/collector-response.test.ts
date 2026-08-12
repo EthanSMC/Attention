@@ -13,6 +13,7 @@ const establishedBase = {
   content_id: "content-1",
   content_type: "article" as const,
   current_visibility: "private" as const,
+  public_read_url: "https://example.org/article",
   received_at: "2026-08-12T00:00:00.000Z",
   source: "generic_web" as const,
 };
@@ -89,6 +90,36 @@ describe("collector enrichment response contract", () => {
         summary_status: "processing",
       }).success,
     ).toBe(false);
+  });
+
+  it("requires a nullable absolute public-read handoff on established results", () => {
+    expect(
+      AcceptedResponseSchema.safeParse({
+        ...establishedBase,
+        enrichment_action: "generate_summary",
+        public_read_url: undefined,
+        status: "accepted",
+        summary_status: "pending",
+      }).success,
+    ).toBe(false);
+    expect(
+      AcceptedResponseSchema.safeParse({
+        ...establishedBase,
+        enrichment_action: "generate_summary",
+        public_read_url: "/out/mine/collection-1",
+        status: "accepted",
+        summary_status: "pending",
+      }).success,
+    ).toBe(false);
+    expect(
+      AcceptedResponseSchema.parse({
+        ...establishedBase,
+        enrichment_action: "none",
+        public_read_url: null,
+        status: "accepted",
+        summary_status: "hidden",
+      }).public_read_url,
+    ).toBeNull();
   });
 
   it("defines a strict successful content-enrichment tool output", () => {

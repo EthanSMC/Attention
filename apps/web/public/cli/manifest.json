@@ -1,6 +1,6 @@
 {
   "artifact_path": "/cli/attention-0.3.2.mjs",
   "node": ">=22.16.0",
-  "sha256": "54e4909420d6128482b7427a0e389983bce4160c8974cc47bcebf107bd770278",
+  "sha256": "4aca9b1ad7004b240efcfa4d2a6c03225a42d21df77c70c4f78724745ac7f9d0",
   "version": "0.3.2"
 }

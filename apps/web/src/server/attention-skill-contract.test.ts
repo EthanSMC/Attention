@@ -67,6 +67,27 @@ describe("public Attention Skill contract", () => {
     expect(skill).toMatch(/Do not submit[^\n]*page text[^\n]*raw URL[^\n]*cookies[^\n]*authorization headers[^\n]*browser state/u);
   });
 
+  it("re-enters the same enrichment workflow after candidate selection", async () => {
+    const skill = await readPublicSkill();
+
+    expect(skill).toMatch(
+      /For `ambiguous`[\s\S]*Do not read any candidate source before the user selects/u,
+    );
+    expect(skill).toMatch(
+      /`attention_select_collection_candidate`[\s\S]*same established-result handler/u,
+    );
+    expect(skill).toMatch(
+      /selected result is `reuse_summary`[\s\S]*do not read[\s\S]*do not submit/u,
+    );
+    expect(skill).toMatch(
+      /selected result is `generate_summary`[\s\S]*`public_read_url`[\s\S]*public reader[\s\S]*`attention_submit_content_enrichment`/u,
+    );
+    expect(skill).not.toMatch(
+      /selected result is `generate_summary`[^\n]*`attention_get_collection_status`/u,
+    );
+    expect(skill).toMatch(/Never guess from the original multi-link share text/u);
+  });
+
   it("pins safe collection, recovery, and permission workflows", async () => {
     const skill = await readPublicSkill();
 
@@ -77,7 +98,7 @@ describe("public Attention Skill contract", () => {
     expect(skill).toMatch(/For `ambiguous`[\s\S]*ask the user to choose/u);
     expect(skill).toMatch(/Never guess a candidate/u);
     expect(skill).toMatch(/at most two automatic retries/u);
-    expect(skill).toMatch(/After a successful collection result[\s\S]*before doing any page reading/u);
+    expect(skill).toMatch(/Pass every established result[\s\S]*same established-result handler/u);
     expect(skill).toMatch(/Agent's own minimum public-web reader/u);
     expect(skill).toMatch(/Third-party extraction is not trusted Attention acquisition evidence/u);
     expect(skill).toMatch(/Only an active Filter may make a collection public/u);
