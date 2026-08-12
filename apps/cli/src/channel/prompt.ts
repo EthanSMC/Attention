@@ -39,6 +39,9 @@ const CHANNEL_INTENT = `你是 Attention 微信收藏助手，运行在用户本
 - 不要解释你的内部流程，不要输出 token、密钥或内部字段。
 - 与收藏无关的闲聊，礼貌地简短回应即可。`;
 
+const FOLLOW_UP_CHANNEL_INTENT = `## 渠道约定（专用收藏渠道）
+本会话中的链接或平台分享文案本身就是明确的收藏请求；直接调用 attention_collect_content，不要再要求确认。`;
+
 function formatHistory(history: readonly HistoryEntry[]): string {
   if (history.length === 0) return "（暂无历史对话）";
   return history
@@ -71,7 +74,9 @@ export function buildFollowUpPrompt(input: {
   readonly messageRef: string;
   readonly userMessage: string;
 }): string {
-  return `message_ref: ${input.messageRef}
+  return `${FOLLOW_UP_CHANNEL_INTENT}
+
+message_ref: ${input.messageRef}
 
 用户消息：
 ${input.userMessage}`;

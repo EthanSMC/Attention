@@ -240,7 +240,7 @@ describe("handleInboundMessage", () => {
     expect(state.brainSession).toBeNull();
   });
 
-  it("continues an existing host session without replaying intent", async () => {
+  it("reasserts the no-confirm collection contract when continuing an existing host session", async () => {
     const state = defaultChannelState();
     state.brainSession = {
       hostId: "claude-code",
@@ -263,7 +263,9 @@ describe("handleInboundMessage", () => {
       state,
     });
     expect(invocations[0]?.sessionId).toBe("session-9");
-    expect(invocations[0]?.prompt).not.toContain("专用收藏渠道");
+    expect(invocations[0]?.prompt).toContain("专用收藏渠道");
+    expect(invocations[0]?.prompt).toContain("不要再要求确认");
+    expect(invocations[0]?.prompt).not.toContain("对话历史");
     expect(invocations[0]?.prompt).toContain("选 1");
   });
 

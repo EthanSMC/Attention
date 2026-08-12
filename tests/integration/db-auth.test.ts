@@ -2128,6 +2128,86 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     expect(fallbackLink?.resolutionStatus).toBe("pending");
     expect(fallbackContent?.enrichmentStatus).toBe("partial");
 
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              code: "unsafe_address",
+              request_id: "00000000-0000-4000-8000-000000000321",
+            },
+          }),
+          {
+            headers: { "content-type": "application/json" },
+            status: 422,
+          },
+        )),
+    );
+    const transientDnsRejection = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "fetch-fallback-direct-unsafe-address",
+      raw_input: "https://mp.weixin.qq.com/s/fixtureArticleDnsRetry",
+      visibility: "private",
+    });
+    expect(transientDnsRejection).toMatchObject({
+      current_visibility: "private",
+      status: "accepted",
+    });
+    if (
+      transientDnsRejection.status !== "accepted" &&
+      transientDnsRejection.status !== "already_collected" &&
+      transientDnsRejection.status !== "merged_with_existing_content"
+    ) {
+      throw new Error("Expected DNS-rejected direct fallback collection");
+    }
+    const [dnsFallbackLink] = await handle.db
+      .select({ resolutionStatus: contentLinks.resolutionStatus })
+      .from(contentLinks)
+      .where(eq(contentLinks.inputAttemptId, transientDnsRejection.attempt_id));
+    expect(dnsFallbackLink?.resolutionStatus).toBe("pending");
+    const fallbackWarning = warning.mock.calls
+      .flat()
+      .find((entry) =>
+        typeof entry === "string" &&
+        entry.includes('"event":"collection.fetcher_safety_fallback"'),
+      );
+    expect(fallbackWarning).toContain('"code":"unsafe_address"');
+    expect(fallbackWarning).toContain(
+      '"fetcher_request_id":"00000000-0000-4000-8000-000000000321"',
+    );
+    expect(fallbackWarning).toContain('"url_fingerprint":');
+    expect(fallbackWarning).not.toContain("fixtureArticleDnsRetry");
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: { code: "unsafe_credentials" } }), {
+          headers: { "content-type": "application/json" },
+          status: 422,
+        })),
+    );
+    const unsafePlatformTarget = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "fetch-fallback-direct-unsafe-credentials",
+      raw_input: "https://mp.weixin.qq.com/s/fixtureArticleUnsafeCredentials",
+      visibility: "private",
+    });
+    expect(unsafePlatformTarget).toMatchObject({
+      error_code: "unsafe_credentials",
+      status: "unsafe",
+    });
+    const rejectionWarning = warning.mock.calls
+      .flat()
+      .find((entry) =>
+        typeof entry === "string" &&
+        entry.includes('"event":"collection.fetcher_safety_rejection"'),
+      );
+    expect(rejectionWarning).toContain('"code":"unsafe_credentials"');
+    expect(rejectionWarning).not.toContain("fixtureArticleUnsafeCredentials");
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new TypeError("temporary fetcher outage");
+    }));
+
     const genericDirect = await collectFromWeb(handle.db, principal, {
       idempotency_key: "fetch-fallback-generic-direct",
       raw_input: "https://example.org/direct-content",
@@ -2169,7 +2249,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       visibility: "private",
     });
     expect(unsafe).toMatchObject({ status: "unsafe" });
-    expect(await handle.db.select().from(collections)).toHaveLength(1);
+    expect(await handle.db.select().from(collections)).toHaveLength(2);
   });
 
   it("keeps the 20-card public preview and outbound gate deterministic for timestamp ties", async () => {

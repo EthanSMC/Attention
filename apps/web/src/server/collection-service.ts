@@ -312,7 +312,31 @@ async function resolveCandidate(rawUrl: string): Promise<ResolvedCandidate | nul
     redirectChain = resolved.redirectChain;
   } catch (error) {
     if (error instanceof FetcherClientError && error.unsafe) {
-      throw new CandidateUnsafeError("unsafe_target");
+      // A recognized direct platform URL is safe to retain when the isolated
+      // Fetcher declines to connect solely because DNS currently resolves to
+      // a non-public address. This fallback performs no network request;
+      // enrichment stays pending and must pass Fetcher validation on retry.
+      if (error.code === "unsafe_address") {
+        const fallback = fallbackDirectCandidate(currentUrl, match);
+        if (fallback) {
+          console.warn(JSON.stringify({
+            code: error.code,
+            event: "collection.fetcher_safety_fallback",
+            fetcher_request_id: error.requestId,
+            source: initialSource,
+            url_fingerprint: urlFingerprint(currentUrl),
+          }));
+          return fallback;
+        }
+      }
+      console.warn(JSON.stringify({
+        code: error.code,
+        event: "collection.fetcher_safety_rejection",
+        fetcher_request_id: error.requestId,
+        source: initialSource,
+        url_fingerprint: urlFingerprint(currentUrl),
+      }));
+      throw new CandidateUnsafeError(error.code);
     }
     if (
       error instanceof FetcherClientError &&
