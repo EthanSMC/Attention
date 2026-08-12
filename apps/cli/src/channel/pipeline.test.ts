@@ -28,6 +28,25 @@ const okOutcome = (reply: string, sessionId = "session-1"): BrainOutcome => ({
   timedOut: false,
 });
 
+const controlledOutcome = (
+  reply: string,
+  control: {
+    readonly collectionStatus:
+      | "accepted"
+      | "already_collected"
+      | "merged_with_existing_content";
+    readonly enrichmentAction: "generate_summary" | "reuse_summary" | "none";
+    readonly enrichmentCompleted: boolean;
+  },
+): BrainOutcome =>
+  ({
+    ...okOutcome(reply),
+    collectionReplyControl: {
+      kind: "established",
+      ...control,
+    },
+  }) as BrainOutcome;
+
 const fakeBrain = (
   hostId: BrainAdapter["hostId"],
   reply = "ok",
@@ -44,6 +63,112 @@ const fakeBrain = (
 });
 
 describe("handleInboundMessage", () => {
+  it.each(["codex", "claude-code"] as const)(
+    "replaces adversarial direct enrichment output with a fixed safe reply for %s",
+    async (hostId) => {
+      const state = defaultChannelState();
+      const adversarial =
+        "已收藏《RAW TITLE》 https://example.com/raw BODY SENTINEL SUMMARY SENTINEL #TAG_SENTINEL";
+      const output = await handleInboundMessage({
+        brain: fakeBrain(hostId),
+        cwd: "/tmp",
+        invokeBrain: async () =>
+          controlledOutcome(adversarial, {
+            collectionStatus: "accepted",
+            enrichmentAction: "generate_summary",
+            enrichmentCompleted: true,
+          }),
+        message: textMessage("https://example.com/raw"),
+        state,
+      });
+
+      expect(output.replies).toEqual(["已收藏，摘要已补全。"]);
+      expect(output.replies.join(" ")).not.toMatch(
+        /RAW TITLE|https?:\/\/|BODY SENTINEL|SUMMARY SENTINEL|TAG_SENTINEL/u,
+      );
+      expect(state.history.at(-1)?.content).toBe("已收藏，摘要已补全。");
+    },
+  );
+
+  it.each([
+    ["codex", "generate_summary", true, "已收藏，摘要已补全。"],
+    ["codex", "generate_summary", false, "已收藏，摘要待补全。"],
+    ["codex", "reuse_summary", false, "已收藏，已使用现有摘要。"],
+    ["claude-code", "generate_summary", true, "已收藏，摘要已补全。"],
+    ["claude-code", "generate_summary", false, "已收藏，摘要待补全。"],
+    ["claude-code", "reuse_summary", false, "已收藏，已使用现有摘要。"],
+  ] as const)(
+    "uses a fixed safe selected-result acknowledgment for %s %s completed=%s",
+    async (hostId, enrichmentAction, enrichmentCompleted, expected) => {
+      const state = defaultChannelState();
+      state.history = [
+        { content: "share with two links", role: "user" },
+        { content: "请选择 1 或 2", role: "assistant" },
+      ];
+      state.brainSession = {
+        hostId,
+        sessionId: "selected-session",
+        updatedAt: "now",
+      };
+      const output = await handleInboundMessage({
+        brain: fakeBrain(hostId),
+        cwd: "/tmp",
+        invokeBrain: async () =>
+          controlledOutcome(
+            "RAW TITLE https://example.com BODY SUMMARY #PRIVATE_TAG",
+            {
+              collectionStatus: "accepted",
+              enrichmentAction,
+              enrichmentCompleted,
+            },
+          ),
+        message: textMessage("1"),
+        state,
+      });
+
+      expect(output.replies).toEqual([expected]);
+      expect(output.replies.join(" ")).not.toMatch(
+        /RAW TITLE|https?:\/\/|BODY|SUMMARY|PRIVATE_TAG/u,
+      );
+    },
+  );
+
+  it("preserves normal non-enrichment conversation replies", async () => {
+    const state = defaultChannelState();
+    const output = await handleInboundMessage({
+      brain: fakeBrain("codex"),
+      cwd: "/tmp",
+      invokeBrain: async () => okOutcome("普通对话回答保持原样。"),
+      message: textMessage("你能做什么？"),
+      state,
+    });
+
+    expect(output.replies).toEqual(["普通对话回答保持原样。"]);
+  });
+
+  it.each([
+    ["invalid", "未保存：链接无效。"],
+    ["unsafe", "未保存：链接未通过安全检查。"],
+    ["resolution_pending", "链接仍在解析，收藏尚未完成。"],
+    ["missing", "收藏结果无法确认，请稍后重试。"],
+  ] as const)("preserves a content-free %s collection status", async (_status, expected) => {
+    const state = defaultChannelState();
+    const output = await handleInboundMessage({
+      brain: fakeBrain("codex"),
+      cwd: "/tmp",
+      invokeBrain: async () =>
+        ({
+          ...okOutcome("RAW TITLE https://example.com BODY SUMMARY #TAG"),
+          collectionReplyControl: { kind: "fixed", reply: expected },
+        }) as BrainOutcome,
+      message: textMessage("https://example.com/raw"),
+      state,
+    });
+
+    expect(output.replies).toEqual([expected]);
+    expect(output.replies.join(" ")).not.toMatch(/RAW TITLE|https?:\/\/|BODY|SUMMARY|TAG/u);
+  });
+
   it("invokes the brain and records history plus session", async () => {
     const state = defaultChannelState();
     const invocations: Array<{ prompt: string; sessionId: string | null }> = [];

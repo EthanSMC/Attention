@@ -157,6 +157,103 @@ async function nextTurn(): Promise<void> {
 }
 
 describe("resident Codex brain", () => {
+  it("returns a content-free collection control from MCP tool results", async () => {
+    const rpc = new ScriptedRpc();
+    rpc.autoCompleteTurns = false;
+    const brain = createCodexResidentBrain({
+      mcpUrl: "https://attention.example/mcp",
+      rpc,
+    });
+    const pending = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "collect",
+      sessionId: null,
+    });
+    await nextTurn();
+
+    rpc.emit({
+      method: "item/completed",
+      params: {
+        item: {
+          arguments: {},
+          id: "collect-1",
+          result: {
+            content: [],
+            structuredContent: {
+              enrichment_action: "generate_summary",
+              status: "accepted",
+              title: "RAW TITLE",
+              public_read_url: "https://example.com/raw",
+            },
+          },
+          server: "attention",
+          status: "completed",
+          tool: "attention_collect_content",
+          type: "mcpToolCall",
+        },
+        threadId: "thread-1",
+        turnId: "turn-1",
+      },
+    });
+    rpc.emit({
+      method: "item/completed",
+      params: {
+        item: {
+          arguments: {},
+          id: "enrich-1",
+          result: {
+            content: [],
+            structuredContent: { status: "enriched" },
+          },
+          server: "attention",
+          status: "completed",
+          tool: "attention_submit_content_enrichment",
+          type: "mcpToolCall",
+        },
+        threadId: "thread-1",
+        turnId: "turn-1",
+      },
+    });
+    rpc.complete(
+      "thread-1",
+      "turn-1",
+      "RAW TITLE https://example.com/raw BODY SUMMARY #TAG",
+    );
+
+    await expect(pending).resolves.toMatchObject({
+      collectionReplyControl: {
+        collectionStatus: "accepted",
+        enrichmentAction: "generate_summary",
+        enrichmentCompleted: true,
+        kind: "established",
+      },
+    });
+    await brain.shutdown();
+  });
+
+  it("fails closed when a collection result has no parseable payload", async () => {
+    const rpc = new ScriptedRpc();
+    rpc.autoCompleteTurns = false;
+    const brain = createCodexResidentBrain({ mcpUrl: "https://attention.example/mcp", rpc });
+    const pending = brain.invoke({ cwd: "/tmp/channel", prompt: "collect", sessionId: null });
+    await nextTurn();
+    rpc.emit({
+      method: "item/completed",
+      params: {
+        item: {
+          arguments: {}, id: "collect-bad", result: { content: [] }, server: "attention",
+          status: "failed", tool: "attention_collect_content", type: "mcpToolCall",
+        },
+        threadId: "thread-1", turnId: "turn-1",
+      },
+    });
+    rpc.complete("thread-1", "turn-1", "RAW TITLE https://example.com BODY");
+    await expect(pending).resolves.toMatchObject({
+      collectionReplyControl: { kind: "fixed", reply: "收藏结果无法确认，请稍后重试。" },
+    });
+    await brain.shutdown();
+  });
+
   it("reuses one app-server and one thread for consecutive turns", async () => {
     const rpc = new ScriptedRpc();
     const brain = createCodexResidentBrain({

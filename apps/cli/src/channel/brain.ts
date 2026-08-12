@@ -13,6 +13,7 @@ import { boundedDiagnosticOutput } from "../redact";
 import { createClaudeCodeBrain } from "./brains/claude-code";
 import { createCodexBrain } from "./brains/codex";
 import { BRAIN_TIMEOUT_MS } from "./limits";
+import type { CollectionReplyControl } from "./collection-reply-control";
 
 const MAXIMUM_CAPTURE_BYTES = 262_144;
 
@@ -42,6 +43,8 @@ export interface BrainOutcome {
   /** True when a resume attempt failed and the caller should replay history. */
   readonly resumeFailed: boolean;
   readonly timedOut: boolean;
+  /** Content-free control derived from Attention MCP results, when established. */
+  readonly collectionReplyControl?: CollectionReplyControl;
 }
 
 export interface BrainInvokeInput {
