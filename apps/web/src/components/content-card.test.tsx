@@ -1,4 +1,5 @@
 import { createElement } from "react";
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
@@ -37,7 +38,8 @@ describe("content enrichment presentation", () => {
     expect(badge).toContain("摘要待补全");
     expect(badge).toContain("status-label--processing");
     expect(badge).not.toContain("status-label--unavailable");
-    expect(badge).not.toContain('d="m12 3 9 17H3L12 3Z"');
+    expect(badge).toContain('data-enrichment-icon="assistant"');
+    expect(badge).not.toContain('data-enrichment-icon="warning"');
     expect(card).toContain("摘要仍在补全，原文已可查看。");
     expect(card).not.toContain("当前没有可用的 AI 摘要");
   });
@@ -75,8 +77,29 @@ describe("content enrichment presentation", () => {
 
     expect(badge).toContain("无可用摘要");
     expect(badge).toContain("status-label--unavailable");
-    expect(badge).toContain('d="m12 3 9 17H3L12 3Z"');
+    expect(badge).toContain('data-enrichment-icon="warning"');
     expect(card).toContain("当前没有可用的 AI 摘要，请查看原文。");
     expect(card).not.toContain("摘要待补全");
+  });
+
+  it("keeps every processing badge rule on neutral design tokens", () => {
+    const css = readFileSync(
+      new URL("../app/globals.css", import.meta.url),
+      "utf8",
+    );
+    const blocks = [...css.matchAll(/\.status-label--processing\s*\{(?<body>[^}]+)\}/gu)]
+      .map((match) => match.groups?.body ?? "");
+
+    expect(blocks.length).toBeGreaterThan(0);
+    for (const block of blocks) {
+      const tokens = [...block.matchAll(/var\((--[^)]+)\)/gu)]
+        .map((match) => match[1]);
+      expect(tokens).toContain("--surface-muted");
+      expect(tokens).toContain("--muted");
+      expect(tokens.every((token) =>
+        ["--line", "--surface-muted", "--muted"].includes(token ?? "")))
+        .toBe(true);
+      expect(block).not.toMatch(/--(?:ai|danger|warning)|#[0-9a-f]{3,8}|rgba?\(/iu);
+    }
   });
 });

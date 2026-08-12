@@ -40,7 +40,11 @@ export function EnrichmentBadge({ status }: { status: EnrichmentStatus }) {
 
   return (
     <span className={`status-label status-label--${status}`}>
-      {status === "unavailable" ? <WarningIcon /> : <BotIcon />}
+      {status === "unavailable" ? (
+        <WarningIcon data-enrichment-icon="warning" />
+      ) : (
+        <BotIcon data-enrichment-icon="assistant" />
+      )}
       {labels[status]}
     </span>
   );

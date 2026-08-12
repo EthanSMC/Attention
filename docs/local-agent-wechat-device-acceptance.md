@@ -119,30 +119,13 @@ export E2E_PAGE_SENTINEL='原文中的独特短句'
 export E2E_SUMMARY_SENTINEL='摘要中的独特短句'
 export E2E_TAG_SENTINEL='本次独特标签'
 
-# macOS 后台服务日志；无匹配才通过。
-if grep -F -e "$E2E_TEST_URL" \
-    -e "$E2E_PAGE_SENTINEL" \
-    -e "$E2E_SUMMARY_SENTINEL" \
-    -e "$E2E_TAG_SENTINEL" \
-    "$HOME/.attention/channel/service.log" \
-    "$HOME/.attention/channel/service-error.log" 2>/dev/null; then
-  echo 'FAIL: macOS channel log leaked enrichment content' >&2
-  false
-else
-  echo 'ok: macOS channel logs contain no enrichment content'
-fi
-
-# Linux 用户服务日志；无匹配才通过。
-if journalctl --user -u attention-channel.service --no-pager | \
-    grep -F -e "$E2E_TEST_URL" \
-      -e "$E2E_PAGE_SENTINEL" \
-      -e "$E2E_SUMMARY_SENTINEL" \
-      -e "$E2E_TAG_SENTINEL"; then
-  echo 'FAIL: Linux channel log leaked enrichment content' >&2
-  false
-else
-  echo 'ok: Linux channel logs contain no enrichment content'
-fi
+# 从仓库根目录运行。脚本启用 `set -euo pipefail`；日志不存在、不可读、
+# journalctl 失败或命中任一哨兵都会以非零状态退出，不会被当成“无泄漏”。
+case "$(uname -s)" in
+  Darwin) ./scripts/check-channel-enrichment-log-privacy.sh macos ;;
+  Linux) ./scripts/check-channel-enrichment-log-privacy.sh linux ;;
+  *) echo 'FAIL: unsupported acceptance platform' >&2; exit 1 ;;
+esac
 
 unset E2E_TEST_URL E2E_PAGE_SENTINEL E2E_SUMMARY_SENTINEL E2E_TAG_SENTINEL
 ```
