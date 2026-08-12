@@ -193,7 +193,7 @@ export function createCodexResidentBrain(
         pending.collectionReplyControl = applyAttentionToolResult(
           pending.collectionReplyControl,
           item.tool,
-          mcpResultPayload(item.result),
+          item.status === "failed" ? null : mcpResultPayload(item.result),
         );
       }
       if (
@@ -209,7 +209,9 @@ export function createCodexResidentBrain(
     const turn = notificationRecord(params.turn);
     const completedSuccessfully = turn?.status === "completed";
     finishActiveTurn({
-      ok: completedSuccessfully && pending.reply.length > 0,
+      ok:
+        completedSuccessfully &&
+        (pending.reply.length > 0 || pending.collectionReplyControl !== null),
       reply: completedSuccessfully ? pending.reply : "",
       ...(pending.collectionReplyControl
         ? { collectionReplyControl: pending.collectionReplyControl }

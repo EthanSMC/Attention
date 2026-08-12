@@ -147,6 +147,36 @@ describe("handleInboundMessage", () => {
   });
 
   it.each([
+    ["accepted", "generate_summary", true, "已收藏，摘要已补全。"],
+    ["already_collected", "reuse_summary", false, "已在收藏中，已使用现有摘要。"],
+    ["merged_with_existing_content", "none", false, "已收藏，已合并到已有内容。"],
+  ] as const)(
+    "treats an empty final model reply as success for %s %s",
+    async (collectionStatus, enrichmentAction, enrichmentCompleted, expected) => {
+      const state = defaultChannelState();
+      const output = await handleInboundMessage({
+        brain: fakeBrain("codex"),
+        cwd: "/tmp",
+        invokeBrain: async () =>
+          controlledOutcome("", {
+            collectionStatus,
+            enrichmentAction,
+            enrichmentCompleted,
+          }),
+        message: textMessage("https://example.com/raw"),
+        state,
+      });
+
+      expect(output).toMatchObject({
+        completed: true,
+        processed: true,
+        replies: [expected],
+      });
+      expect(state.history.at(-1)?.content).toBe(expected);
+    },
+  );
+
+  it.each([
     ["invalid", "未保存：链接无效。"],
     ["unsafe", "未保存：链接未通过安全检查。"],
     ["resolution_pending", "链接仍在解析，收藏尚未完成。"],
