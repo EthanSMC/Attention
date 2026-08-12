@@ -197,7 +197,7 @@ describe("resident Codex brain", () => {
       approvalPolicy: "never",
       cwd: "/tmp/channel",
       developerInstructions: expect.stringContaining(
-        "Only use tools from the Attention MCP",
+        "Only use tools from the Attention MCP and native public web search",
       ),
       model: "gpt-5.6-luna",
       sandbox: "read-only",

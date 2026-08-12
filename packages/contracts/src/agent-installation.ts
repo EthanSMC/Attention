@@ -15,17 +15,17 @@ import { CHANNEL_RUNTIME_SCOPES } from "./channel-runtime";
  * release catalog, not the JSON schema major version.
  */
 export const AGENT_INSTALLATION_MANIFEST_SCHEMA_VERSION = "2.3.0" as const;
-export const ATTENTION_SKILL_PACKAGE_VERSION = "1.5.0" as const;
-export const ATTENTION_SKILL_TOOL_CONTRACT_VERSION = "1.3.0" as const;
+export const ATTENTION_SKILL_PACKAGE_VERSION = "1.6.0" as const;
+export const ATTENTION_SKILL_TOOL_CONTRACT_VERSION = "1.4.0" as const;
 
 export const ATTENTION_SKILL_PUBLIC_PATH =
   "/skills/attention/SKILL.md" as const;
 export const ATTENTION_SKILL_DOCUMENT_SHA256 =
-  "a10eee0bb10a3724a319fb0f968d2d1302e92abef134c63611588c2383f750ed" as const;
+  "03f030b23ebad68ffda5676e7658a42a51f0ae8d70b5f58a0820f70938d431fe" as const;
 export const ATTENTION_WORKBUDDY_SKILL_BUNDLE_PUBLIC_PATH =
-  "/skills/attention/bundles/attention-workbuddy-1.5.0.zip" as const;
+  "/skills/attention/bundles/attention-workbuddy-1.6.0.zip" as const;
 export const ATTENTION_WORKBUDDY_SKILL_BUNDLE_SHA256 =
-  "f07a3385a11a5bef933ca3986968ce7f46c2399d286f98dbdfd4d6b48020f01e" as const;
+  "42a01d4b81bd1edfb943e7ea5ab2552e71f560fd4559ba04f9633fa1cb4b47d0" as const;
 export const ATTENTION_WORKBUDDY_SKILL_BUNDLE_SKILL_PATH =
   "SKILL.md" as const;
 export const ATTENTION_INSTALL_GUIDE_PUBLIC_PATH =

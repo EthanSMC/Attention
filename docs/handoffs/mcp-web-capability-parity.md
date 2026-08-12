@@ -4,7 +4,7 @@
 
 更新日期：2026-08-07
 
-第一版范围以 [`docs/first-release-scope.md`](../first-release-scope.md) 为准。本页只维护 Web 与 MCP 的业务能力等价；用户自己的 Agent / iLink 安装、心跳和绑定证明属于独立 Runtime 协议，不能被 14 个业务工具替代。
+第一版范围以 [`docs/first-release-scope.md`](../first-release-scope.md) 为准。本页只维护 Web 与 MCP 的业务能力等价；用户自己的 Agent / iLink 安装、心跳和绑定证明属于独立 Runtime 协议，不能被 15 个业务工具替代。
 
 ## 1. 当前产品边界
 
@@ -25,7 +25,7 @@ MCP 不能绕过公开流预览上限、Member 检查、Filter 公开资格、�
 
 ## 2. 当前 MCP Tool Registry
 
-公开 Tool Contract 为 `1.3.0`，当前共 14 个工具。Skill `1.3.0` 与它绑定；服务端继续接受旧 Skill `1.0.0`、`1.1.0` 和 `1.2.0` 的 `client_context` 以兼容已安装客户端，但旧版本不会声明新增工具：
+公开 Tool Contract 为 `1.4.0`，当前共 15 个工具。Skill `1.6.0` 与它绑定；服务端继续接受 Skill `1.0.0` 至 `1.5.0` 的 `client_context` 以兼容已安装客户端，但旧版本不会声明新增工具：
 
 | Tool | Scope | 实时权益 | 对应 Web / Core | 状态 |
 |---|---|---|---|---|
@@ -33,6 +33,7 @@ MCP 不能绕过公开流预览上限、Member 检查、Filter 公开资格、�
 | `attention_get_membership_status` | `subscription:read` | 登录账号 | `loadCurrentSubscription` + Principal capability | 已对齐只读状态；不会开始、修改或取消付费 |
 | `attention_list_collections` | `collection:read` | Free 可用 | `/account` 使用的 `loadMyCollections` | 已对齐；返回标题、作者、来源、标签、摘要与摘要状态、发布时间、署名、原文路由、原始及有效可见性 |
 | `attention_collect_content` | `collection:write` | Free 可私密；公开需 Filter | `/api/v1/collection-attempts` / `collectFromWeb` | 已对齐；强制幂等键，候选与处理状态不在入口内猜测 |
+| `attention_submit_content_enrichment` | `collection:write` | Free 可用；必须拥有有效收藏 | `submitContentEnrichment` | 已对齐；仅在 collect 返回 `generate_summary` 后提交首份公开原文可验证的共享摘要与 1–8 个标签；首个有效写入胜出，既有摘要不可覆盖 |
 | `attention_select_collection_candidate` | `collection:write` | Free 可私密；公开需 Filter | `/api/v1/collection-attempts/select` / `selectCandidateFromWeb` | 已对齐；一次性 token，非幂等 |
 | `attention_get_collection_status` | `collection:read` | Free 可用 | `getCollectionStatus` | 已对齐；仅查询当前账号的 attempt / collection |
 | `attention_update_collection` | `collection:write` | 改私密可用；公开需 Filter | 可见性 Web API / `updateCollectionVisibility` | 已对齐；每次重新检查 Filter 与内容有效状态 |
@@ -46,7 +47,7 @@ MCP 不能绕过公开流预览上限、Member 检查、Filter 公开资格、�
 
 上述账号与会员只读工具补上了原先已经可授权、却没有 Tool 的 `profile:read` 和 `subscription:read`。邮箱等非必要私密资料没有因为“Web 能看见”而自动扩大到 Agent。
 
-MCP 失败结果保留稳定的 `code / guidance / request_id`，并按需附加机器可执行的 `required_scope`、`required_entitlement` 和 `retry_after_seconds`。`required_entitlement` 当前取值为 `member`、`filter` 或 `member_or_filter`；举报开案限流会把 Core 计算出的等待秒数直接传给客户端。以上均为 `1.3.0` 合同的向后兼容可选字段。
+MCP 失败结果保留稳定的 `code / guidance / request_id`，并按需附加机器可执行的 `required_scope`、`required_entitlement` 和 `retry_after_seconds`。`required_entitlement` 当前取值为 `member`、`filter` 或 `member_or_filter`；举报开案限流会把 Core 计算出的等待秒数直接传给客户端。以上均为 `1.4.0` 合同的向后兼容可选字段。
 
 ## 3. Web 能力矩阵
 
@@ -55,6 +56,7 @@ MCP 失败结果保留稳定的 `code / guidance / request_id`，并按需附加
 | 浏览公开发现流 | 游客、Free、Member 均有；游客/Free 前 N 张 | MCP 需要账号 credential；Free 同样前 N 张，Member + `public:full` 完整读取 | 已对齐账号能力；不提供匿名 MCP 是明确边界，不是遗漏 |
 | 查看自己的收藏 | `/account` | `attention_list_collections` | 已对齐 |
 | 收藏链接、分享文本、候选确认、查询处理进度 | Web 收藏模块和 v1 API | collect / select / status 三个工具 | 已对齐 |
+| 补全共享摘要与标签 | Worker 或本地 Agent 按 Content 状态补全 | `attention_submit_content_enrichment` | 已对齐；Collection 可见性与共享 Content 摘要分离，普通用户生成的首份有效摘要可被后续 Filter 收藏复用 |
 | 修改公开 / 私密 | Web 卡片开关 | `attention_update_collection` | 已对齐；只有 Filter 可公开 |
 | AI 检索与引用 | Web API 保留，Web Agent 页面不作为第一期主入口 | `attention_search_content` | Core 已对齐；第一期由用户自己的 Agent 使用 |
 | 查看公开身份与实时角色 | 个人页和设置页 | `attention_get_my_account` | 已对齐必要字段 |
@@ -108,7 +110,7 @@ API Key 可用于 MCP 和 Sync，不能用于 Runtime，也不能通过 MCP 再�
 
 收藏、公开流和 AI 检索中的 `/out/...` 引用现在由 MCP Registry 基于当前受信任服务 origin 转成绝对 URL；浏览器 Web 仍继续使用相对路由。
 
-Runtime API、五类 Agent 安装描述和 iLink 绑定数据模型属于并行的本地 Agent 基础设施工作；它们是否完成不能用本文件里的 14 个业务 Tool 代替验收。
+Runtime API、五类 Agent 安装描述和 iLink 绑定数据模型属于并行的本地 Agent 基础设施工作；它们是否完成不能用本文件里的 15 个业务 Tool 代替验收。
 
 ## 6. 明确不应做成普通 MCP Tool 的动作
 

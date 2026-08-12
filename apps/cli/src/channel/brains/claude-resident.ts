@@ -123,9 +123,12 @@ export function buildClaudeResidentArgs(
         attention: { type: "http", url: mcpUrl },
       },
     }),
+    "--no-chrome",
     "--tools",
-    "",
+    "WebFetch,WebSearch",
     "--allowedTools",
+    "WebFetch",
+    "WebSearch",
     ...ATTENTION_CHANNEL_MCP_TOOL_NAMES.map(
       (name) => `mcp__attention__${name}`,
     ),

@@ -36,6 +36,7 @@ export const ATTENTION_CHANNEL_MCP_TOOL_NAMES = [
   "attention_get_my_account",
   "attention_list_collections",
   "attention_collect_content",
+  "attention_submit_content_enrichment",
   "attention_select_collection_candidate",
   "attention_get_collection_status",
   "attention_update_collection",
@@ -44,6 +45,7 @@ export const ATTENTION_CHANNEL_MCP_TOOL_NAMES = [
 /** Account-scoped writes explicitly approved by the Channel owner. */
 export const ATTENTION_CHANNEL_APPROVED_WRITE_TOOLS = [
   "attention_collect_content",
+  "attention_submit_content_enrichment",
   "attention_select_collection_candidate",
   "attention_update_collection",
 ] as const satisfies readonly (typeof ATTENTION_CHANNEL_MCP_TOOL_NAMES)[number][];
@@ -72,6 +74,8 @@ export function createCodexBrain(options: CodexBrainOptions): BrainAdapter {
       `mcp_servers.attention.url=${JSON.stringify(options.mcpUrl)}`,
       "-c",
       `mcp_servers.attention.enabled_tools=${JSON.stringify(ATTENTION_CHANNEL_MCP_TOOL_NAMES)}`,
+      "-c",
+      `web_search=${JSON.stringify("live")}`,
       ...ATTENTION_CHANNEL_APPROVED_WRITE_TOOLS.flatMap((tool) => [
         "-c",
         `mcp_servers.attention.tools.${tool}.approval_mode=${JSON.stringify("approve")}`,

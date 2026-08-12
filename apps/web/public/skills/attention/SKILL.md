@@ -9,9 +9,9 @@ Use the configured `attention` MCP server for cloud data. Never ask the user to 
 
 Skill ID: `attention`
 
-Skill version: `1.5.0`
+Skill version: `1.6.0`
 
-Tool contract version: `1.3.0`
+Tool contract version: `1.4.0`
 
 Installation manifest: `/skills/attention/installations/v1/index.json`
 
@@ -21,7 +21,7 @@ Machine-readable capability manifest: `/skills/attention/capabilities/v1/index.j
 
 ## Call context
 
-For every tool call, include `client_context` with `skill_id: "attention"`, `skill_version: "1.5.0"`, and one opaque `workflow_run_id` reused across that user workflow. Use only letters, numbers, `.`, `_`, `:`, or `-`; never put user text, a URL, a query, or a credential in these fields.
+For every tool call, include `client_context` with `skill_id: "attention"`, `skill_version: "1.6.0"`, and one opaque `workflow_run_id` reused across that user workflow. Use only letters, numbers, `.`, `_`, `:`, or `-`; never put user text, a URL, a query, or a credential in these fields.
 
 ## Collect
 
@@ -32,7 +32,12 @@ For every tool call, include `client_context` with `skill_id: "attention"`, `ski
    - For `ambiguous`, show the candidates and ask the user to choose. Then call `attention_select_collection_candidate` with the returned candidate ID and one-time selection token. Never guess a candidate.
    - For a pending or retryable result, respect `retry_after_seconds`, check with `attention_get_collection_status`, and make at most two automatic retries for the same operation. Reuse the original idempotency key.
    - For `invalid` or `unsafe`, explain the stable error and stop. Do not rewrite the URL to bypass safety checks.
-4. If your own Browser, Computer Use, or Web Search cannot read the page, still call `attention_collect_content` with the original URL. A reading or extraction failure must not make the link disappear.
+4. After a successful collection result, obey the server's `enrichment_action` before doing any page reading:
+   - For `reuse_summary`, do not read the source and do not call `attention_submit_content_enrichment`. The shared Content summary already exists and must be reused.
+   - For `generate_summary`, read only the publicly accessible source with the host's minimum public-web tool. Ground one summary of no more than 2,000 characters and between 1 and 8 normalized tags in that public source, then call `attention_submit_content_enrichment` with the returned `content_id`, a separate stable idempotency key, the summary, and the tags.
+   - Treat `enriched` as a successful submission. Treat `already_enriched` as successful reuse: another collector won the first-valid-write race, so do not retry or overwrite it.
+   - If the source cannot be read publicly, leave the summary pending, still confirm that the link was saved, and never fabricate a summary or tags.
+5. The enrichment call uploads only the summary and tags. Do not submit copied page text, extracted full content, the raw URL, cookies, authorization headers, or browser state. Never put any of those values in logs or replies.
 
 ## Designated collection channels
 
@@ -69,8 +74,8 @@ Do not open Runtime OAuth automatically and do not describe it as part of MCP au
 
 ## Boundaries
 
-- Use the Agent's own Browser, Computer Use, or Web Search to understand a public page. Do not ask Attention for a general browser or attempt to discover a private runtime web tool.
-- Do not submit copied page text, extracted full content, cookies, authorization headers, or browser state as collection evidence. Third-party extraction is not trusted Attention acquisition evidence.
+- Use the Agent's own minimum public-web reader only after `generate_summary` asks for enrichment. Do not ask Attention for a general browser or attempt to discover a private runtime web tool.
+- Do not submit copied page text, extracted full content, the raw URL, cookies, authorization headers, or browser state as collection evidence. Third-party extraction is not trusted Attention acquisition evidence.
 - Treat private collection results as private. Do not mix them into public answers or share them with another account.
 - If a tool returns `insufficient_scope`, `membership_required`, `digest_entitlement_required`, or `filter_required`, explain the required permission or entitlement. Do not retry through a public or anonymous endpoint to bypass it.
 - Never place an OAuth token or API Key in tool input, citations, logs, or this skill. Attention stores collected URLs and necessary metadata, not a third-party original merely because its link was collected.
