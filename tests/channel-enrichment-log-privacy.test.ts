@@ -25,6 +25,7 @@ function temporaryDirectory(): string {
 }
 
 function run(platform: "linux" | "macos", input: {
+  env?: Record<string, string>;
   home: string;
   path?: string;
 }) {
@@ -32,10 +33,14 @@ function run(platform: "linux" | "macos", input: {
     encoding: "utf8",
     env: {
       ...process.env,
+      ...input.env,
       E2E_PAGE_SENTINEL: "private page sentinel",
       E2E_SUMMARY_SENTINEL: "private summary sentinel",
       E2E_TAG_SENTINEL: "private-tag-sentinel",
       E2E_TEST_URL: "https://privacy-test.invalid/private-path",
+      E2E_TITLE_SENTINEL: "private title sentinel",
+      E2E_LOG_SINCE:
+        input.env?.E2E_LOG_SINCE ?? "2026-08-12 10:00:00",
       HOME: input.home,
       PATH: input.path ?? process.env.PATH,
     },
@@ -71,6 +76,20 @@ describe("channel enrichment log privacy acceptance", () => {
     expect(result.stdout).not.toContain("ok:");
   });
 
+  it("fails when a macOS log leaks the fetched title", () => {
+    const home = temporaryDirectory();
+    const logDirectory = join(home, ".attention/channel");
+    mkdirSync(logDirectory, { recursive: true });
+    writeFileSync(join(logDirectory, "service.log"), "private title sentinel\n");
+    writeFileSync(join(logDirectory, "service-error.log"), "clean\n");
+
+    const result = run("macos", { home });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("leaked enrichment content");
+    expect(result.stdout).not.toContain("ok:");
+  });
+
   it("passes only after reading clean macOS logs", () => {
     const home = temporaryDirectory();
     const logDirectory = join(home, ".attention/channel");
@@ -97,6 +116,80 @@ describe("channel enrichment log privacy acceptance", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("could not read Linux channel journal");
     expect(result.stdout).not.toContain("ok:");
+  });
+
+  it("fails closed when journalctl succeeds without runtime evidence", () => {
+    const home = temporaryDirectory();
+    const bin = join(home, "bin");
+    mkdirSync(bin);
+    const fakeJournalctl = join(bin, "journalctl");
+    writeFileSync(fakeJournalctl, "#!/bin/sh\nexit 0\n");
+    chmodSync(fakeJournalctl, 0o700);
+
+    const result = run("linux", {
+      env: { E2E_LOG_SINCE: "2026-08-12 10:00:00" },
+      home,
+      path: `${bin}:/usr/bin:/bin`,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("provided no runtime evidence");
+    expect(result.stdout).not.toContain("ok:");
+  });
+
+  it("does not treat the journalctl no-entries banner as runtime evidence", () => {
+    const home = temporaryDirectory();
+    const bin = join(home, "bin");
+    mkdirSync(bin);
+    const fakeJournalctl = join(bin, "journalctl");
+    writeFileSync(
+      fakeJournalctl,
+      "#!/bin/sh\nprintf '%s\\n' '-- No entries --'\n",
+    );
+    chmodSync(fakeJournalctl, 0o700);
+
+    const result = run("linux", {
+      home,
+      path: `${bin}:/usr/bin:/bin`,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("provided no runtime evidence");
+    expect(result.stdout).not.toContain("ok:");
+  });
+
+  it("accepts only positive Linux evidence from the expected unit and bounded window", () => {
+    const home = temporaryDirectory();
+    const bin = join(home, "bin");
+    mkdirSync(bin);
+    const argumentsFile = join(home, "journalctl-arguments");
+    const fakeJournalctl = join(bin, "journalctl");
+    writeFileSync(
+      fakeJournalctl,
+      "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$E2E_JOURNAL_ARGUMENTS_FILE\"\nprintf 'attention channel runtime checkpoint\\n'\n",
+    );
+    chmodSync(fakeJournalctl, 0o700);
+
+    const result = run("linux", {
+      env: {
+        E2E_JOURNAL_ARGUMENTS_FILE: argumentsFile,
+        E2E_LOG_SINCE: "2026-08-12 10:00:00",
+      },
+      home,
+      path: `${bin}:/usr/bin:/bin`,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("ok: Linux channel journal contain no enrichment content");
+    expect(readFileSync(argumentsFile, "utf8").trim().split("\n")).toEqual([
+      "--user",
+      "--unit=attention-channel.service",
+      "--since",
+      "2026-08-12 10:00:00",
+      "--no-pager",
+      "--output=cat",
+      "--quiet",
+    ]);
   });
 
   it("preserves checker failure through the documented wrapper", () => {

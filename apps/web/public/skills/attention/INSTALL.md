@@ -74,7 +74,7 @@ placeholders.
 | OpenClaw | available | external Tencent `openclaw-weixin` plugin | host-native, OpenClaw `>= 2026.5.12` for the current plugin | MCP only; Runtime reporter is contract-only |
 | Hermes Agent | available | native Hermes Gateway | host-native gateway | MCP only; Runtime reporter is contract-only |
 | Codex | available in CLI/Desktop | local `attention-channel` bridge shipped with the Attention CLI | the published bridge polls iLink and invokes one resident Codex app-server in a restricted profile | MCP plus optional privacy-safe Runtime health/checkpoints; real-device pairing remains unconfirmed until device acceptance |
-| Claude Code | available in Code/Desktop surfaces | local `attention-channel` bridge shipped with the Attention CLI | the bridge polls iLink and invokes headless Claude Code in a restricted profile | MCP only; the bridge does not report to the Runtime in this release |
+| Claude Code | available in Code/Desktop surfaces | local `attention-channel` bridge shipped with the Attention CLI | the bridge polls iLink and invokes headless Claude Code in a restricted profile | MCP plus an available optional privacy-safe local Runtime Reporter; the manifest does not confirm current pairing or live Runtime state without accepted evidence |
 | WorkBuddy | Skill bundle and MCP available in `>= 4.8.2` | WorkBuddy UI | host-managed | MCP only; channel state is unverifiable |
 
 No manifest claims that Attention knows a user's real WeChat identity. The

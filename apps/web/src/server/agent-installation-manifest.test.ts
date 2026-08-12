@@ -151,6 +151,9 @@ describe("public Agent installation artifacts", () => {
 
   it("states the v1 non-hosted boundary in the public install guide", async () => {
     const guide = await readPublicFile("INSTALL.md");
+    const claudeHostRow = guide
+      .split("\n")
+      .find((line) => line.startsWith("| Claude Code |"));
 
     expect(guide).toMatch(/does \*\*not\*\* provide a Hosted Agent/u);
     expect(guide).toMatch(/Hosted Channel UI/u);
@@ -164,5 +167,12 @@ describe("public Agent installation artifacts", () => {
     expect(guide).toMatch(/iLink token[\s\S]*remain\s+local/u);
     expect(guide).toMatch(/Attention MCP plus the minimum conditional[\s\S]*public-web reader/u);
     expect(guide).toMatch(/--append-system-prompt[\s\S]*untrusted data/u);
+    expect(claudeHostRow).toContain(
+      "available optional privacy-safe local Runtime Reporter",
+    );
+    expect(claudeHostRow).toContain(
+      "does not confirm current pairing or live Runtime state without accepted evidence",
+    );
+    expect(claudeHostRow).not.toContain("MCP only");
   });
 });
