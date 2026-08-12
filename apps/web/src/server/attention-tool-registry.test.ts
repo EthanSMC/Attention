@@ -75,6 +75,7 @@ function dependencies(
     reportPublicContent: vi.fn(),
     retrieveForAgent: vi.fn(),
     selectCandidateFromWeb: vi.fn(),
+    submitContentEnrichment: vi.fn(),
     updateDigestSettings: vi.fn(),
     updateCollectionVisibility: vi.fn(),
     ...overrides,
@@ -119,6 +120,45 @@ describe("Attention Tool Registry execution contract", () => {
   it("binds every public tool name to exactly one success output schema", () => {
     expect(Object.keys(AttentionToolSuccessOutputSchemas)).toEqual(
       createAttentionToolRegistry(dependencies()).map((definition) => definition.name),
+    );
+  });
+
+  it("submits validated shared enrichment with collection write scope", async () => {
+    const core = dependencies({
+      submitContentEnrichment: vi.fn(async () => ({
+        contentId: collectionId,
+        status: "enriched" as const,
+        summaryStatus: "ready" as const,
+      })),
+    });
+
+    await expect(
+      tool(core, "attention_submit_content_enrichment").invoke(
+        context({ scopes: ["collection:write"] }),
+        {
+          content_id: collectionId,
+          idempotency_key: "enrichment-request-1",
+          summary: "A grounded summary.",
+          tags: ["Agents", "agents", "  MCP  "],
+        },
+      ),
+    ).resolves.toEqual({
+      ok: true,
+      value: {
+        content_id: collectionId,
+        status: "enriched",
+        summary_status: "ready",
+      },
+    });
+    expect(core.submitContentEnrichment).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ accountId }),
+      {
+        content_id: collectionId,
+        idempotency_key: "enrichment-request-1",
+        summary: "A grounded summary.",
+        tags: ["Agents", "agents", "MCP"],
+      },
     );
   });
 

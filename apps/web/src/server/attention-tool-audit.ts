@@ -39,6 +39,7 @@ const attentionToolAuditInputSchema = z
     attemptId: z.string().uuid().nullish(),
     clientId: opaqueIdentifierSchema.nullish(),
     collectionId: z.string().uuid().nullish(),
+    contentId: z.string().uuid().nullish(),
     contractVersion: opaqueIdentifierSchema,
     credentialId: z.string().uuid(),
     credentialKind: z.enum(["oauth", "pat"]),
@@ -76,6 +77,7 @@ function auditMetadata(
       ? workflowFingerprint(input.reportedWorkflowId)
       : null,
     collection_id: input.collectionId ?? null,
+    content_id: input.contentId ?? null,
     contract_version: input.contractVersion,
     credential_id: input.credentialId,
     credential_kind: input.credentialKind,

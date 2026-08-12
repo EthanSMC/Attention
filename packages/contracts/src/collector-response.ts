@@ -32,7 +32,9 @@ const EstablishedCollectionFieldsSchema = z.object({
   source: SourceAdapterIdSchema,
   content_type: ContentTypeSchema,
   current_visibility: CollectionVisibilitySchema,
-  display_title: z.string().max(1_024).optional()
+  display_title: z.string().max(1_024).optional(),
+  summary_status: z.enum(["ready", "pending", "unavailable", "hidden"]),
+  enrichment_action: z.enum(["reuse_summary", "generate_summary", "none"])
 });
 
 export const AcceptedResponseSchema = AttemptResponseBaseSchema.merge(

@@ -499,6 +499,40 @@ function baseResponse(attempt: InputAttempt) {
   };
 }
 
+function enrichmentResponseFields(content: {
+  aiSummary: string | null;
+  communityModerationStatus: "clear" | "hidden" | "pending_review";
+  contentStatus: "active" | "merged";
+  publicSafetyStatus: "allowed" | "blocked";
+  summaryStatus: "failed" | "hidden" | "pending" | "ready" | "unavailable";
+  takedownStatus: "none" | "removed";
+}): {
+  enrichment_action: "reuse_summary" | "generate_summary" | "none";
+  summary_status: "ready" | "pending" | "unavailable" | "hidden";
+} {
+  const ineligible =
+    content.contentStatus !== "active" ||
+    content.publicSafetyStatus !== "allowed" ||
+    content.takedownStatus !== "none" ||
+    content.communityModerationStatus !== "clear";
+  if (content.summaryStatus === "hidden" || ineligible) {
+    return { enrichment_action: "none", summary_status: "hidden" };
+  }
+  if (content.summaryStatus === "ready") {
+    return { enrichment_action: "reuse_summary", summary_status: "ready" };
+  }
+  return {
+    enrichment_action:
+      content.aiSummary === null || content.aiSummary.trim() === ""
+        ? "generate_summary"
+        : "none",
+    summary_status:
+      content.summaryStatus === "failed"
+        ? "unavailable"
+        : content.summaryStatus,
+  };
+}
+
 async function establishedResponse(
   db: AttentionDatabase,
   principal: CollectionPrincipal,
@@ -537,6 +571,7 @@ async function establishedResponse(
     .parse(attempt.status);
   return CollectorResponseSchema.parse({
     ...baseResponse(attempt),
+    ...enrichmentResponseFields(content),
     content_id: content.id,
     collection_id: collection.id,
     content_type: contentType,
@@ -919,6 +954,7 @@ async function establishCollection(
 
   return CollectorResponseSchema.parse({
     ...baseResponse(attempt),
+    ...enrichmentResponseFields(established.contentResult.content),
     collection_id: established.collectionResult.collection.id,
     content_id: established.contentResult.content.id,
     content_type: candidate.identity.contentType,
