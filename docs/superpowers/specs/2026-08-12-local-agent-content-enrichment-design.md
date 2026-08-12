@@ -11,9 +11,11 @@ shared by the deduplicated Content, while each user's Collection independently
 controls whether its card is private or public.
 
 Hosted AI is not a first-release dependency. The existing OpenAI-compatible
-adapter is implementation scaffolding, not a deployed product capability. A
-missing Hosted AI configuration must therefore never turn an otherwise valid
-Content into a terminal summary failure.
+adapter is implementation scaffolding, not a deployed product capability. Its
+future responsibilities, trigger conditions, and relationship to local Agents
+are intentionally unspecified in this design. A missing Hosted AI
+configuration must therefore never turn an otherwise valid Content into a
+terminal summary failure.
 
 ## 2. Product invariants
 
@@ -164,7 +166,7 @@ The audit event records the submitting account, Content ID, tool identity,
 result, and timestamps, but never logs the summary text, tags, source URL, page
 text, or browser state.
 
-## 7. Worker and Hosted AI behavior
+## 7. Worker behavior and future AI boundary
 
 For the first release:
 
@@ -175,10 +177,13 @@ For the first release:
 - missing summaries remain pending for a local Agent;
 - no UI copy claims that Hosted AI is available.
 
-Future Hosted AI uses the same internal enrichment validation and conditional
-write service as MCP. It may be scheduled after a grace period only when a
-provider is explicitly enabled. It loses the same first-writer race if a local
-Agent fills the summary first.
+This design does not define Hosted AI as a fallback, a first-pass processor, or
+any other fixed role. Hosted AI may later support broader workflows that are
+designed separately. If a future Hosted AI capability writes the canonical
+shared summary or tags, that write must use the same validation, authorization,
+audit, and conditional-concurrency rules as other canonical Content writers.
+This requirement protects Content consistency without prescribing when or why
+Hosted AI runs.
 
 ## 8. Existing-data repair
 
@@ -240,7 +245,7 @@ Required automated coverage:
 
 ## 12. Release boundary
 
-This design does not build Hosted AI, automatic server-to-device dispatch,
-summary editing, multiple summary versions, quality voting, or role-based
-summary visibility. Those require separate product decisions after the local
-Agent-first flow is proven.
+This design does not build or assign a product role to Hosted AI. It also does
+not build automatic server-to-device dispatch, summary editing, multiple
+summary versions, quality voting, or role-based summary visibility. Those
+require separate product decisions after the local Agent-first flow is proven.
