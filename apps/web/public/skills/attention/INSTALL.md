@@ -155,7 +155,7 @@ WeChat assistant and uploading a local Skill bundle through its UI. Attention
 publishes the uploadable bundle at:
 
 ```text
-{attention_origin}/skills/attention/bundles/attention-workbuddy-1.6.0.zip
+{attention_origin}/skills/attention/bundles/attention-workbuddy-1.7.0.zip
 SHA-256: 45b869576feae8e42c06ebe61658496fc9aa26918ab38f81fb54721351bc966c
 ```
 
@@ -249,7 +249,7 @@ scan, so closing the terminal does not stop inbound delivery. An inbound
 message is not guaranteed to appear as a visible Desktop conversation. A future Codex SDK
 companion remains a separate `contract_only` design alternative.
 
-Attention CLI `0.3.3` keeps the same local bridge as the sole iLink owner and
+Attention CLI `0.3.4` keeps the same local bridge as the sole iLink owner and
 keeps one `codex app-server` resident. It first resumes the locally
 persisted thread ID; if that thread cannot be resumed, it creates a thread after
 replaying the local last 20 user/assistant exchanges. Its Channel defaults are
@@ -383,7 +383,7 @@ logout` stops/removes the background service and deletes the local iLink
 state. If iLink expires, the service exits without opening an unattended QR
 prompt; rerun the same `--background` command in a terminal.
 
-In Attention CLI `0.3.3`, a local Agent process failure does not transfer iLink
+In Attention CLI `0.3.4`, a local Agent process failure does not transfer iLink
 ownership: the bridge keeps polling, queues normal messages, and can answer
 exact local status/help/retry/continue commands. If the whole device or bridge
 is offline, WeChat receives no Attention reply. When the optional Runtime
@@ -398,7 +398,7 @@ Privacy boundary for the bridge:
 - The iLink bot identifier is not an Attention identity and is never used
   for login, entitlements, or global identity.
 - Bridge logs omit tokens and full message bodies.
-- CLI `0.3.3` can optionally authorize a separate Runtime OAuth client. Its
+- CLI `0.3.4` can optionally authorize a separate Runtime OAuth client. Its
   reporter sends privacy-safe runtime status, timestamps, bounded queue counts,
   checkpoints, and device-pairing results only.
 - The reporter never sends iLink credentials, Codex credentials or thread IDs,
@@ -441,7 +441,7 @@ and successful setup: MCP, local WeChat, and collection keep working.
 ## Runtime OAuth boundary
 
 The backend exposes a separate Local Channel Runtime resource. Attention CLI
-`0.3.3` may authorize it for privacy-safe runtime reporting and device-pairing
+`0.3.4` may authorize it for privacy-safe runtime reporting and device-pairing
 results:
 
 ```text
@@ -468,7 +468,7 @@ receive a reply and Web can show only the last heartbeat and checkpoint.
 
 - iLink token, context token, sync cursor, contact data, and media keys remain
   local to the Channel Owner.
-- Attention receives normal authenticated MCP calls. The optional CLI `0.3.3`
+- Attention receives normal authenticated MCP calls. The optional CLI `0.3.4`
   Runtime reporter may submit installation metadata, opaque fingerprints,
   pairing results, health timestamps, bounded queue counts, and checkpoints—but
   never the channel credential, Codex thread, message, URL, or reply. Normal MCP
@@ -564,6 +564,6 @@ Claude Code. Consumers moving from `2.2.0` should:
   does not inherit the user's normal working directory or session history;
 - keep treating `codex_sdk_companion` and `claude_channel_preview` as
   valid engine values for future or host-managed alternatives; and
-- read Skill `1.6.0` "Designated collection channels" for the conversation
+- read Skill `1.7.0` "Designated collection channels" for the conversation
   semantics and conditional shared enrichment workflow the bridge declares
-  (tool contract version `1.4.0`).
+  (tool contract version `1.5.0`).

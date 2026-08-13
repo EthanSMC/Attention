@@ -130,8 +130,8 @@ describe("public Agent installation artifacts", () => {
     expect(agentInstallationCatalog.skill.document_sha256).toBe(
       ATTENTION_SKILL_DOCUMENT_SHA256,
     );
-    expect(ATTENTION_SKILL_PACKAGE_VERSION).toBe("1.6.0");
-    expect(ATTENTION_SKILL_TOOL_CONTRACT_VERSION).toBe("1.4.0");
+    expect(ATTENTION_SKILL_PACKAGE_VERSION).toBe("1.7.0");
+    expect(ATTENTION_SKILL_TOOL_CONTRACT_VERSION).toBe("1.5.0");
     expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe(
       ATTENTION_SKILL_TOOL_CONTRACT_VERSION,
     );

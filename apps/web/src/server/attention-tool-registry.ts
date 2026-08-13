@@ -40,7 +40,7 @@ import { reportPublicContent } from "./moderation-service";
 import { publicFeedPreviewLimit } from "./public-access";
 import type { AttentionToolAuditInput } from "./attention-tool-audit";
 
-export const ATTENTION_TOOL_CONTRACT_VERSION = "1.4.0";
+export const ATTENTION_TOOL_CONTRACT_VERSION = "1.5.0";
 
 export const ATTENTION_TOOL_NAMES = [
   "attention_get_my_account",
@@ -171,7 +171,7 @@ const attentionClientContextSchema = z
       .literal("attention")
       .optional(),
     skill_version: z
-      .enum(["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0"])
+      .enum(["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"])
       .optional(),
     workflow_run_id: z
       .string()
@@ -462,6 +462,8 @@ const stableErrorGuidance: Readonly<Record<string, string>> = {
   candidate_invalid: "Submit the original content again to refresh its candidates.",
   candidate_not_found: "Choose a candidate returned by the same collection attempt.",
   content_enrichment_hidden: "This Content cannot accept a replacement summary.",
+  content_enrichment_invalid_link:
+    "Return the final public HTTP(S) source URL without credentials, private hosts, sensitive query parameters, or a nonstandard port.",
   content_enrichment_unavailable:
     "This Content has a terminal summary result and cannot be regenerated.",
   content_not_eligible: "This Content is not eligible for enrichment.",
@@ -762,10 +764,10 @@ export function createAttentionToolRegistry(
         openWorldHint: false,
         readOnlyHint: false,
       },
-      description: "Submit the first grounded summary and normalized tags for Content in an active collection owned by the authenticated account. An existing shared summary is never overwritten.",
+      description: "Submit the first grounded title, final public source URL, summary, and normalized tags for Content in an active collection owned by the authenticated account. An existing shared enrichment is never overwritten.",
       execute: async (
         context,
-        { content_id, idempotency_key, summary, tags },
+        { content_id, idempotency_key, resolved_url, summary, tags, title },
       ) => {
         if (!hasScope(context, "collection:write")) {
           return insufficientScope("collection:write");
@@ -774,7 +776,7 @@ export function createAttentionToolRegistry(
           const result = await core.submitContentEnrichment(
             context.getDatabase(),
             context,
-            { content_id, idempotency_key, summary, tags },
+            { content_id, idempotency_key, resolved_url, summary, tags, title },
           );
           return toolSuccess({
             content_id: result.contentId,
@@ -792,11 +794,13 @@ export function createAttentionToolRegistry(
           ...attentionClientContextShape,
           content_id: z.string().uuid(),
           idempotency_key: z.string().trim().min(8).max(128),
+          resolved_url: z.string().trim().min(1).max(4_096),
           summary: z.string().trim().min(1).max(2_000),
           tags: z
             .array(z.string().trim().min(1).max(64))
             .min(1)
             .max(8),
+          title: z.string().trim().min(1).max(500),
         })
         .strict(),
       isVisible: (context) => hasScope(context, "collection:write"),

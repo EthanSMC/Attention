@@ -43,9 +43,9 @@ describe("public Attention Skill contract", () => {
     const skill = await readPublicSkill();
     const registryNames = [...ATTENTION_PUBLIC_TOOL_NAMES].sort();
 
-    expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe("1.4.0");
+    expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe("1.5.0");
     expect(skill).toContain("Skill ID: `attention`");
-    expect(skill).toContain("Skill version: `1.6.0`");
+    expect(skill).toContain("Skill version: `1.7.0`");
     expect(skill).toContain(
       `Tool contract version: \`${ATTENTION_TOOL_CONTRACT_VERSION}\``,
     );
@@ -60,11 +60,12 @@ describe("public Attention Skill contract", () => {
     expect(skill).toMatch(/`generate_summary`[\s\S]*publicly accessible source/u);
     expect(skill).toMatch(/summary[^\n]*2,000 characters/u);
     expect(skill).toMatch(/between 1 and 8 normalized tags/u);
+    expect(skill).toMatch(/`title`, `resolved_url`, `summary`, and `tags`/u);
     expect(skill).toMatch(/`already_enriched`[\s\S]*successful reuse/u);
     expect(skill).toMatch(/cannot be read publicly[\s\S]*leave the summary pending/u);
     expect(skill).toMatch(/never fabricate/u);
-    expect(skill).toMatch(/only the summary and tags/u);
-    expect(skill).toMatch(/Do not submit[^\n]*page text[^\n]*raw URL[^\n]*cookies[^\n]*authorization headers[^\n]*browser state/u);
+    expect(skill).toMatch(/only the grounded title, final public URL, summary, and tags/u);
+    expect(skill).toMatch(/Do not submit[^\n]*page text[^\n]*full content[^\n]*cookies[^\n]*authorization headers[^\n]*browser state/u);
   });
 
   it("re-enters the same enrichment workflow after candidate selection", async () => {
@@ -100,7 +101,7 @@ describe("public Attention Skill contract", () => {
     expect(skill).toMatch(/at most two automatic retries/u);
     expect(skill).toMatch(/Pass every established result[\s\S]*same established-result handler/u);
     expect(skill).toMatch(/Agent's own minimum public-web reader/u);
-    expect(skill).toMatch(/Third-party extraction is not trusted Attention acquisition evidence/u);
+    expect(skill).toMatch(/bounded enrichment submission may include only its grounded title, final public URL, summary, and tags/u);
     expect(skill).toMatch(/Only an active Filter may make a collection public/u);
     expect(skill).toMatch(/Do not invent allegations/u);
     expect(skill).toMatch(/explicitly confirms that case and decision/u);
@@ -121,7 +122,7 @@ describe("public Attention Skill contract", () => {
     expect(skill).not.toMatch(/att_pat_[A-Za-z0-9_-]+/u);
     expect(skill).not.toMatch(/Bearer\s+[A-Za-z0-9._~-]+/u);
     expect(skill).not.toMatch(/store (?:the )?(?:full )?(?:page|article|original|HTML)/iu);
-    expect(skill).toMatch(/Do not submit copied page text, extracted full content, the raw URL, cookies, authorization headers, or browser state/u);
+    expect(skill).toMatch(/Do not submit copied page text, extracted full content, cookies, authorization headers, or browser state/u);
     expect(skill).toMatch(/stores collected URLs and necessary metadata, not a third-party original/u);
   });
 });
