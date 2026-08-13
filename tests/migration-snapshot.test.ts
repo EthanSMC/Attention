@@ -26,7 +26,7 @@ describe("Drizzle migration snapshot", () => {
     ) as { entries: { tag: string }[] };
 
     expect(existsSync(migrationPath)).toBe(true);
-    expect(journal.entries.at(-1)?.tag).toBe("0032_local_agent_enrichment_repair");
+    expect(journal.entries.at(-1)?.tag).toBe("0033_owned_content_alias_function");
     if (!existsSync(migrationPath)) return;
     const migration = readFileSync(migrationPath, "utf8");
     expect(migration).toContain('"summary_status" = \'unavailable\'');
@@ -46,6 +46,32 @@ describe("Drizzle migration snapshot", () => {
     expect(migration).not.toContain('"summary_status" IN');
     expect(migration).not.toContain("'failed'");
     expect(migration).not.toMatch(/INSERT\s+INTO\s+"?jobs"?/iu);
+  });
+
+  it("exposes only the constrained owned-alias function to Web runtime", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migration = readFileSync(
+      resolve(
+        root,
+        "packages/db/drizzle/0033_owned_content_alias_function.sql",
+      ),
+      "utf8",
+    );
+
+    expect(migration).toContain("SECURITY DEFINER");
+    expect(migration).toContain("SET search_path = pg_catalog, public");
+    expect(migration).toContain("current_setting('app.account_id', true)");
+    expect(migration).toContain("alias_collection.account_id = v_account_id");
+    expect(migration).toContain("primary_collection.account_id = v_account_id");
+    expect(migration).toContain("alias_content.public_safety_status = 'allowed'");
+    expect(migration).toContain("primary_content.public_safety_status = 'allowed'");
+    expect(migration).toContain("REVOKE ALL ON FUNCTION");
+    expect(migration).toContain(
+      "GRANT EXECUTE ON FUNCTION public.attention_link_owned_content_alias(uuid, uuid, text) TO attention_web_runtime",
+    );
+    expect(migration).not.toMatch(
+      /GRANT\s+(?:INSERT|UPDATE|DELETE)[^;]*content_aliases[^;]*attention_web_runtime/iu,
+    );
   });
 
   it("enforces one active Runtime connection per trusted installation", () => {

@@ -132,7 +132,9 @@ import {
   collectionEvents,
   collections,
   consumerReferrals,
+  contentAliases,
   contentLinks,
+  contentIdentities,
   contentReports,
   contents,
   createDatabase,
@@ -148,6 +150,7 @@ import {
   growthBillingEvents,
   growthTokenAttempts,
   inputAttempts,
+  inArray,
   invitations,
   jobs,
   listModerationCourtCases,
@@ -2103,7 +2106,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     ).resolves.toEqual([{ accountId: first.redeemed.accountId }]);
   });
 
-  it("collects a safe direct link when Fetcher is temporarily unavailable without degrading short or unsafe links", async () => {
+  it("falls back every safe HTTP target to local Agent enrichment when Fetcher cannot resolve it", async () => {
     const { redeemed } = await createRedeemedAccount("member", "fetch-fallback");
     const principal = await principalFor(redeemed);
     vi.stubGlobal("fetch", vi.fn(async () => {
@@ -2117,6 +2120,8 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
     expect(direct).toMatchObject({
       current_visibility: "private",
+      enrichment_action: "generate_summary",
+      public_read_url: "https://mp.weixin.qq.com/s/fixtureArticle123",
       status: "accepted",
     });
     if (
@@ -2196,23 +2201,26 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
           status: 422,
         })),
     );
-    const unsafePlatformTarget = await collectFromWeb(handle.db, principal, {
+    const challengedPlatformTarget = await collectFromWeb(handle.db, principal, {
       idempotency_key: "fetch-fallback-direct-unsafe-credentials",
       raw_input: "https://mp.weixin.qq.com/s/fixtureArticleUnsafeCredentials",
       visibility: "private",
     });
-    expect(unsafePlatformTarget).toMatchObject({
-      error_code: "unsafe_credentials",
-      status: "unsafe",
+    expect(challengedPlatformTarget).toMatchObject({
+      enrichment_action: "generate_summary",
+      public_read_url:
+        "https://mp.weixin.qq.com/s/fixtureArticleUnsafeCredentials",
+      status: "accepted",
     });
-    const rejectionWarning = warning.mock.calls
+    const agentFallbackWarning = warning.mock.calls
       .flat()
       .find((entry) =>
         typeof entry === "string" &&
-        entry.includes('"event":"collection.fetcher_safety_rejection"'),
+        entry.includes('"event":"collection.fetcher_agent_fallback"') &&
+        entry.includes('"code":"unsafe_credentials"'),
       );
-    expect(rejectionWarning).toContain('"code":"unsafe_credentials"');
-    expect(rejectionWarning).not.toContain("fixtureArticleUnsafeCredentials");
+    expect(agentFallbackWarning).toContain('"code":"unsafe_credentials"');
+    expect(agentFallbackWarning).not.toContain("fixtureArticleUnsafeCredentials");
     vi.stubGlobal("fetch", vi.fn(async () => {
       throw new TypeError("temporary fetcher outage");
     }));
@@ -2222,21 +2230,131 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       raw_input: "https://example.org/direct-content",
       visibility: "private",
     });
-    expect(genericDirect).toMatchObject({ status: "resolution_pending" });
+    expect(genericDirect).toMatchObject({
+      enrichment_action: "generate_summary",
+      public_read_url: "https://example.org/direct-content",
+      source: "generic_web",
+      status: "accepted",
+    });
 
     const shortLink = await collectFromWeb(handle.db, principal, {
       idempotency_key: "fetch-fallback-shortlink",
       raw_input: "https://v.douyin.com/example",
       visibility: "private",
     });
-    expect(shortLink).toMatchObject({ status: "resolution_pending" });
+    expect(shortLink).toMatchObject({
+      enrichment_action: "generate_summary",
+      public_read_url: "https://v.douyin.com/example",
+      status: "accepted",
+    });
 
     const genericShortLink = await collectFromWeb(handle.db, principal, {
       idempotency_key: "fetch-fallback-generic-shortlink",
       raw_input: "https://bit.ly/example",
       visibility: "private",
     });
-    expect(genericShortLink).toMatchObject({ status: "resolution_pending" });
+    expect(genericShortLink).toMatchObject({
+      enrichment_action: "generate_summary",
+      public_read_url: "https://bit.ly/example",
+      status: "accepted",
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            contentType: "text/html",
+            finalUrl: "https://www.douyin.com/video/1234567890",
+            redirects: [{
+              host: "v.douyin.com",
+              pathFingerprint: "short-path",
+              status: 302,
+            }],
+            status: 200,
+          }),
+          { headers: { "content-type": "application/json" }, status: 200 },
+        ),
+      ),
+    );
+    const resolvedShortLink = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "fetch-fallback-resolved-shortlink",
+      raw_input: "https://v.douyin.com/resolvedExample/",
+      visibility: "private",
+    });
+    expect(resolvedShortLink).toMatchObject({ status: "accepted" });
+    if (
+      resolvedShortLink.status !== "accepted" &&
+      resolvedShortLink.status !== "already_collected" &&
+      resolvedShortLink.status !== "merged_with_existing_content"
+    ) {
+      throw new Error("Expected resolved short-link collection");
+    }
+    expect(
+      await handle.db
+        .select({ dedupeKey: contentIdentities.dedupeKey })
+        .from(contentIdentities)
+        .where(eq(contentIdentities.contentId, resolvedShortLink.content_id)),
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          dedupeKey:
+            "generic_web:v1:url:https://v.douyin.com/resolvedExample/",
+        },
+        { dedupeKey: "douyin:v1:video:1234567890" },
+      ]),
+    );
+    const historicalAliases = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ];
+    for (const [index, aliasContentId] of historicalAliases.entries()) {
+      const aliasUrl = `https://legacy-short.example/${index + 1}`;
+      await handle.db.insert(contents).values({
+        canonicalUrl: aliasUrl,
+        contentType: "webpage",
+        id: aliasContentId,
+        normalizedUrl: aliasUrl,
+        outboundUrl: aliasUrl,
+        source: "generic_web",
+      });
+      await handle.db.insert(contentAliases).values({
+        aliasContentId,
+        aliasDedupeKey: `legacy-short:v1:${index + 1}`,
+        primaryContentId: resolvedShortLink.content_id,
+        reasonCode: "historical_split",
+        ruleVersion: "v1",
+      });
+      await handle.db.insert(collections).values({
+        accountId: redeemed.accountId,
+        contentId: aliasContentId,
+        domainId: (
+          await handle.db
+            .select({ id: domains.id })
+            .from(domains)
+            .where(eq(domains.slug, "ai"))
+            .limit(1)
+        )[0]!.id,
+        sourceChannel: "web",
+        visibility: "private",
+      });
+    }
+    const sameDirectLink = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "fetch-fallback-resolved-directlink",
+      raw_input: "https://www.douyin.com/video/1234567890",
+      visibility: "private",
+    });
+    expect(sameDirectLink).toMatchObject({
+      collection_id: resolvedShortLink.collection_id,
+      content_id: resolvedShortLink.content_id,
+      status: "merged_with_existing_content",
+    });
+    expect(
+      await handle.db
+        .select({ status: collections.collectionStatus })
+        .from(collections)
+        .where(inArray(collections.contentId, historicalAliases)),
+    ).toEqual([{ status: "deleted" }, { status: "deleted" }]);
 
     const sensitiveQuery = await collectFromWeb(handle.db, principal, {
       idempotency_key: "fetch-fallback-sensitive-query",
@@ -2258,7 +2376,11 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       visibility: "private",
     });
     expect(unsafe).toMatchObject({ status: "unsafe" });
-    expect(await handle.db.select().from(collections)).toHaveLength(2);
+    const allCollections = await handle.db.select().from(collections);
+    expect(
+      allCollections.filter((collection) => collection.collectionStatus === "active"),
+    ).toHaveLength(7);
+    expect(allCollections).toHaveLength(9);
   });
 
   it("keeps the 20-card public preview and outbound gate deterministic for timestamp ties", async () => {

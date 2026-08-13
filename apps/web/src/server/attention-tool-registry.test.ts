@@ -139,8 +139,10 @@ describe("Attention Tool Registry execution contract", () => {
         {
           content_id: collectionId,
           idempotency_key: "enrichment-request-1",
+          resolved_url: "https://example.com/final",
           summary: "A grounded summary.",
           tags: ["Agents", "agents", "  MCP  "],
+          title: "A grounded title",
         },
       ),
     ).resolves.toEqual({
@@ -157,8 +159,10 @@ describe("Attention Tool Registry execution contract", () => {
       {
         content_id: collectionId,
         idempotency_key: "enrichment-request-1",
+        resolved_url: "https://example.com/final",
         summary: "A grounded summary.",
         tags: ["Agents", "agents", "MCP"],
+        title: "A grounded title",
       },
     );
   });
@@ -179,8 +183,10 @@ describe("Attention Tool Registry execution contract", () => {
         {
           content_id: collectionId,
           idempotency_key: "terminal-enrichment-1",
+          resolved_url: "https://example.com/terminal",
           summary: "This must not replace a terminal result.",
           tags: ["terminal"],
+          title: "Terminal title",
         },
       ),
     ).resolves.toEqual({

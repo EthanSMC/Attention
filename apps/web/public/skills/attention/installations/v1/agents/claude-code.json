@@ -217,7 +217,7 @@
     "bundle_skill_path": null,
     "delivery": "host_user_directory",
     "docs_url": "https://code.claude.com/docs/en/skills",
-    "document_sha256": "aeded3e3984ab669da1e5ed72fc209fa88cb9e6fa8583d45c018f800b5064755",
+    "document_sha256": "7412970a7d0041b27bf7537fb8bafcc49fe428ee968407d7dc1fee93a8e351e2",
     "format": "skill_md",
     "id": "attention",
     "install": "filesystem_directory",
@@ -231,7 +231,7 @@
     "package_ref": null,
     "source_kind": "local_directory",
     "source_path": "/skills/attention/SKILL.md",
-    "tool_contract_version": "1.4.0",
-    "version": "1.6.0"
+    "tool_contract_version": "1.5.0",
+    "version": "1.7.0"
   }
 }

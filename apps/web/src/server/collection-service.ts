@@ -27,12 +27,16 @@ import {
 } from "@attention/contracts";
 import {
   and,
+  collectionEvents,
   collections,
+  contentAliases,
+  contentIdentities,
   contentLinks,
   contents,
   domains,
   eq,
   gt,
+  inArray,
   inputAttempts,
   inputCandidates,
   isNull,
@@ -97,9 +101,11 @@ export class CollectionServiceError extends Error {
 }
 
 interface ResolvedCandidate {
+  aliasIdentities: AdapterIdentity[];
   identity: AdapterIdentity;
   outboundUrl: string;
   observedUrl: string;
+  selectedUrl: string;
   redirectChain: string[];
   displayHost: string;
   resolutionStatus: "pending" | "resolved";
@@ -122,18 +128,6 @@ class CandidatePendingError extends Error {
   }
 }
 
-const temporaryFetcherErrorCodes = new Set([
-  "dns_failure",
-  "fetch_failed",
-  "fetcher_failed",
-  "fetcher_not_configured",
-  "fetcher_unavailable",
-  "internal_error",
-  "invalid_fetcher_response",
-  "overloaded",
-  "timeout",
-]);
-
 export function selectCandidateOutboundUrl(
   identity: AdapterIdentity,
   observedUrl: string,
@@ -147,14 +141,15 @@ function fallbackDirectCandidate(
   match: NonNullable<ReturnType<typeof classifySourceUrl>>,
 ): ResolvedCandidate | null {
   if (
-    match.classification.kind !== "content" ||
-    match.adapter.id === "generic_web"
+    match.classification.kind === "download" ||
+    match.classification.kind === "marketing"
   ) {
     return null;
   }
   const parsedInput = parseHttpUrl(url);
   if (!parsedInput) return null;
-  const identity = match.adapter.identity(url);
+  const identity =
+    match.adapter.identity(url) ?? genericWebAdapter.identity(url);
   if (!identity) return null;
   const outboundUrl = selectCandidateOutboundUrl(identity, url);
   const parsedOutbound = parseHttpUrl(outboundUrl);
@@ -167,12 +162,14 @@ function fallbackDirectCandidate(
     throw new CandidateUnsafeError("unsafe_outbound");
   }
   return {
+    aliasIdentities: [],
     displayHost: new URL(url).hostname,
     identity,
     observedUrl: url,
     outboundUrl,
     redirectChain: [],
     resolutionStatus: "pending",
+    selectedUrl: url,
   };
 }
 
@@ -275,6 +272,31 @@ function dangerousForAdapter(
   });
 }
 
+/**
+ * Validates the final public URL reported by a local Agent without making a
+ * server-side network request. The Agent is a fallback reader, not a way to
+ * bypass the collection boundary for local targets, credentials or sensitive
+ * query material.
+ */
+export function validateAgentResolvedPublicUrl(rawUrl: string): string | null {
+  const parsed = parseHttpUrl(rawUrl);
+  if (
+    parsed === null ||
+    hasUnsupportedHttpPort(parsed) ||
+    clearlyUnsafeHostname(parsed.hostname)
+  ) {
+    return null;
+  }
+  const match = classifySourceUrl(parsed);
+  if (
+    match &&
+    dangerousForAdapter(parsed.href, match.adapter.id, match.classification.kind)
+  ) {
+    return null;
+  }
+  return parsed.href;
+}
+
 async function resolveCandidate(rawUrl: string): Promise<ResolvedCandidate | null> {
   let currentUrl = rawUrl;
   let match = classifySourceUrl(currentUrl);
@@ -305,45 +327,28 @@ async function resolveCandidate(rawUrl: string): Promise<ResolvedCandidate | nul
   }
 
   const initialSource = match.adapter.id;
+  const initialIdentity =
+    match.adapter.identity(rawUrl) ?? genericWebAdapter.identity(rawUrl);
   let redirectChain: string[];
   try {
     const resolved = await resolveExternalUrl(currentUrl, initialSource);
     currentUrl = resolved.finalUrl;
     redirectChain = resolved.redirectChain;
   } catch (error) {
-    if (error instanceof FetcherClientError && error.unsafe) {
-      // A recognized direct platform URL is safe to retain when the isolated
-      // Fetcher declines to connect solely because DNS currently resolves to
-      // a non-public address. This fallback performs no network request;
-      // enrichment stays pending and must pass Fetcher validation on retry.
-      if (error.code === "unsafe_address") {
-        const fallback = fallbackDirectCandidate(currentUrl, match);
-        if (fallback) {
-          console.warn(JSON.stringify({
-            code: error.code,
-            event: "collection.fetcher_safety_fallback",
-            fetcher_request_id: error.requestId,
-            source: initialSource,
-            url_fingerprint: urlFingerprint(currentUrl),
-          }));
-          return fallback;
-        }
-      }
-      console.warn(JSON.stringify({
-        code: error.code,
-        event: "collection.fetcher_safety_rejection",
-        fetcher_request_id: error.requestId,
-        source: initialSource,
-        url_fingerprint: urlFingerprint(currentUrl),
-      }));
-      throw new CandidateUnsafeError(error.code);
-    }
-    if (
-      error instanceof FetcherClientError &&
-      temporaryFetcherErrorCodes.has(error.code)
-    ) {
+    if (error instanceof FetcherClientError) {
       const fallback = fallbackDirectCandidate(currentUrl, match);
-      if (fallback) return fallback;
+      if (fallback) {
+        console.warn(JSON.stringify({
+          code: error.code,
+          event: error.code === "unsafe_address"
+            ? "collection.fetcher_safety_fallback"
+            : "collection.fetcher_agent_fallback",
+          fetcher_request_id: error.requestId,
+          source: initialSource,
+          url_fingerprint: urlFingerprint(currentUrl),
+        }));
+        return fallback;
+      }
     }
     throw new CandidatePendingError(initialSource);
   }
@@ -392,12 +397,17 @@ async function resolveCandidate(rawUrl: string): Promise<ResolvedCandidate | nul
     throw new CandidateUnsafeError("unsafe_outbound");
   }
   return {
+    aliasIdentities:
+      initialIdentity && initialIdentity.dedupeKey !== identity.dedupeKey
+        ? [initialIdentity]
+        : [],
     displayHost: new URL(currentUrl).hostname,
     identity,
     observedUrl: currentUrl,
     outboundUrl,
     redirectChain,
     resolutionStatus: "resolved",
+    selectedUrl: rawUrl,
   };
 }
 
@@ -867,6 +877,34 @@ async function establishCollection(
       source: candidate.identity.adapter,
       sourceAdapter: candidate.identity.adapter,
     });
+    const pendingAliasContentIds: string[] = [];
+    for (const aliasIdentity of candidate.aliasIdentities) {
+      const [existingAliasIdentity] = await tx
+        .select({ contentId: contentIdentities.contentId })
+        .from(contentIdentities)
+        .where(
+          and(
+            eq(contentIdentities.dedupeKey, aliasIdentity.dedupeKey),
+            eq(contentIdentities.active, true),
+          ),
+        )
+        .limit(1);
+      if (!existingAliasIdentity) {
+        await tx
+          .insert(contentIdentities)
+          .values({
+            adapterVersion: aliasIdentity.adapterVersion,
+            contentId: contentResult.content.id,
+            dedupeKey: aliasIdentity.dedupeKey,
+            identityKind: "normalized",
+            normalizedUrl: aliasIdentity.normalizedUrl,
+            sourceAdapter: aliasIdentity.adapter,
+          })
+          .onConflictDoNothing({ target: contentIdentities.dedupeKey });
+      } else if (existingAliasIdentity.contentId !== contentResult.content.id) {
+        pendingAliasContentIds.push(existingAliasIdentity.contentId);
+      }
+    }
     if (
       candidate.identity.adapter === "xiaohongshu" &&
       candidate.outboundUrl !== candidate.identity.normalizedUrl
@@ -882,15 +920,144 @@ async function establishCollection(
           ),
         );
     }
-    const collectionResult = await upsertCollectionInTransaction(tx, {
+    let collectionResult = await upsertCollectionInTransaction(tx, {
       accountId: principal.accountId,
       contentId: contentResult.content.id,
       domainId: domain.id,
       sourceChannel: "web",
       visibility,
     });
+    for (const aliasContentId of pendingAliasContentIds) {
+      await upsertCollectionInTransaction(tx, {
+        accountId: principal.accountId,
+        contentId: aliasContentId,
+        domainId: domain.id,
+        sourceChannel: "web",
+        visibility,
+      });
+      await tx.execute(sql`
+        select public.attention_link_owned_content_alias(
+          ${aliasContentId}::uuid,
+          ${contentResult.content.id}::uuid,
+          'resolved_shortlink_identity'
+        )
+      `);
+    }
+    const aliasContents = await tx
+      .select({ aliasContentId: contentAliases.aliasContentId })
+      .from(contentAliases)
+      .where(
+        and(
+          eq(contentAliases.primaryContentId, contentResult.content.id),
+          eq(contentAliases.active, true),
+        ),
+      );
+    const aliasContentIds = aliasContents.map((alias) => alias.aliasContentId);
+    const existingAliasCollections = aliasContentIds.length > 0
+      ? await tx
+          .select()
+          .from(collections)
+          .where(
+            and(
+              eq(collections.accountId, principal.accountId),
+              inArray(collections.contentId, aliasContentIds),
+              eq(collections.collectionStatus, "active"),
+            ),
+          )
+          .for("update")
+      : [];
+    const mergedAliasCollections = existingAliasCollections.filter(
+      (aliasCollection) =>
+        aliasCollection.id !== collectionResult.collection.id,
+    );
+    if (mergedAliasCollections.length > 0) {
+      const collectionsToMerge = [
+        collectionResult.collection,
+        ...mergedAliasCollections,
+      ];
+      const effectiveVisibility =
+        collectionsToMerge.some(
+          (collection) => collection.visibility === "public",
+        )
+          ? "public"
+          : "private";
+      const publicSince = effectiveVisibility === "public"
+        ? collectionsToMerge
+            .map((collection) => collection.publicSince)
+            .filter((value): value is Date => value !== null)
+            .sort((left, right) => left.getTime() - right.getTime())[0] ?? now
+        : null;
+      const deletedAliasCollections = await tx
+        .update(collections)
+        .set({ collectionStatus: "deleted", updatedAt: now })
+        .where(
+          inArray(
+            collections.id,
+            mergedAliasCollections.map((collection) => collection.id),
+          ),
+        )
+        .returning();
+      const earliestCollectedAt = collectionsToMerge
+        .map((collection) => collection.collectedAt)
+        .sort((left, right) => left.getTime() - right.getTime())[0]!;
+      const [mergedCollection] = await tx
+        .update(collections)
+        .set({
+          collectedAt: earliestCollectedAt,
+          moderationStatus: collectionsToMerge.some(
+            (collection) => collection.moderationStatus === "blocked",
+          )
+            ? "blocked"
+            : "clear",
+          publicSince,
+          updatedAt: now,
+          visibility: effectiveVisibility,
+        })
+        .where(eq(collections.id, collectionResult.collection.id))
+        .returning();
+      if (!mergedCollection) throw new Error("collection_alias_merge_failed");
+      collectionResult = { ...collectionResult, collection: mergedCollection };
+      if (effectiveVisibility === "public") {
+        await tx
+          .update(contents)
+          .set({
+            firstPublicAt: sql`coalesce(${contents.firstPublicAt}, ${publicSince ?? now})`,
+            updatedAt: now,
+            visibilityVersion: sql`${contents.visibilityVersion} + 1`,
+          })
+          .where(eq(contents.id, contentResult.content.id));
+      }
+      if (deletedAliasCollections.length > 0) {
+        const previousById = new Map(
+          mergedAliasCollections.map((collection) => [collection.id, collection]),
+        );
+        await tx.insert(collectionEvents).values(deletedAliasCollections.map(
+          (deletedAliasCollection) => {
+            const previous = previousById.get(deletedAliasCollection.id)!;
+            return {
+          accountId: principal.accountId,
+          actorAccountId: principal.accountId,
+          collectionId: deletedAliasCollection.id,
+          contentId: deletedAliasCollection.contentId,
+          eventType: "merged_with_existing_content",
+          nextState: {
+            collectionStatus: "deleted",
+            mergedIntoCollectionId: collectionResult.collection.id,
+          },
+          occurredAt: now,
+          previousState: {
+                collectionStatus: previous.collectionStatus,
+                visibility: previous.visibility,
+          },
+            };
+          },
+        ));
+      }
+    }
     const status =
-      collectionResult.status === "already_collected"
+      mergedAliasCollections.length > 0
+        ? "merged_with_existing_content"
+        : collectionResult.status === "already_collected"
         ? "already_collected"
         : contentResult.created
           ? "accepted"
@@ -905,7 +1072,7 @@ async function establishCollection(
       redirectChain: candidate.redirectChain,
       resolutionStatus: candidate.resolutionStatus,
       resolvedUrl: candidate.observedUrl,
-      safeSelectedUrl: candidate.observedUrl,
+      safeSelectedUrl: candidate.selectedUrl,
       sourceAdapter: candidate.identity.adapter,
     });
     if (
@@ -933,7 +1100,7 @@ async function establishCollection(
         redirectChain: candidate.redirectChain,
         resultCollectionId: collectionResult.collection.id,
         resultContentId: contentResult.content.id,
-        safeSelectedUrl: candidate.observedUrl,
+        safeSelectedUrl: candidate.selectedUrl,
         sourceAdapter: candidate.identity.adapter,
         leaseExpiresAt: null,
         leaseOwner: null,

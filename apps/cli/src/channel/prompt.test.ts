@@ -27,15 +27,15 @@ describe("channel intent", () => {
     expect(prompt).toMatch(/enrichment_action.*reuse_summary[\s\S]*不要读取原文[\s\S]*不要调用 attention_submit_content_enrichment/u);
     expect(prompt).toMatch(/enrichment_action.*generate_summary[\s\S]*公开可访问/u);
     expect(prompt).toContain("attention_submit_content_enrichment");
-    expect(prompt).not.toContain("可含标题");
+    expect(prompt).toMatch(/标题.*最终公开链接.*摘要.*标签/u);
     expect(prompt).toMatch(/收藏结果的最终回复不得包含.*原始 URL.*原始标题.*页面正文.*摘要.*标签/u);
     expect(prompt).toMatch(/最多 2000 字符/u);
     expect(prompt).toMatch(/1–8 个/u);
     expect(prompt).toMatch(/already_enriched[\s\S]*成功/u);
     expect(prompt).toMatch(/无法公开读取[\s\S]*保持待补全[\s\S]*仍然确认收藏成功/u);
     expect(prompt).toMatch(/不要编造/u);
-    expect(prompt).toMatch(/只提交摘要和标签/u);
-    expect(prompt).toMatch(/不要[^\n]*页面正文[^\n]*原始 URL[^\n]*Cookie[^\n]*授权信息[^\n]*浏览器状态/u);
+    expect(prompt).toMatch(/只提交标题、最终公开链接、摘要和标签/u);
+    expect(prompt).toMatch(/不要提交[^\n]*页面正文[^\n]*Cookie[^\n]*授权信息[^\n]*浏览器状态/u);
   });
 
   it("re-enters the established-result workflow after candidate selection", () => {
