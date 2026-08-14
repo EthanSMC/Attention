@@ -3,6 +3,11 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  ATTENTION_BRIDGE_MINIMUM_SUPPORTED_VERSION,
+  ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+} from "../apps/cli/src/bridge-update-contract.ts";
+
 interface CliPackage {
   engines?: { node?: string };
   version?: string;
@@ -39,7 +44,10 @@ const manifest = Buffer.from(
   `${JSON.stringify(
     {
       artifact_path: `/cli/${artifactName}`,
+      minimum_supported_version: ATTENTION_BRIDGE_MINIMUM_SUPPORTED_VERSION,
       node,
+      permission_profile_sha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+      schema_version: 2,
       sha256,
       version,
     },

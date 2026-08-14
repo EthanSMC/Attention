@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 
 interface CliManifest {
   artifact_path: string;
+  minimum_supported_version: string;
   node: string;
+  permission_profile_sha256: string;
+  schema_version: number;
   sha256: string;
   version: string;
 }
@@ -28,6 +31,9 @@ describe("public Attention CLI artifact", () => {
     expect(cliPackage.private).toBe(false);
     expect(cliPackage.engines?.node).toBe(">=22.16.0");
     expect(manifest.node).toBe(">=22.16.0");
+    expect(manifest.schema_version).toBe(2);
+    expect(manifest.minimum_supported_version).toBe("0.3.5");
+    expect(manifest.permission_profile_sha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(manifest.artifact_path).toBe(
       `/cli/attention-${manifest.version}.mjs`,
     );
