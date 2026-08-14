@@ -959,6 +959,108 @@ describe("channel subcommands", () => {
     expect(lines.join("")).toContain("重新运行");
   });
 
+  it("checks for a managed update only after the service is healthy and idle", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    state.token = "local-ilink-token";
+    state.accountId = "local-account";
+    await saveChannelState(state, base);
+    const events: string[] = [];
+
+    expect(
+      await channelStart("codex", {
+        accountVerifier: async () => ({
+          attentionId: "filter-demo",
+          displayName: "Filter Demo",
+          isFilter: true,
+          isMember: true,
+        }),
+        baseDirectory: base,
+        brainFactory: () => ({
+          ...brainLifecycle(),
+          hostId: "codex",
+          invoke: async () => ({
+            ok: true,
+            reply: "not reached",
+            resumeFailed: false,
+            sessionId: "thread-1",
+            timedOut: false,
+          }),
+        }),
+        bridgeHealthyMarker: async () => {
+          events.push("healthy");
+        },
+        bridgeUpdateChecker: async () => {
+          events.push("check");
+          return { status: "staged", version: "0.3.6" };
+        },
+        fetchImpl: async () => {
+          throw new Error("iLink long poll must not start after an update is staged");
+        },
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        runtimeCredentialLoader: async () => false,
+        service: true,
+      }),
+    ).toBe(75);
+    expect(events).toEqual(["healthy", "check"]);
+  });
+
+  it("defers a managed update while a durable reply remains unsent", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    state.token = "local-ilink-token";
+    state.accountId = "local-account";
+    state.pendingOutbound.push({
+      contextToken: "ctx-owner",
+      id: "reply-1",
+      text: "已收藏。",
+      toUserId: "owner",
+    });
+    await saveChannelState(state, base);
+    let checks = 0;
+
+    expect(
+      await channelStart("codex", {
+        accountVerifier: async () => ({
+          attentionId: "filter-demo",
+          displayName: "Filter Demo",
+          isFilter: true,
+          isMember: true,
+        }),
+        baseDirectory: base,
+        brainFactory: () => ({
+          ...brainLifecycle(),
+          hostId: "codex",
+          invoke: async () => ({
+            ok: true,
+            reply: "not reached",
+            resumeFailed: false,
+            sessionId: "thread-1",
+            timedOut: false,
+          }),
+        }),
+        bridgeHealthyMarker: async () => undefined,
+        bridgeUpdateChecker: async () => {
+          checks += 1;
+          return { status: "staged", version: "0.3.6" };
+        },
+        fetchImpl: async (url) => {
+          const path = new URL(String(url)).pathname;
+          return path.endsWith("/sendmessage")
+            ? new Response(JSON.stringify({ errcode: 1, ret: 1 }))
+            : new Response(JSON.stringify({ errcode: -14, ret: 0 }));
+        },
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        runtimeCredentialLoader: async () => false,
+        service: true,
+      }),
+    ).toBe(0);
+    expect(checks).toBe(0);
+    expect((await loadChannelState(base)).pendingOutbound).toHaveLength(1);
+  });
+
   it("refuses to start a second bridge against the same local state", async () => {
     const base = await makeTempBase();
     const lock = await acquireChannelLock(base);
@@ -1074,6 +1176,20 @@ describe("channel subcommands", () => {
       baseDirectory: base,
       json: true,
       serviceInspector: async () => true,
+      bridgeUpdateStateLoader: async () => ({
+        current: {
+          artifactPath: "/Users/example/.local/share/attention/versions/attention-0.3.5.mjs",
+          permissionProfileSha256: "a".repeat(64),
+          version: "0.3.5",
+        },
+        lastCheckAt: "2026-08-14T02:00:00.000Z",
+        lastErrorCode: null,
+        latestVersion: "0.3.6",
+        pending: null,
+        previous: null,
+        schemaVersion: 1,
+        status: "update_available",
+      }),
       writeOutput: (text) => lines.push(text),
     });
     const report = JSON.parse(lines.join("")) as Record<string, unknown>;
@@ -1090,6 +1206,13 @@ describe("channel subcommands", () => {
       lastErrorCode: "codex_runtime_crashed",
       phase: "restarting",
       retryAttempt: 2,
+    });
+    expect(report.update).toEqual({
+      installedVersion: "0.3.5",
+      lastCheckAt: "2026-08-14T02:00:00.000Z",
+      lastErrorCode: null,
+      latestVersion: "0.3.6",
+      status: "update_available",
     });
     expect(lines.join("")).not.toContain("super-secret-token");
     expect(lines.join("")).not.toContain("019feb40-private-thread-id");

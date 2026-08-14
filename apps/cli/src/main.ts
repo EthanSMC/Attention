@@ -25,6 +25,7 @@ import {
   doctorExitCode,
   runDoctor,
 } from "./doctor";
+import { ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256 } from "./bridge-update-contract";
 import { requireAttentionOrigin } from "./origin";
 import { authorizeRuntime, type RuntimeAuthorizer } from "./runtime-oauth";
 import { ATTENTION_CLI_VERSION } from "./version";
@@ -387,6 +388,16 @@ export async function runAttentionCli(
   dependencies: AttentionCliDependencies = {},
 ): Promise<number> {
   const output = dependencies.output ?? defaultOutput();
+  if (args.length === 1 && args[0] === "--bridge-update-probe") {
+    output.log(
+      JSON.stringify({
+        permission_profile_sha256:
+          ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+        version: ATTENTION_CLI_VERSION,
+      }),
+    );
+    return 0;
+  }
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     output.log(HELP.trimEnd());
     return 0;

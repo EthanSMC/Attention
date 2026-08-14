@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +8,7 @@ import {
   buildChannelServicePlan,
   buildChannelServiceRemovalPlan,
   installChannelService,
+  installManagedChannelService,
   isChannelServiceConfigured,
 } from "./service";
 
@@ -112,6 +113,42 @@ describe("background channel service plans", () => {
       "--now",
       "attention-channel.service",
     ]);
+  });
+
+  it("bootstraps background services onto the stable launcher instead of a versioned CLI", async () => {
+    const home = await mkdtemp(join(tmpdir(), "attention-managed-service-"));
+    temporaryDirectories.push(home);
+    const source = join(home, "attention-0.3.5.mjs");
+    await writeFile(source, "#!/usr/bin/env node\n", { mode: 0o700 });
+
+    await installManagedChannelService(
+      {
+        currentCliScript: source,
+        environmentPath: "/usr/local/bin:/usr/bin:/bin",
+        homeDirectory: home,
+        hostId: "codex",
+        nodeExecutable: process.execPath,
+        origin: "https://attention.example",
+        permissionProfileSha256:
+          "2b2bca585577cd6f0d2adc310f798a8e200ac6a274862b3564c9b36408c1606d",
+        platform: "linux",
+        version: "0.3.5",
+      },
+      async () => ({
+        exitCode: 0,
+        signal: null,
+        stderr: "",
+        stdout: "",
+        timedOut: false,
+      }),
+    );
+
+    const unit = await readFile(
+      join(home, ".config/systemd/user/attention-channel.service"),
+      "utf8",
+    );
+    expect(unit).toContain(join(home, ".local/share/attention/launcher.mjs"));
+    expect(unit).not.toContain(source);
   });
 
   it("builds a Windows logon task with a delayed user-owned launcher", () => {

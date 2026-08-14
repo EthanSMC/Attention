@@ -220,6 +220,17 @@ export function isExactInstallationReplay(
     capabilitiesEqual(stored.capabilities, expected.capabilities);
 }
 
+function isSameInstallationIdentity(
+  stored: InstallationRow,
+  expected: DerivedInstallationRegistration,
+): boolean {
+  return stored.id === expected.id &&
+    stored.accountId === expected.accountId &&
+    stored.agentIntegrationId === expected.agentIntegrationId &&
+    stored.ownerKind === expected.ownerKind &&
+    stored.deviceName === expected.deviceName;
+}
+
 function assertPairingSecret(secret: string): void {
   if (secret.length < MIN_PAIRING_SECRET_LENGTH) {
     error("pairing_secret_invalid", 400);
@@ -596,50 +607,52 @@ export class ChannelRuntimeService {
           if (isExactInstallationReplay(existing, registration)) {
             return installationView(existing);
           }
-          const installationKeyHash = hashRuntimeInstallationId(
-            registration.id,
-          );
-          const [trustedRotatedConnection] = await tx
-            .select({
-              deviceName: oauthConnections.deviceName,
-              id: oauthConnections.id,
-            })
-            .from(oauthConnections)
-            .where(
-              and(
-                eq(oauthConnections.accountId, principal.accountId),
-                eq(oauthConnections.audience, CHANNEL_RUNTIME_RESOURCE),
-                eq(oauthConnections.kind, "runtime"),
-                eq(oauthConnections.clientId, principal.clientId),
-                eq(
-                  oauthConnections.installationKeyHash,
-                  installationKeyHash,
-                ),
-                isNull(oauthConnections.revokedAt),
-              ),
-            )
-            .limit(1);
-          const replayAfterTrustedRotation = {
-            ...existing,
-            deviceName: registration.deviceName,
-            oauthClientId: registration.oauthClientId,
-          };
           if (
             existing.revokedAt ||
-            !trustedRotatedConnection ||
-            trustedRotatedConnection.deviceName !== registration.deviceName ||
-            !isExactInstallationReplay(
-              replayAfterTrustedRotation,
-              registration,
-            )
+            !isSameInstallationIdentity(existing, registration)
           ) {
             error("installation_conflict", 409);
+          }
+          if (existing.oauthClientId !== registration.oauthClientId) {
+            const installationKeyHash = hashRuntimeInstallationId(
+              registration.id,
+            );
+            const [trustedRotatedConnection] = await tx
+              .select({
+                deviceName: oauthConnections.deviceName,
+                id: oauthConnections.id,
+              })
+              .from(oauthConnections)
+              .where(
+                and(
+                  eq(oauthConnections.accountId, principal.accountId),
+                  eq(oauthConnections.audience, CHANNEL_RUNTIME_RESOURCE),
+                  eq(oauthConnections.kind, "runtime"),
+                  eq(oauthConnections.clientId, principal.clientId),
+                  eq(
+                    oauthConnections.installationKeyHash,
+                    installationKeyHash,
+                  ),
+                  isNull(oauthConnections.revokedAt),
+                ),
+              )
+              .limit(1);
+            if (
+              !trustedRotatedConnection ||
+              trustedRotatedConnection.deviceName !== registration.deviceName
+            ) {
+              error("installation_conflict", 409);
+            }
           }
           const [rebound] = await tx
             .update(agentInstallations)
             .set({
+              adapterVersion: registration.adapterVersion,
+              capabilities: registration.capabilities,
               deviceName: registration.deviceName,
               oauthClientId: registration.oauthClientId,
+              skillVersion: registration.skillVersion,
+              toolContractVersion: registration.toolContractVersion,
               updatedAt: registration.updatedAt,
             })
             .where(

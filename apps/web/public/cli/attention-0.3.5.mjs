@@ -122,10 +122,10 @@ __export(state_exports, {
   rememberProcessedMessage: () => rememberProcessedMessage,
   saveChannelState: () => saveChannelState
 });
-import { chmod as chmod2, mkdir as mkdir2, readFile as readFile2, rename as rename2, rm as rm2, writeFile as writeFile2 } from "node:fs/promises";
-import { homedir as homedir2 } from "node:os";
-import { dirname as dirname2, join as join2 } from "node:path";
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { chmod as chmod4, mkdir as mkdir4, readFile as readFile4, rename as rename4, rm as rm4, writeFile as writeFile4 } from "node:fs/promises";
+import { homedir as homedir3 } from "node:os";
+import { dirname as dirname4, join as join4 } from "node:path";
+import { randomUUID as randomUUID4 } from "node:crypto";
 function defaultRuntimeCheckpoint() {
   return {
     activeTurnMessageRef: null,
@@ -162,10 +162,10 @@ function defaultChannelState() {
   };
 }
 function channelStateDirectory(baseDirectory) {
-  return join2(baseDirectory ?? homedir2(), ".attention", "channel");
+  return join4(baseDirectory ?? homedir3(), ".attention", "channel");
 }
 function channelStatePath(baseDirectory) {
-  return join2(channelStateDirectory(baseDirectory), "state.json");
+  return join4(channelStateDirectory(baseDirectory), "state.json");
 }
 function normalizeState(raw) {
   const base = defaultChannelState();
@@ -294,7 +294,7 @@ function normalizeBaseUrl(value) {
 async function loadChannelState(baseDirectory) {
   const path = channelStatePath(baseDirectory);
   try {
-    const raw = await readFile2(path, "utf8");
+    const raw = await readFile4(path, "utf8");
     return normalizeState(JSON.parse(raw));
   } catch (error51) {
     if (error51.code === "ENOENT") {
@@ -305,10 +305,10 @@ async function loadChannelState(baseDirectory) {
 }
 async function saveChannelState(state, baseDirectory) {
   const path = channelStatePath(baseDirectory);
-  await mkdir2(dirname2(path), { mode: 448, recursive: true });
-  await chmod2(dirname2(path), 448);
-  const temporaryPath = `${path}.tmp-${randomUUID2()}`;
-  await writeFile2(
+  await mkdir4(dirname4(path), { mode: 448, recursive: true });
+  await chmod4(dirname4(path), 448);
+  const temporaryPath = `${path}.tmp-${randomUUID4()}`;
+  await writeFile4(
     temporaryPath,
     JSON.stringify(
       {
@@ -323,12 +323,12 @@ async function saveChannelState(state, baseDirectory) {
       mode: 384
     }
   );
-  await rename2(temporaryPath, path);
-  await chmod2(path, 384);
+  await rename4(temporaryPath, path);
+  await chmod4(path, 384);
 }
 async function clearChannelState(baseDirectory) {
   try {
-    await rm2(channelStatePath(baseDirectory), { force: true });
+    await rm4(channelStatePath(baseDirectory), { force: true });
   } catch (error51) {
     if (error51.code !== "ENOENT") throw error51;
   }
@@ -17380,9 +17380,9 @@ var InputEnvelopeSchema = external_exports.discriminatedUnion("payload_type", [
 ]);
 
 // apps/cli/src/channel/channel-command.ts
-import { createHash as createHash5, randomUUID as randomUUID6 } from "node:crypto";
-import { mkdir as mkdir6 } from "node:fs/promises";
-import { homedir as homedir5, hostname as hostname3 } from "node:os";
+import { createHash as createHash7, randomUUID as randomUUID8 } from "node:crypto";
+import { mkdir as mkdir8 } from "node:fs/promises";
+import { homedir as homedir6, hostname as hostname3 } from "node:os";
 import { resolve as resolve2 } from "node:path";
 
 // apps/cli/src/command-runner.ts
@@ -17466,6 +17466,110 @@ function formatInvocation(invocation) {
   return [invocation.executable, ...invocation.args].map(shellQuote).join(" ");
 }
 
+// apps/cli/src/bridge-update-contract.ts
+import { createHash } from "node:crypto";
+var ATTENTION_BRIDGE_PERMISSION_PROFILE = {
+  cloud: {
+    mcp_server: "attention_only",
+    tools: [
+      "attention_get_my_account",
+      "attention_list_collections",
+      "attention_collect_content",
+      "attention_submit_content_enrichment",
+      "attention_select_collection_candidate",
+      "attention_get_collection_status",
+      "attention_update_collection"
+    ]
+  },
+  local: {
+    deny: [
+      "browser_automation",
+      "code_execution",
+      "filesystem_outside_attention",
+      "other_mcp",
+      "shell"
+    ],
+    write: [
+      "attention_state",
+      "managed_bridge_artifacts",
+      "user_service_config"
+    ]
+  },
+  native_network: ["public_web_reader"],
+  schema_version: 1
+};
+var ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256 = createHash("sha256").update(JSON.stringify(ATTENTION_BRIDGE_PERMISSION_PROFILE)).digest("hex");
+var SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
+var SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+var NODE_RANGE_PATTERN = /^>=\d+\.\d+\.\d+$/u;
+function semanticVersion(value) {
+  if (typeof value !== "string") return null;
+  const match = SEMVER_PATTERN.exec(value);
+  if (!match) return null;
+  const parts = match.slice(1).map(Number);
+  return parts.length === 3 && parts.every(Number.isSafeInteger) ? parts : null;
+}
+function compareSemanticVersions(left, right) {
+  const leftParts = semanticVersion(left);
+  const rightParts = semanticVersion(right);
+  if (!leftParts || !rightParts) throw new Error("Invalid semantic version.");
+  for (let index = 0; index < 3; index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference !== 0) return Math.sign(difference);
+  }
+  return 0;
+}
+function parseBridgeUpdateManifest(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record3 = value;
+  const expectedKeys = [
+    "artifact_path",
+    "minimum_supported_version",
+    "node",
+    "permission_profile_sha256",
+    "schema_version",
+    "sha256",
+    "version"
+  ];
+  if (Object.keys(record3).sort().join("\n") !== expectedKeys.join("\n") || record3.schema_version !== 2 || !semanticVersion(record3.version) || !semanticVersion(record3.minimum_supported_version) || typeof record3.node !== "string" || !NODE_RANGE_PATTERN.test(record3.node) || typeof record3.sha256 !== "string" || !SHA256_PATTERN.test(record3.sha256) || typeof record3.permission_profile_sha256 !== "string" || !SHA256_PATTERN.test(record3.permission_profile_sha256) || typeof record3.artifact_path !== "string" || !/^\/cli\/attention-(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.mjs$/u.test(
+    record3.artifact_path
+  )) {
+    return null;
+  }
+  return record3;
+}
+function resolveBridgeUpdateArtifactUrl(originValue, artifactPath) {
+  const origin = new URL(originValue);
+  const artifact = new URL(artifactPath, origin);
+  if (artifact.origin !== origin.origin) {
+    throw new Error("Bridge update artifact must use the exact same origin.");
+  }
+  if (artifact.username || artifact.password || artifact.search || artifact.hash) {
+    throw new Error("Bridge update artifact cannot contain URL metadata.");
+  }
+  if (!artifactPath.startsWith("/")) {
+    throw new Error("Bridge update artifact must use an absolute path.");
+  }
+  return artifact.toString();
+}
+function bridgeUpdateDecision(input) {
+  const current = semanticVersion(input.currentVersion);
+  const latest = semanticVersion(input.manifest.version);
+  if (!current || !latest) throw new Error("Invalid Bridge version.");
+  if (input.currentPermissionProfileSha256 !== input.manifest.permission_profile_sha256 || current[0] !== latest[0]) {
+    return "consent_required";
+  }
+  if (compareSemanticVersions(
+    input.currentVersion,
+    input.manifest.minimum_supported_version
+  ) < 0) {
+    return "update_required";
+  }
+  return compareSemanticVersions(input.manifest.version, input.currentVersion) > 0 ? "update_available" : "current";
+}
+
 // apps/cli/src/origin.ts
 var ATTENTION_ORIGIN_ENV = "ATTENTION_ORIGIN";
 function isLoopbackHostname(hostname4) {
@@ -17516,7 +17620,7 @@ function resolveAttentionPublicUrl(origin, pathOrTemplate) {
 }
 
 // apps/cli/src/runtime-oauth.ts
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash as createHash2, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -18082,7 +18186,7 @@ var authorizeRuntime = async (input) => {
       fetchImpl
     );
     const verifier = randomBytes(32).toString("base64url");
-    const challenge = createHash("sha256").update(verifier).digest("base64url");
+    const challenge = createHash2("sha256").update(verifier).digest("base64url");
     const authorizationUrl = new URL(
       authorizationServer.authorizationEndpoint
     );
@@ -19680,26 +19784,461 @@ function createBrainAdapter(hostId, options) {
   });
 }
 
+// apps/cli/src/channel/bridge-updater.ts
+import { createHash as createHash3, randomUUID as randomUUID3 } from "node:crypto";
+import { chmod as chmod3, mkdir as mkdir3, readFile as readFile3, rename as rename3, rm as rm3, writeFile as writeFile3 } from "node:fs/promises";
+import { dirname as dirname3, join as join3 } from "node:path";
+
+// apps/cli/src/channel/managed-bridge.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
+import {
+  chmod as chmod2,
+  mkdir as mkdir2,
+  readFile as readFile2,
+  rename as rename2,
+  rm as rm2,
+  writeFile as writeFile2
+} from "node:fs/promises";
+import { homedir as homedir2 } from "node:os";
+import { dirname as dirname2, isAbsolute, join as join2 } from "node:path";
+var BRIDGE_UPDATE_RESTART_EXIT_CODE = 75;
+var VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
+var SHA256_PATTERN2 = /^[a-f0-9]{64}$/u;
+function managedBridgePaths(homeDirectory = homedir2()) {
+  const rootDirectory = join2(homeDirectory, ".local", "share", "attention");
+  const stateDirectory = join2(homeDirectory, ".attention", "update");
+  return {
+    launcherPath: join2(rootDirectory, "launcher.mjs"),
+    rootDirectory,
+    stateDirectory,
+    statePath: join2(stateDirectory, "state.json"),
+    versionsDirectory: join2(rootDirectory, "versions")
+  };
+}
+function validArtifact(value) {
+  if (value === null || typeof value !== "object") return false;
+  const record3 = value;
+  return typeof record3.artifactPath === "string" && isAbsolute(record3.artifactPath) && typeof record3.permissionProfileSha256 === "string" && SHA256_PATTERN2.test(record3.permissionProfileSha256) && typeof record3.version === "string" && VERSION_PATTERN.test(record3.version);
+}
+function parseManagedBridgeUpdateState(value) {
+  if (value === null || typeof value !== "object") {
+    throw new Error("Managed Bridge update state is invalid.");
+  }
+  const record3 = value;
+  const pending = record3.pending;
+  if (record3.schemaVersion !== 1 || !validArtifact(record3.current) || !(record3.previous === null || validArtifact(record3.previous)) || !(pending === null || typeof pending === "object" && typeof pending.startedAt === "string" && typeof pending.version === "string" && VERSION_PATTERN.test(
+    pending.version
+  )) || typeof record3.status !== "string") {
+    throw new Error("Managed Bridge update state is invalid.");
+  }
+  return record3;
+}
+async function atomicWrite(path, contents, mode) {
+  await mkdir2(dirname2(path), { mode: 448, recursive: true });
+  await chmod2(dirname2(path), 448);
+  const temporary = `${path}.${process.pid}.${randomUUID2()}.tmp`;
+  try {
+    await writeFile2(temporary, contents, { flag: "wx", mode });
+    await rename2(temporary, path);
+    await chmod2(path, mode);
+  } finally {
+    await rm2(temporary, { force: true });
+  }
+}
+async function loadManagedBridgeUpdateState(homeDirectory = homedir2()) {
+  const raw = await readFile2(managedBridgePaths(homeDirectory).statePath, "utf8");
+  return parseManagedBridgeUpdateState(JSON.parse(raw));
+}
+async function saveManagedBridgeUpdateState(state, homeDirectory = homedir2()) {
+  const normalized = parseManagedBridgeUpdateState(state);
+  const { stateDirectory, statePath } = managedBridgePaths(homeDirectory);
+  await mkdir2(stateDirectory, { mode: 448, recursive: true });
+  await chmod2(stateDirectory, 448);
+  await atomicWrite(statePath, `${JSON.stringify(normalized, null, 2)}
+`, 384);
+}
+async function bootstrapManagedBridge(input) {
+  if (!VERSION_PATTERN.test(input.version) || !SHA256_PATTERN2.test(input.permissionProfileSha256)) {
+    throw new Error("Managed Bridge release identity is invalid.");
+  }
+  const home = input.homeDirectory ?? homedir2();
+  const paths = managedBridgePaths(home);
+  await mkdir2(paths.rootDirectory, { mode: 448, recursive: true });
+  await mkdir2(paths.versionsDirectory, { mode: 448, recursive: true });
+  await chmod2(paths.rootDirectory, 448);
+  await chmod2(paths.versionsDirectory, 448);
+  const artifactPath = join2(
+    paths.versionsDirectory,
+    `attention-${input.version}.mjs`
+  );
+  const currentContents = await readFile2(input.currentArtifactPath);
+  try {
+    const existing = await readFile2(artifactPath);
+    if (!existing.equals(currentContents)) {
+      throw new Error("Managed Bridge version already exists with different bytes.");
+    }
+    await chmod2(artifactPath, 448);
+  } catch (error51) {
+    if (error51.code !== "ENOENT") throw error51;
+    await atomicWrite(artifactPath, currentContents, 448);
+  }
+  await atomicWrite(paths.launcherPath, buildManagedBridgeLauncher(), 448);
+  await saveManagedBridgeUpdateState(
+    {
+      current: {
+        artifactPath,
+        permissionProfileSha256: input.permissionProfileSha256,
+        version: input.version
+      },
+      lastCheckAt: null,
+      lastErrorCode: null,
+      latestVersion: input.version,
+      pending: null,
+      previous: null,
+      schemaVersion: 1,
+      status: "current"
+    },
+    home
+  );
+  return { artifactPath, launcherPath: paths.launcherPath };
+}
+async function markManagedBridgeHealthy(version2, homeDirectory = homedir2()) {
+  let state;
+  try {
+    state = await loadManagedBridgeUpdateState(homeDirectory);
+  } catch (error51) {
+    if (error51.code === "ENOENT") return;
+    throw error51;
+  }
+  if (state.pending?.version !== version2 || state.current.version !== version2) {
+    return;
+  }
+  state.pending = null;
+  state.previous = null;
+  state.status = "current";
+  state.lastErrorCode = null;
+  await saveManagedBridgeUpdateState(state, homeDirectory);
+}
+function buildManagedBridgeLauncher() {
+  return `#!/usr/bin/env node
+import { spawn } from "node:child_process";
+import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+
+const restartExitCode = ${BRIDGE_UPDATE_RESTART_EXIT_CODE};
+const statePath = process.env.ATTENTION_BRIDGE_UPDATE_STATE_PATH || join(homedir(), ".attention", "update", "state.json");
+const requestedTimeout = Number(process.env.ATTENTION_BRIDGE_STARTUP_TIMEOUT_MS || "120000");
+const startupTimeoutMs = Number.isFinite(requestedTimeout) && requestedTimeout >= 50 ? requestedTimeout : 120000;
+
+function loadState() {
+  return JSON.parse(readFileSync(statePath, "utf8"));
+}
+
+function saveState(state) {
+  mkdirSync(dirname(statePath), { mode: 0o700, recursive: true });
+  chmodSync(dirname(statePath), 0o700);
+  const temporary = statePath + ".launcher-" + process.pid + ".tmp";
+  try {
+    writeFileSync(temporary, JSON.stringify(state, null, 2) + "\\n", { mode: 0o600, flag: "wx" });
+    renameSync(temporary, statePath);
+    chmodSync(statePath, 0o600);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+
+function run(artifactPath, pendingVersion) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [artifactPath, ...process.argv.slice(2)], {
+      env: { ...process.env, ATTENTION_BRIDGE_UPDATE_STATE_PATH: statePath },
+      stdio: "inherit",
+    });
+    const forward = (signal) => child.kill(signal);
+    process.once("SIGINT", forward);
+    process.once("SIGTERM", forward);
+    let timedOut = false;
+    let killTimer;
+    const timer = pendingVersion ? setTimeout(() => {
+      let stillPending = false;
+      try { stillPending = loadState().pending?.version === pendingVersion; } catch {}
+      if (stillPending) {
+        timedOut = true;
+        child.kill("SIGTERM");
+        killTimer = setTimeout(() => child.kill("SIGKILL"), 1000);
+      }
+    }, startupTimeoutMs) : undefined;
+    timer?.unref?.();
+    child.once("exit", (code, signal) => {
+      if (timer) clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      process.removeListener("SIGINT", forward);
+      process.removeListener("SIGTERM", forward);
+      resolve({ code: code ?? (signal ? 1 : 0), timedOut });
+    });
+    child.once("error", () => resolve({ code: 1, timedOut: false }));
+  });
+}
+
+for (;;) {
+  const before = loadState();
+  const pendingVersion = before.pending?.version === before.current.version ? before.current.version : null;
+  const result = await run(before.current.artifactPath, pendingVersion);
+  const after = loadState();
+  if (pendingVersion && after.pending?.version === pendingVersion) {
+    if (!after.previous) {
+      process.exitCode = result.code || 1;
+      break;
+    }
+    after.current = after.previous;
+    after.previous = null;
+    after.pending = null;
+    after.status = "rolled_back";
+    after.lastErrorCode = result.timedOut ? "candidate_startup_timeout" : "candidate_startup_failed";
+    saveState(after);
+    continue;
+  }
+  if (result.code === restartExitCode) continue;
+  process.exitCode = result.code;
+  break;
+}
+`;
+}
+
+// apps/cli/src/channel/bridge-updater.ts
+var MANIFEST_MAXIMUM_BYTES = 16384;
+var ARTIFACT_MAXIMUM_BYTES = 16 * 1024 * 1024;
+var FETCH_TIMEOUT_MS = 15e3;
+var PROBE_TIMEOUT_MS = 1e4;
+function nodeRuntimeSatisfies(version2, range) {
+  const current = /^(\d+)\.(\d+)\.(\d+)/u.exec(version2);
+  const minimum = /^>=(\d+)\.(\d+)\.(\d+)$/u.exec(range);
+  if (!current || !minimum) return false;
+  for (let index = 1; index <= 3; index += 1) {
+    const difference = Number(current[index]) - Number(minimum[index]);
+    if (difference !== 0) return difference > 0;
+  }
+  return true;
+}
+var BridgeUpdateError = class extends Error {
+  constructor(code) {
+    super(code);
+    this.code = code;
+  }
+  code;
+};
+function exactKeys(value, keys) {
+  return Object.keys(value).sort().join("\n") === [...keys].sort().join("\n");
+}
+function responseMatches(response, expectedUrl) {
+  if (!response.url) return true;
+  try {
+    const actual = new URL(response.url);
+    const expected = new URL(expectedUrl);
+    return actual.origin === expected.origin && actual.pathname === expected.pathname && !actual.search && !actual.hash && !actual.username && !actual.password;
+  } catch {
+    return false;
+  }
+}
+async function boundedResponseBytes(response, maximumBytes, errorCode) {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength) {
+    const parsed = Number(contentLength);
+    if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > maximumBytes) {
+      throw new BridgeUpdateError(errorCode);
+    }
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.byteLength > maximumBytes) throw new BridgeUpdateError(errorCode);
+  return bytes;
+}
+async function fetchExact(fetchImpl, url2, maximumBytes, errorCode) {
+  let response;
+  try {
+    response = await fetchImpl(url2, {
+      headers: { accept: "application/json, text/javascript;q=0.9" },
+      redirect: "error",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+    });
+  } catch {
+    throw new BridgeUpdateError(`${errorCode}_fetch_failed`);
+  }
+  if (response.status !== 200) {
+    throw new BridgeUpdateError(`${errorCode}_http_status`);
+  }
+  if (!responseMatches(response, url2)) {
+    throw new BridgeUpdateError(`${errorCode}_redirected`);
+  }
+  return {
+    bytes: await boundedResponseBytes(response, maximumBytes, `${errorCode}_too_large`),
+    response
+  };
+}
+function parseProbeOutput(stdout) {
+  try {
+    const value = JSON.parse(stdout.trim());
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+    const record3 = value;
+    if (!exactKeys(record3, ["permission_profile_sha256", "version"])) return null;
+    return typeof record3.permission_profile_sha256 === "string" && typeof record3.version === "string" ? {
+      permissionProfileSha256: record3.permission_profile_sha256,
+      version: record3.version
+    } : null;
+  } catch {
+    return null;
+  }
+}
+async function atomicWrite2(path, contents) {
+  await mkdir3(dirname3(path), { mode: 448, recursive: true });
+  await chmod3(dirname3(path), 448);
+  const temporary = `${path}.${process.pid}.${randomUUID3()}.tmp`;
+  try {
+    await writeFile3(temporary, contents, { flag: "wx", mode: 448 });
+    await rename3(temporary, path);
+    await chmod3(path, 448);
+  } finally {
+    await rm3(temporary, { force: true });
+  }
+}
+function stableErrorCode(error51) {
+  return error51 instanceof BridgeUpdateError ? error51.code : "bridge_update_unexpected";
+}
+async function checkAndStageBridgeUpdate(options) {
+  const now = options.now?.() ?? /* @__PURE__ */ new Date();
+  const checkedAt = now.toISOString();
+  let state = await loadManagedBridgeUpdateState(options.homeDirectory);
+  const originalCurrent = state.current;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const origin = normalizeAttentionOrigin(options.origin);
+  const manifestUrl = new URL("/cli/manifest.json", `${origin}/`).toString();
+  try {
+    state.status = "checking";
+    state.lastCheckAt = checkedAt;
+    state.lastErrorCode = null;
+    await saveManagedBridgeUpdateState(state, options.homeDirectory);
+    const manifestResponse = await fetchExact(
+      fetchImpl,
+      manifestUrl,
+      MANIFEST_MAXIMUM_BYTES,
+      "manifest"
+    );
+    const contentType = manifestResponse.response.headers.get("content-type") ?? "";
+    if (!/^application\/(?:[a-z0-9.+-]*\+)?json(?:\s*;|$)/iu.test(contentType)) {
+      throw new BridgeUpdateError("manifest_content_type");
+    }
+    let manifestValue;
+    try {
+      manifestValue = JSON.parse(manifestResponse.bytes.toString("utf8"));
+    } catch {
+      throw new BridgeUpdateError("manifest_invalid_json");
+    }
+    const manifest = parseBridgeUpdateManifest(manifestValue);
+    if (!manifest) throw new BridgeUpdateError("manifest_invalid");
+    state.latestVersion = manifest.version;
+    if (!nodeRuntimeSatisfies(options.nodeVersion ?? process.versions.node, manifest.node)) {
+      throw new BridgeUpdateError("node_version_unsupported");
+    }
+    const decision = bridgeUpdateDecision({
+      currentPermissionProfileSha256: options.currentPermissionProfileSha256,
+      currentVersion: options.currentVersion,
+      manifest
+    });
+    if (decision === "current") {
+      state.status = "current";
+      await saveManagedBridgeUpdateState(state, options.homeDirectory);
+      return { status: "current", version: manifest.version };
+    }
+    if (decision === "consent_required") {
+      state.status = "consent_required";
+      state.pending = null;
+      await saveManagedBridgeUpdateState(state, options.homeDirectory);
+      return { status: "consent_required", version: manifest.version };
+    }
+    state.status = decision;
+    await saveManagedBridgeUpdateState(state, options.homeDirectory);
+    const artifactUrl = resolveBridgeUpdateArtifactUrl(origin, manifest.artifact_path);
+    const artifactResponse = await fetchExact(
+      fetchImpl,
+      artifactUrl,
+      ARTIFACT_MAXIMUM_BYTES,
+      "artifact"
+    );
+    const digest = createHash3("sha256").update(artifactResponse.bytes).digest("hex");
+    if (digest !== manifest.sha256) throw new BridgeUpdateError("artifact_digest_mismatch");
+    const paths = managedBridgePaths(options.homeDirectory);
+    const candidatePath = join3(paths.versionsDirectory, `attention-${manifest.version}.mjs`);
+    try {
+      const existing = await readFile3(candidatePath);
+      if (!existing.equals(artifactResponse.bytes)) {
+        throw new BridgeUpdateError("artifact_version_collision");
+      }
+      await chmod3(candidatePath, 448);
+    } catch (error51) {
+      if (error51.code !== "ENOENT") throw error51;
+      await atomicWrite2(candidatePath, artifactResponse.bytes);
+    }
+    const runner = options.runner ?? runCommand;
+    const probe = await runner(
+      {
+        args: [candidatePath, "--bridge-update-probe"],
+        executable: options.nodeExecutable ?? process.execPath
+      },
+      { timeoutMs: PROBE_TIMEOUT_MS }
+    );
+    const identity = parseProbeOutput(probe.stdout);
+    if (probe.exitCode !== 0 || probe.timedOut || !identity || identity.version !== manifest.version || identity.permissionProfileSha256 !== manifest.permission_profile_sha256) {
+      await rm3(candidatePath, { force: true });
+      throw new BridgeUpdateError("candidate_probe_failed");
+    }
+    state = await loadManagedBridgeUpdateState(options.homeDirectory);
+    if (state.current.version !== originalCurrent.version || state.current.artifactPath !== originalCurrent.artifactPath) {
+      throw new BridgeUpdateError("bridge_update_state_changed");
+    }
+    state.previous = state.current;
+    state.current = {
+      artifactPath: candidatePath,
+      permissionProfileSha256: manifest.permission_profile_sha256,
+      version: manifest.version
+    };
+    state.pending = { startedAt: checkedAt, version: manifest.version };
+    state.status = "restarting";
+    state.lastErrorCode = null;
+    state.latestVersion = manifest.version;
+    await saveManagedBridgeUpdateState(state, options.homeDirectory);
+    return { status: "staged", version: manifest.version };
+  } catch (error51) {
+    state = await loadManagedBridgeUpdateState(options.homeDirectory);
+    state.current = originalCurrent;
+    state.pending = null;
+    state.previous = null;
+    state.status = "error";
+    state.lastCheckAt = checkedAt;
+    state.lastErrorCode = stableErrorCode(error51);
+    await saveManagedBridgeUpdateState(state, options.homeDirectory);
+    return { status: "error", errorCode: state.lastErrorCode };
+  }
+}
+
 // apps/cli/src/channel/codex-home.ts
 init_state();
 import {
   access,
-  chmod as chmod3,
+  chmod as chmod5,
   link,
   lstat as lstat2,
-  mkdir as mkdir3,
+  mkdir as mkdir5,
   readlink,
   stat,
   symlink
 } from "node:fs/promises";
 import { constants } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { dirname as dirname3, join as join3, resolve } from "node:path";
+import { homedir as homedir4 } from "node:os";
+import { dirname as dirname5, join as join5, resolve } from "node:path";
 function channelCodexHomeDirectory(baseDirectory) {
-  return join3(channelStateDirectory(baseDirectory), "codex-home");
+  return join5(channelStateDirectory(baseDirectory), "codex-home");
 }
 function sourceCodexHome(options) {
-  return options.sourceCodexHome ?? process.env.CODEX_HOME ?? join3(options.homeDirectory ?? homedir3(), ".codex");
+  return options.sourceCodexHome ?? process.env.CODEX_HOME ?? join5(options.homeDirectory ?? homedir4(), ".codex");
 }
 async function sameLinkedFile(left, right) {
   const [leftStat, rightStat] = await Promise.all([stat(left), stat(right)]);
@@ -19709,7 +20248,7 @@ async function existingDestinationMatches(destination, source) {
   try {
     const info = await lstat2(destination);
     if (info.isSymbolicLink()) {
-      return resolve(dirname3(destination), await readlink(destination)) === source;
+      return resolve(dirname5(destination), await readlink(destination)) === source;
     }
     return await sameLinkedFile(destination, source);
   } catch (error51) {
@@ -19719,7 +20258,7 @@ async function existingDestinationMatches(destination, source) {
 }
 async function prepareChannelCodexHome(options = {}) {
   const sourceHome = resolve(sourceCodexHome(options));
-  const sourceAuthPath = join3(sourceHome, "auth.json");
+  const sourceAuthPath = join5(sourceHome, "auth.json");
   try {
     await access(sourceAuthPath, constants.R_OK);
   } catch {
@@ -19730,9 +20269,9 @@ async function prepareChannelCodexHome(options = {}) {
   const destinationHome = resolve(
     channelCodexHomeDirectory(options.baseDirectory)
   );
-  await mkdir3(destinationHome, { mode: 448, recursive: true });
-  await chmod3(destinationHome, 448);
-  const destinationAuthPath = join3(destinationHome, "auth.json");
+  await mkdir5(destinationHome, { mode: 448, recursive: true });
+  await chmod5(destinationHome, 448);
+  const destinationAuthPath = join5(destinationHome, "auth.json");
   if (sourceAuthPath === destinationAuthPath) return destinationHome;
   if (await existingDestinationMatches(destinationAuthPath, sourceAuthPath)) {
     return destinationHome;
@@ -19757,7 +20296,7 @@ async function prepareChannelCodexHome(options = {}) {
 init_ilink_protocol();
 
 // apps/cli/src/channel/messages.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 function readString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -19823,7 +20362,7 @@ function messageIdentifier(message) {
     message.contextToken,
     JSON.stringify(message.itemList ?? null)
   ].join("|");
-  return `fp-${createHash2("sha256").update(fingerprintSource, "utf8").digest("hex").slice(0, 32)}`;
+  return `fp-${createHash4("sha256").update(fingerprintSource, "utf8").digest("hex").slice(0, 32)}`;
 }
 function parseInboundMessage(raw) {
   if (raw === null || typeof raw !== "object") return null;
@@ -19974,11 +20513,11 @@ init_ilink_protocol();
 
 // apps/cli/src/channel/lock.ts
 init_state();
-import { randomUUID as randomUUID3 } from "node:crypto";
-import { mkdir as mkdir4, open, readFile as readFile3, rm as rm3 } from "node:fs/promises";
-import { join as join4 } from "node:path";
+import { randomUUID as randomUUID5 } from "node:crypto";
+import { mkdir as mkdir6, open, readFile as readFile5, rm as rm5 } from "node:fs/promises";
+import { join as join6 } from "node:path";
 function channelLockPath(baseDirectory) {
-  return join4(channelStateDirectory(baseDirectory), "bridge.lock");
+  return join6(channelStateDirectory(baseDirectory), "bridge.lock");
 }
 function processAlive(pid) {
   try {
@@ -20001,9 +20540,9 @@ async function acquireChannelLock(baseDirectory, options = {}) {
   const path = channelLockPath(baseDirectory);
   const pid = options.pid ?? process.pid;
   const isProcessAlive = options.isProcessAlive ?? processAlive;
-  const contents = `${JSON.stringify({ nonce: randomUUID3(), pid })}
+  const contents = `${JSON.stringify({ nonce: randomUUID5(), pid })}
 `;
-  await mkdir4(channelStateDirectory(baseDirectory), {
+  await mkdir6(channelStateDirectory(baseDirectory), {
     mode: 448,
     recursive: true
   });
@@ -20016,8 +20555,8 @@ async function acquireChannelLock(baseDirectory, options = {}) {
         path,
         async release() {
           try {
-            if (await readFile3(path, "utf8") === contents) {
-              await rm3(path, { force: true });
+            if (await readFile5(path, "utf8") === contents) {
+              await rm5(path, { force: true });
             }
           } catch (error51) {
             if (error51.code !== "ENOENT") throw error51;
@@ -20028,13 +20567,13 @@ async function acquireChannelLock(baseDirectory, options = {}) {
       if (error51.code !== "EEXIST") throw error51;
       let existingPid;
       try {
-        existingPid = storedPid(await readFile3(path, "utf8"));
+        existingPid = storedPid(await readFile5(path, "utf8"));
       } catch (readError) {
         if (readError.code === "ENOENT") continue;
         throw readError;
       }
       if (existingPid !== null && isProcessAlive(existingPid)) return null;
-      await rm3(path, { force: true });
+      await rm5(path, { force: true });
     }
   }
   return null;
@@ -20045,7 +20584,7 @@ init_limits();
 
 // apps/cli/src/channel/pipeline.ts
 init_limits();
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 init_state();
 var TRUNCATION_NOTE = "\n\u2026\uFF08\u5185\u5BB9\u8FC7\u957F\u5DF2\u622A\u65AD\uFF09";
 var ALWAYS_LOCAL_COMMANDS = {
@@ -20061,7 +20600,7 @@ var ALWAYS_LOCAL_COMMANDS = {
   "\u91CD\u7F6E\u4F1A\u8BDD": "reset_confirmation"
 };
 function buildMessageRef(messageId) {
-  const digest = createHash3("sha256").update(messageId).digest("hex");
+  const digest = createHash5("sha256").update(messageId).digest("hex");
   return `msg-${digest.slice(0, 48)}`;
 }
 function matchControlCommand(text, context) {
@@ -20238,7 +20777,7 @@ function splitReply(reply, maximumChars = MAXIMUM_REPLY_CHARS) {
 }
 
 // apps/cli/src/channel/queue.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 init_state();
 function enqueueInbound(state, messages) {
   const known = /* @__PURE__ */ new Set([
@@ -20276,7 +20815,7 @@ function markOutboundSent(state, id) {
   if (index >= 0) state.pendingOutbound.splice(index, 1);
 }
 function outboundIdentifier(input) {
-  return `out-${createHash4("sha256").update(
+  return `out-${createHash6("sha256").update(
     `${input.inboundId}:${input.kind}:${String(input.index ?? 0)}`,
     "utf8"
   ).digest("hex").slice(0, 32)}`;
@@ -20972,7 +21511,7 @@ async function displayQrCode(payload, options = {}) {
 }
 
 // apps/cli/src/channel/runtime-reporter.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
+import { randomUUID as randomUUID6 } from "node:crypto";
 var RUNTIME_REPORTER_SCOPES = [...CHANNEL_RUNTIME_SCOPES];
 var DEFAULT_HEARTBEAT_INTERVAL_MS = 6e4;
 var DEFAULT_REQUEST_TIMEOUT_MS = 3e4;
@@ -21014,7 +21553,7 @@ var LocalRuntimeReporter = class {
   constructor(options) {
     this.#runtimeBaseUrl = normalizeRuntimeBaseUrl(options.runtimeBaseUrl);
     this.#accessTokenProvider = options.accessTokenProvider;
-    this.#eventId = options.eventId ?? randomUUID4;
+    this.#eventId = options.eventId ?? randomUUID6;
     this.#fetch = options.fetchImpl ?? fetch;
     this.#heartbeatIntervalMs = positiveDuration(
       options.heartbeatIntervalMs,
@@ -21348,7 +21887,7 @@ function checkpointReport(snapshot) {
     bridge_status: snapshot.bridgeStatus,
     codex_phase: snapshot.checkpoint.phase,
     ilink_status: snapshot.ilinkStatus,
-    last_error_code: stableErrorCode(snapshot.checkpoint.lastErrorCode),
+    last_error_code: stableErrorCode2(snapshot.checkpoint.lastErrorCode),
     last_healthy_at: snapshot.checkpoint.lastHealthyAt,
     last_successful_message_at: snapshot.checkpoint.lastSuccessfulMessageAt,
     pending_inbound: boundedQueueCount(snapshot.pendingInbound),
@@ -21358,7 +21897,7 @@ function checkpointReport(snapshot) {
 function runtimeHealth(snapshot) {
   return snapshot.bridgeStatus === "online" && snapshot.ilinkStatus === "connected" && snapshot.checkpoint.phase === "healthy" ? "active" : "degraded";
 }
-function stableErrorCode(value) {
+function stableErrorCode2(value) {
   return value !== null && /^[a-z][a-z0-9_]{0,99}$/u.test(value) ? value : null;
 }
 function boundedQueueCount(value) {
@@ -21414,10 +21953,10 @@ async function boundedWait(pending, timeoutMs) {
 }
 
 // apps/cli/src/channel/service.ts
-import { randomUUID as randomUUID5 } from "node:crypto";
-import { access as access2, chmod as chmod4, mkdir as mkdir5, rename as rename3, rm as rm4, writeFile as writeFile3 } from "node:fs/promises";
-import { homedir as homedir4 } from "node:os";
-import { dirname as dirname4, posix, win32 } from "node:path";
+import { randomUUID as randomUUID7 } from "node:crypto";
+import { access as access2, chmod as chmod6, mkdir as mkdir7, rename as rename5, rm as rm6, writeFile as writeFile5 } from "node:fs/promises";
+import { homedir as homedir5 } from "node:os";
+import { dirname as dirname6, posix, win32 } from "node:path";
 var SERVICE_LABEL = "cn.noveltystudio.attention.channel";
 function xml(value) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
@@ -21429,7 +21968,7 @@ function cmd(value) {
   return `"${value.replaceAll('"', '""')}"`;
 }
 function buildChannelServicePlan(input) {
-  const home = input.homeDirectory ?? homedir4();
+  const home = input.homeDirectory ?? homedir5();
   const bridgeArgs = [
     input.cliScript,
     "channel",
@@ -21569,7 +22108,7 @@ ${[
   throw new Error(`Background channel service is unsupported on ${input.platform}.`);
 }
 function buildChannelServiceRemovalPlan(input) {
-  const home = input.homeDirectory ?? homedir4();
+  const home = input.homeDirectory ?? homedir5();
   if (input.platform === "darwin") {
     const uid = input.uid ?? process.getuid?.();
     if (uid === void 0) throw new Error("Cannot determine macOS user id.");
@@ -21650,25 +22189,48 @@ async function executeCommands(commands, label, runner, sleep = async (milliseco
 }
 async function installChannelService(plan, runner = runCommand, sleep) {
   for (const file2 of plan.files) {
-    await mkdir5(dirname4(file2.path), { mode: 448, recursive: true });
-    const temporary = `${file2.path}.${process.pid}.${randomUUID5()}.tmp`;
+    await mkdir7(dirname6(file2.path), { mode: 448, recursive: true });
+    const temporary = `${file2.path}.${process.pid}.${randomUUID7()}.tmp`;
     try {
-      await writeFile3(temporary, file2.contents, {
+      await writeFile5(temporary, file2.contents, {
         encoding: "utf8",
         flag: "wx",
         mode: file2.mode
       });
-      await rename3(temporary, file2.path);
-      await chmod4(file2.path, file2.mode);
+      await rename5(temporary, file2.path);
+      await chmod6(file2.path, file2.mode);
     } finally {
-      await rm4(temporary, { force: true });
+      await rm6(temporary, { force: true });
     }
   }
   await executeCommands(plan.commands, plan.label, runner, sleep);
 }
+async function installManagedChannelService(input, runner = runCommand, sleep) {
+  const homeDirectory = input.homeDirectory ?? homedir5();
+  const managed = await bootstrapManagedBridge({
+    currentArtifactPath: input.currentCliScript,
+    homeDirectory,
+    permissionProfileSha256: input.permissionProfileSha256,
+    version: input.version
+  });
+  await installChannelService(
+    buildChannelServicePlan({
+      cliScript: managed.launcherPath,
+      ...input.environmentPath ? { environmentPath: input.environmentPath } : {},
+      homeDirectory,
+      hostId: input.hostId,
+      nodeExecutable: input.nodeExecutable,
+      origin: input.origin,
+      platform: input.platform,
+      ...input.uid === void 0 ? {} : { uid: input.uid }
+    }),
+    runner,
+    sleep
+  );
+}
 async function uninstallChannelService(plan, runner = runCommand) {
   await executeCommands(plan.commands, plan.label, runner);
-  for (const path of plan.paths) await rm4(path, { force: true });
+  for (const path of plan.paths) await rm6(path, { force: true });
   await executeCommands(plan.afterCommands, plan.label, runner);
 }
 async function isChannelServiceConfigured(input) {
@@ -21696,13 +22258,19 @@ var HOST_EXECUTABLES = {
   codex: "codex"
 };
 var RUNTIME_REPORTER_CREDENTIAL_RETRY_MS = 6e4;
+var BRIDGE_UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1e3;
+var BRIDGE_UPDATE_MAXIMUM_JITTER_MS = 60 * 60 * 1e3;
+function deterministicBridgeUpdateJitter(seed) {
+  const prefix = createHash7("sha256").update(seed, "utf8").digest().readUInt32BE(0);
+  return prefix % BRIDGE_UPDATE_MAXIMUM_JITTER_MS;
+}
 function runtimeRegistrationDeviceName(source = hostname3()) {
   const normalized = source.normalize("NFKC").replace(/[\p{Cc}\p{Cf}]/gu, "").trim().replace(/\s+/gu, " ").slice(0, 80);
   return normalized || "Attention device";
 }
 async function loadRuntimeRegistrationIdentity(baseDirectory) {
   const state = await loadChannelState(baseDirectory);
-  const installationId = state.runtimeReporter.installationId ?? randomUUID6();
+  const installationId = state.runtimeReporter.installationId ?? randomUUID8();
   if (state.runtimeReporter.installationId !== installationId) {
     state.runtimeReporter.installationId = installationId;
     await saveChannelState(state, baseDirectory);
@@ -21779,7 +22347,7 @@ async function channelStart(hostId, options = {}) {
   if (options.background) {
     const state = await loadChannelState(options.baseDirectory);
     const stateDirectory = channelStateDirectory(options.baseDirectory);
-    await mkdir6(stateDirectory, { mode: 448, recursive: true });
+    await mkdir8(stateDirectory, { mode: 448, recursive: true });
     const client = new ILinkClient({
       baseUrl: state.baseUrl || ILINK_BASE_URL,
       ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {},
@@ -21826,7 +22394,7 @@ async function channelStart(hostId, options = {}) {
     const state = await loadChannelState(options.baseDirectory);
     persistedState = state;
     const cwd = channelStateDirectory(options.baseDirectory);
-    await mkdir6(cwd, { mode: 448, recursive: true });
+    await mkdir8(cwd, { mode: 448, recursive: true });
     const mcpUrl = resolveAttentionPublicUrl(options.origin, "/mcp");
     const shouldPrepareCodexHome = hostId === "codex" && (options.brainFactory === void 0 || options.codexHomePreparer !== void 0);
     const codexHomeDirectory = shouldPrepareCodexHome ? await (options.codexHomePreparer ?? prepareChannelCodexHome)({
@@ -22040,7 +22608,7 @@ async function channelStart(hostId, options = {}) {
         runtime.state.runtimeReporter.bindingId = null;
       }
       if (!runtime.state.runtimeReporter.installationId) {
-        runtime.state.runtimeReporter.installationId = randomUUID6();
+        runtime.state.runtimeReporter.installationId = randomUUID8();
         reporterIdentityChanged = true;
       }
       if (reporterIdentityChanged) {
@@ -22125,7 +22693,7 @@ async function channelStart(hostId, options = {}) {
             pairing.promptSent = false;
             pairing.verificationTarget = null;
             runtime.state.runtimeReporter.bindingId = null;
-            runtime.state.runtimeReporter.installationId = randomUUID6();
+            runtime.state.runtimeReporter.installationId = randomUUID8();
             reporterIdentityDirty = true;
             reporterRetirement = {
               reporter: retiringRuntime.reporter,
@@ -22186,6 +22754,62 @@ async function channelStart(hostId, options = {}) {
         options.baseDirectory
       )}\uFF09`
     );
+    const managedBridgeHome = options.baseDirectory ?? homedir6();
+    const bridgeUpdateClock = options.bridgeUpdateClock ?? (() => /* @__PURE__ */ new Date());
+    const bridgeUpdateJitterMs = deterministicBridgeUpdateJitter(
+      runtime.state.runtimeReporter.installationId ?? hostname3()
+    );
+    let nextBridgeUpdateCheckAt = 0;
+    if (options.service) {
+      await (options.bridgeHealthyMarker ?? (async () => await markManagedBridgeHealthy(
+        ATTENTION_CLI_VERSION,
+        managedBridgeHome
+      )))();
+      if (!options.bridgeUpdateChecker) {
+        try {
+          const updateState = await loadManagedBridgeUpdateState(managedBridgeHome);
+          const lastCheckAt = updateState.lastCheckAt ? Date.parse(updateState.lastCheckAt) : Number.NaN;
+          nextBridgeUpdateCheckAt = Number.isFinite(lastCheckAt) ? lastCheckAt + BRIDGE_UPDATE_INTERVAL_MS + bridgeUpdateJitterMs : 0;
+        } catch {
+          nextBridgeUpdateCheckAt = Number.POSITIVE_INFINITY;
+        }
+      }
+    }
+    const maybeStageBridgeUpdate = async () => {
+      if (!options.service || runtime.state.pendingInbound.length > 0 || runtime.state.pendingOutbound.length > 0 || bridgeUpdateClock().getTime() < nextBridgeUpdateCheckAt) {
+        return false;
+      }
+      const checkedAt = bridgeUpdateClock().getTime();
+      let result;
+      try {
+        result = await (options.bridgeUpdateChecker ?? (async () => await checkAndStageBridgeUpdate({
+          currentPermissionProfileSha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+          currentVersion: ATTENTION_CLI_VERSION,
+          homeDirectory: managedBridgeHome,
+          nodeExecutable: process.execPath,
+          origin: options.origin
+        })))();
+      } catch {
+        runtime.log("Bridge \u81EA\u52A8\u66F4\u65B0\u68C0\u67E5\u6682\u65F6\u4E0D\u53EF\u7528\uFF1B\u5F53\u524D\u7248\u672C\u7EE7\u7EED\u8FD0\u884C\u3002");
+        nextBridgeUpdateCheckAt = checkedAt + BRIDGE_UPDATE_INTERVAL_MS + bridgeUpdateJitterMs;
+        return false;
+      }
+      nextBridgeUpdateCheckAt = checkedAt + BRIDGE_UPDATE_INTERVAL_MS + bridgeUpdateJitterMs;
+      if (result.status === "staged") {
+        runtime.log(`Bridge ${result.version} \u5DF2\u6821\u9A8C\uFF0C\u5C06\u5728\u7A7A\u95F2\u72B6\u6001\u91CD\u542F\u3002`);
+        return true;
+      }
+      if (result.status === "consent_required") {
+        runtime.log(
+          `Bridge ${result.version} \u9700\u8981\u65B0\u589E\u6743\u9650\u6216\u8DE8\u4E3B\u7248\u672C\uFF1B\u8BF7\u624B\u52A8\u786E\u8BA4\u5347\u7EA7\u3002`
+        );
+      } else if (result.status === "error") {
+        runtime.log(
+          `Bridge \u81EA\u52A8\u66F4\u65B0\u5931\u8D25\uFF08${result.errorCode}\uFF09\uFF1B\u5F53\u524D\u7248\u672C\u7EE7\u7EED\u8FD0\u884C\u3002`
+        );
+      }
+      return false;
+    };
     let shutdownStarted = false;
     const shutdown = () => {
       if (shutdownStarted) return;
@@ -22231,6 +22855,9 @@ async function channelStart(hostId, options = {}) {
           reporterSlot.current
         );
         if (!client.token) continue;
+        if (await maybeStageBridgeUpdate()) {
+          return BRIDGE_UPDATE_RESTART_EXIT_CODE;
+        }
         let updates;
         try {
           updates = await client.getUpdates(runtime.state.syncBuf);
@@ -22499,7 +23126,7 @@ var defaultRuntimeTokenProvider = {
   }
 };
 function opaqueFingerprint(namespace, value) {
-  return createHash5("sha256").update(`attention:${namespace}:`, "utf8").update(value, "utf8").digest("hex");
+  return createHash7("sha256").update(`attention:${namespace}:`, "utf8").update(value, "utf8").digest("hex");
 }
 function buildReporterSnapshot(runtime, brain) {
   syncRuntimeCheckpoint(runtime.state, brain);
@@ -22562,6 +23189,11 @@ async function channelStatus(options = {}) {
   const write = options.writeOutput ?? ((text) => process.stdout.write(text));
   const state = await loadChannelState(options.baseDirectory);
   const backgroundConfigured = await (options.serviceInspector ?? defaultServiceInspector)();
+  let managedUpdate = null;
+  try {
+    managedUpdate = await (options.bridgeUpdateStateLoader ?? (async () => await loadManagedBridgeUpdateState(options.baseDirectory ?? homedir6())))();
+  } catch {
+  }
   const report = {
     accountIdPrefix: state.accountId ? `${state.accountId.slice(0, 6)}\u2026` : null,
     brainSession: state.brainSession ? {
@@ -22583,7 +23215,20 @@ async function channelStatus(options = {}) {
       phase: state.runtimeState.phase,
       retryAttempt: state.runtimeState.retryAttempt
     },
-    stateDirectory: channelStateDirectory(options.baseDirectory)
+    stateDirectory: channelStateDirectory(options.baseDirectory),
+    update: managedUpdate ? {
+      installedVersion: managedUpdate.current.version,
+      lastCheckAt: managedUpdate.lastCheckAt,
+      lastErrorCode: managedUpdate.lastErrorCode,
+      latestVersion: managedUpdate.latestVersion,
+      status: managedUpdate.status
+    } : {
+      installedVersion: ATTENTION_CLI_VERSION,
+      lastCheckAt: null,
+      lastErrorCode: null,
+      latestVersion: null,
+      status: "unmanaged"
+    }
   };
   if (options.json) {
     write(`${JSON.stringify(report, null, 2)}
@@ -22624,6 +23269,18 @@ async function channelStatus(options = {}) {
 `);
   write(`\u5F85\u53D1\u9001\u56DE\u6267: ${report.pendingOutbound}
 `);
+  write(
+    `Bridge \u66F4\u65B0: ${report.update.installedVersion}${report.update.latestVersion ? ` \u2192 ${report.update.latestVersion}` : ""}\uFF08${report.update.status}\uFF09
+`
+  );
+  if (report.update.lastCheckAt) {
+    write(`\u6700\u8FD1\u66F4\u65B0\u68C0\u67E5: ${report.update.lastCheckAt}
+`);
+  }
+  if (report.update.lastErrorCode) {
+    write(`\u6700\u8FD1\u66F4\u65B0\u9519\u8BEF: ${report.update.lastErrorCode}
+`);
+  }
   write(`\u72B6\u6001\u76EE\u5F55: ${report.stateDirectory}
 `);
   return 0;
@@ -22653,23 +23310,23 @@ async function defaultBackgroundInstaller(input) {
   if (!cliScript) {
     throw new Error("Cannot resolve the Attention CLI entrypoint.");
   }
-  await installChannelService(
-    buildChannelServicePlan({
-      cliScript: resolve2(cliScript),
-      ...process.env.PATH ? { environmentPath: process.env.PATH } : {},
-      homeDirectory: homedir5(),
-      hostId: input.hostId,
-      nodeExecutable: process.execPath,
-      origin: input.origin,
-      platform: process.platform,
-      ...process.getuid ? { uid: process.getuid() } : {}
-    })
-  );
+  await installManagedChannelService({
+    currentCliScript: resolve2(cliScript),
+    ...process.env.PATH ? { environmentPath: process.env.PATH } : {},
+    homeDirectory: homedir6(),
+    hostId: input.hostId,
+    nodeExecutable: process.execPath,
+    origin: input.origin,
+    permissionProfileSha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+    platform: process.platform,
+    ...process.getuid ? { uid: process.getuid() } : {},
+    version: ATTENTION_CLI_VERSION
+  });
 }
 async function defaultServiceUninstaller() {
   await uninstallChannelService(
     buildChannelServiceRemovalPlan({
-      homeDirectory: homedir5(),
+      homeDirectory: homedir6(),
       platform: process.platform,
       ...process.getuid ? { uid: process.getuid() } : {}
     })
@@ -22677,7 +23334,7 @@ async function defaultServiceUninstaller() {
 }
 async function defaultServiceInspector() {
   return await isChannelServiceConfigured({
-    homeDirectory: homedir5(),
+    homeDirectory: homedir6(),
     platform: process.platform,
     ...process.getuid ? { uid: process.getuid() } : {}
   });
@@ -22773,10 +23430,10 @@ function isTimeoutError(error51) {
 }
 
 // apps/cli/src/configure.ts
-import { createHash as createHash6 } from "node:crypto";
-import { mkdir as mkdir7, lstat as lstat3, readFile as readFile4, rename as rename4, rm as rm5, writeFile as writeFile4 } from "node:fs/promises";
-import { homedir as homedir6 } from "node:os";
-import { basename, dirname as dirname5, join as join5, resolve as resolve3 } from "node:path";
+import { createHash as createHash8 } from "node:crypto";
+import { mkdir as mkdir9, lstat as lstat3, readFile as readFile6, rename as rename6, rm as rm7, writeFile as writeFile6 } from "node:fs/promises";
+import { homedir as homedir7 } from "node:os";
+import { basename, dirname as dirname7, join as join7, resolve as resolve3 } from "node:path";
 var MAXIMUM_SKILL_BYTES = 262144;
 var MAXIMUM_SKILL_BUNDLE_BYTES = 10 * 1024 * 1024;
 function listAgentIntegrations() {
@@ -22793,18 +23450,18 @@ function listAgentIntegrations() {
 }
 function defaultSkillDirectory(hostId) {
   if (hostId === "codex") {
-    return join5(homedir6(), ".agents", "skills", "attention");
+    return join7(homedir7(), ".agents", "skills", "attention");
   }
   if (hostId === "claude-code") {
-    return join5(homedir6(), ".claude", "skills", "attention");
+    return join7(homedir7(), ".claude", "skills", "attention");
   }
   if (hostId === "openclaw") {
     return resolve3("attention-skill");
   }
   if (hostId === "workbuddy") {
-    return join5(homedir6(), "Downloads");
+    return join7(homedir7(), "Downloads");
   }
-  return join5(homedir6(), ".attention", "skills", "attention");
+  return join7(homedir7(), ".attention", "skills", "attention");
 }
 function replaceTemplateValue(value, replacements) {
   let rendered = value;
@@ -22915,7 +23572,7 @@ function buildConfigurePlan(input) {
   };
 }
 function sha256(value) {
-  return createHash6("sha256").update(value).digest("hex");
+  return createHash8("sha256").update(value).digest("hex");
 }
 function safeBundleFilename(sourceUrl) {
   const filename = basename(new URL(sourceUrl).pathname);
@@ -22954,25 +23611,25 @@ async function downloadAttentionSkillBundle(input) {
       `Skill bundle checksum mismatch (expected ${input.expectedSha256}, received ${actualSha256}).`
     );
   }
-  const target = join5(input.directory, safeBundleFilename(input.sourceUrl));
+  const target = join7(input.directory, safeBundleFilename(input.sourceUrl));
   const kind = await pathKind(target);
   if (kind === "other") {
     throw new Error(`Refusing to replace non-file or symbolic-link target: ${target}`);
   }
   if (kind === "file" && !input.force) {
-    const existing = new Uint8Array(await readFile4(target));
+    const existing = new Uint8Array(await readFile6(target));
     if (sha256(existing) === input.expectedSha256) return target;
     throw new Error(
       `Skill bundle already exists at ${target}. Re-run with --force-skill to replace it.`
     );
   }
-  await mkdir7(dirname5(target), { mode: 448, recursive: true });
+  await mkdir9(dirname7(target), { mode: 448, recursive: true });
   const temporary = `${target}.tmp-${process.pid}-${crypto.randomUUID()}`;
   try {
-    await writeFile4(temporary, bytes, { flag: "wx", mode: 384 });
-    await rename4(temporary, target);
+    await writeFile6(temporary, bytes, { flag: "wx", mode: 384 });
+    await rename6(temporary, target);
   } finally {
-    await rm5(temporary, { force: true });
+    await rm7(temporary, { force: true });
   }
   return target;
 }
@@ -23074,25 +23731,25 @@ async function stageAttentionSkill(input) {
     ...input.fetchImpl ? { fetchImpl: input.fetchImpl } : {},
     sourceUrl: input.sourceUrl
   });
-  const target = join5(input.directory, "SKILL.md");
+  const target = join7(input.directory, "SKILL.md");
   const kind = await pathKind(target);
   if (kind === "other") {
     throw new Error(`Refusing to replace non-file or symbolic-link target: ${target}`);
   }
   if (kind === "file" && !input.force) {
-    const existing = await readFile4(target, "utf8");
+    const existing = await readFile6(target, "utf8");
     if (existing === document) return target;
     throw new Error(
       `Skill already exists at ${target}. Re-run with --force-skill to replace it.`
     );
   }
-  await mkdir7(dirname5(target), { mode: 448, recursive: true });
+  await mkdir9(dirname7(target), { mode: 448, recursive: true });
   const temporary = `${target}.tmp-${process.pid}-${crypto.randomUUID()}`;
   try {
-    await writeFile4(temporary, document, { flag: "wx", mode: 384 });
-    await rename4(temporary, target);
+    await writeFile6(temporary, document, { flag: "wx", mode: 384 });
+    await rename6(temporary, target);
   } finally {
-    await rm5(temporary, { force: true });
+    await rm7(temporary, { force: true });
   }
   return target;
 }
@@ -24094,6 +24751,15 @@ function defaultOutput() {
 }
 async function runAttentionCli(args, dependencies = {}) {
   const output = dependencies.output ?? defaultOutput();
+  if (args.length === 1 && args[0] === "--bridge-update-probe") {
+    output.log(
+      JSON.stringify({
+        permission_profile_sha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+        version: ATTENTION_CLI_VERSION
+      })
+    );
+    return 0;
+  }
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     output.log(HELP.trimEnd());
     return 0;

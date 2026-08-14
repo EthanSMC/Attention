@@ -157,8 +157,7 @@ export function bridgeUpdateDecision(input: {
     compareSemanticVersions(
       input.currentVersion,
       input.manifest.minimum_supported_version,
-    ) < 0 &&
-    compareSemanticVersions(input.manifest.version, input.currentVersion) <= 0
+    ) < 0
   ) {
     return "update_required";
   }

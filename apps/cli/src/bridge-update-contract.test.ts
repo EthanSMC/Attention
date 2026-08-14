@@ -63,7 +63,7 @@ describe("Bridge update contract", () => {
     ).toThrow(/metadata/iu);
   });
 
-  it("updates only newer same-major releases with an unchanged permission profile", () => {
+  it("requires unsupported releases and otherwise updates only newer same-major releases", () => {
     expect(
       bridgeUpdateDecision({
         currentPermissionProfileSha256:
@@ -71,7 +71,7 @@ describe("Bridge update contract", () => {
         currentVersion: "0.3.4",
         manifest,
       }),
-    ).toBe("update_available");
+    ).toBe("update_required");
     expect(
       bridgeUpdateDecision({
         currentPermissionProfileSha256:
@@ -107,6 +107,19 @@ describe("Bridge update contract", () => {
           ...manifest,
           minimum_supported_version: "0.3.4",
           version: "0.3.3",
+        },
+      }),
+    ).toBe("update_required");
+
+    expect(
+      bridgeUpdateDecision({
+        currentPermissionProfileSha256:
+          manifest.permission_profile_sha256,
+        currentVersion: "0.3.3",
+        manifest: {
+          ...manifest,
+          minimum_supported_version: "0.3.5",
+          version: "0.3.6",
         },
       }),
     ).toBe("update_required");
