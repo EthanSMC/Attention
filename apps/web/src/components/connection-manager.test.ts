@@ -99,6 +99,33 @@ describe("ConnectionManager", () => {
     );
   });
 
+  it("renders the reported Bridge version and public update state", () => {
+    const markup = renderToStaticMarkup(createElement(
+      ConnectionManager as ComponentType<Record<string, unknown>>,
+      {
+        agentConnectionPrompt: "Connect Attention",
+        agentDocumentationUrl: "https://attention.example/doc",
+        localChannelRuntimes: [{
+          adapterVersion: "0.3.5",
+          deviceName: "Ethan MacBook",
+          hostName: "Codex",
+          lastSeenAt: null,
+          lastSuccessfulMessageAt: null,
+          pendingInbound: 0,
+          pendingOutbound: 0,
+          status: "online",
+          version: { latestVersion: "0.3.6", status: "recommended" },
+        }],
+        mcpOAuthConnections: [],
+        pats: [],
+      },
+    ));
+
+    expect(markup).toContain("Bridge");
+    expect(markup).toContain("0.3.5 · 建议更新");
+    expect(markup).not.toContain("artifactPath");
+  });
+
   it("renders one collapsed app group with every logical connection independently actionable", () => {
     const markup = renderManager();
 

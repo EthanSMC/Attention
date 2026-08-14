@@ -7,6 +7,10 @@ import { loadConnectionOverview } from "../../../server/account";
 import { getWebDatabase } from "../../../server/db";
 import { getPagePrincipal } from "../../../server/session";
 import { buildAgentConnectionPrompt } from "../../../server/agent-connection-prompt";
+import {
+  bridgeDeviceVersionView,
+  publishedBridgeUpdate,
+} from "../../../server/bridge-update-view";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "连接与授权" };
@@ -38,6 +42,11 @@ export default async function ConnectionsPage() {
           lastSeenAt: item.lastSeenAt?.toISOString() ?? null,
           lastSuccessfulMessageAt:
             item.lastSuccessfulMessageAt?.toISOString() ?? null,
+          version: bridgeDeviceVersionView({
+            installedVersion: item.adapterVersion,
+            latestVersion: publishedBridgeUpdate.latestVersion,
+            minimumVersion: publishedBridgeUpdate.minimumVersion,
+          }),
         }))}
         mcpOAuthConnections={connections.mcpOAuthConnections.map((group) => ({
           ...group,

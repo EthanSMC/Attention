@@ -145,6 +145,38 @@ describe.skipIf(!databaseUrl)("local channel runtime service with PostgreSQL", (
       .rejects.toMatchObject({ code: "installation_not_found", status: 404 });
   });
 
+  it("updates release metadata without replacing the logical device installation", async () => {
+    const service = new ChannelRuntimeService(handle.db, {
+      now: () => now,
+      pairingSecret,
+    });
+    await service.registerInstallation(principal, registration);
+    now = new Date("2026-08-07T08:01:00.000Z");
+
+    await expect(
+      service.registerInstallation(principal, {
+        ...registration,
+        adapter_version: "1.2.1",
+        skill_version: "2.0.1",
+        tool_contract_version: "2026-08-08",
+      }),
+    ).resolves.toMatchObject({
+      adapter_version: "1.2.1",
+      installation_id: installationId,
+      skill_version: "2.0.1",
+      tool_contract_version: "2026-08-08",
+    });
+    const [stored] = await handle.db.select().from(agentInstallations);
+    expect(stored).toMatchObject({
+      adapterVersion: "1.2.1",
+      id: installationId,
+      oauthClientId: clientId,
+      skillVersion: "2.0.1",
+      toolContractVersion: "2026-08-08",
+      updatedAt: now,
+    });
+  });
+
   it("persists the complete lifecycle without storing the pairing code", async () => {
     const generatedIds = [challengeId, bindingId];
     const service = new ChannelRuntimeService(handle.db, {

@@ -22,6 +22,24 @@ function captureOutput(): {
 }
 
 describe("Attention CLI", () => {
+  it("reports the exact side-effect-free identity used to probe an update candidate", async () => {
+    const capture = captureOutput();
+
+    expect(
+      await runAttentionCli(["--bridge-update-probe"], {
+        output: capture.output,
+      }),
+    ).toBe(0);
+    expect(capture.errors).toEqual([]);
+    expect(capture.logs).toEqual([
+      JSON.stringify({
+        permission_profile_sha256:
+          "2b2bca585577cd6f0d2adc310f798a8e200ac6a274862b3564c9b36408c1606d",
+        version: "0.3.5",
+      }),
+    ]);
+  });
+
   it("lists all integrations from the manifest", async () => {
     const capture = captureOutput();
     expect(

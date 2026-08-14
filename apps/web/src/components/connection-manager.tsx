@@ -68,6 +68,7 @@ export function oauthGroupRevokeFailureMessage(
 }
 
 interface LocalChannelRuntime {
+  adapterVersion: string;
   deviceName: string;
   hostName: string;
   lastSeenAt: string | null;
@@ -75,6 +76,10 @@ interface LocalChannelRuntime {
   pendingInbound: number;
   pendingOutbound: number;
   status: "degraded" | "offline" | "online" | "stale";
+  version: {
+    latestVersion: string;
+    status: "current" | "manual" | "recommended" | "required" | "unknown";
+  };
 }
 
 type PatConnection = ApiKeyRow;
@@ -98,6 +103,17 @@ const runtimeStatusLabels: Record<LocalChannelRuntime["status"], string> = {
   offline: "离线",
   online: "在线",
   stale: "久未在线",
+};
+
+const bridgeVersionStatusLabels: Record<
+  LocalChannelRuntime["version"]["status"],
+  string
+> = {
+  current: "已是最新",
+  manual: "需手动确认升级",
+  recommended: "建议更新",
+  required: "需要更新",
+  unknown: "版本状态未知",
 };
 
 export function OAuthGroupRevokeModal({
@@ -417,6 +433,12 @@ export function ConnectionManager({
                     <dt>队列</dt>
                     <dd>
                       待处理 {runtime.pendingInbound} · 待回执 {runtime.pendingOutbound}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Bridge</dt>
+                    <dd>
+                      {runtime.adapterVersion} · {bridgeVersionStatusLabels[runtime.version.status]}
                     </dd>
                   </div>
                 </dl>

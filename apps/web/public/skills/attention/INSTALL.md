@@ -249,7 +249,7 @@ scan, so closing the terminal does not stop inbound delivery. An inbound
 message is not guaranteed to appear as a visible Desktop conversation. A future Codex SDK
 companion remains a separate `contract_only` design alternative.
 
-Attention CLI `0.3.4` keeps the same local bridge as the sole iLink owner and
+Attention CLI `0.3.5` keeps the same local bridge as the sole iLink owner and
 keeps one `codex app-server` resident. It first resumes the locally
 persisted thread ID; if that thread cannot be resumed, it creates a thread after
 replaying the local last 20 user/assistant exchanges. Its Channel defaults are
@@ -383,7 +383,7 @@ logout` stops/removes the background service and deletes the local iLink
 state. If iLink expires, the service exits without opening an unattended QR
 prompt; rerun the same `--background` command in a terminal.
 
-In Attention CLI `0.3.4`, a local Agent process failure does not transfer iLink
+In Attention CLI `0.3.5`, a local Agent process failure does not transfer iLink
 ownership: the bridge keeps polling, queues normal messages, and can answer
 exact local status/help/retry/continue commands. If the whole device or bridge
 is offline, WeChat receives no Attention reply. When the optional Runtime
@@ -398,7 +398,7 @@ Privacy boundary for the bridge:
 - The iLink bot identifier is not an Attention identity and is never used
   for login, entitlements, or global identity.
 - Bridge logs omit tokens and full message bodies.
-- CLI `0.3.4` can optionally authorize a separate Runtime OAuth client. Its
+- CLI `0.3.5` can optionally authorize a separate Runtime OAuth client. Its
   reporter sends privacy-safe runtime status, timestamps, bounded queue counts,
   checkpoints, and device-pairing results only.
 - The reporter never sends iLink credentials, Codex credentials or thread IDs,
@@ -411,6 +411,31 @@ Privacy boundary for the bridge:
   processed.
 - If the device or bridge is offline, the reporter is offline too: WeChat gets
   no reply, and Web retains only the last heartbeat and checkpoint it received.
+
+### Bridge updates
+
+CLI `0.3.5` is the one-time managed-update bootstrap. Releases `0.3.4` and
+earlier cannot update themselves; run the normal source-free installation once
+and repeat the `channel start ... --background` command to install the stable
+user-owned Launcher. That bootstrap preserves the existing iLink login and
+local queues.
+
+After bootstrap, the background Bridge checks the public same-origin release
+manifest only while its inbound and outbound queues are empty. It downloads an
+immutable versioned artifact, verifies the exact SHA-256, and runs the
+candidate's side-effect-free identity probe before switching. A same-major
+release with the same reviewed permission-profile digest updates automatically.
+A new permission profile or major version is never accepted silently: the
+local status reports `consent_required` and the user must approve a normal
+manual installation.
+
+The stable Launcher rolls a candidate back when it exits or does not report
+healthy within the startup deadline. The current artifact, rollback artifact,
+update state, iLink credentials, and queues all remain local. `attention channel
+status` shows installed/latest version, last check, and a stable error code,
+without printing artifact paths or credentials. The SHA protects against
+corruption and unexpected bytes from the same HTTPS origin; it is not a
+detached publisher signature.
 
 ## Final acceptance
 
@@ -441,7 +466,7 @@ and successful setup: MCP, local WeChat, and collection keep working.
 ## Runtime OAuth boundary
 
 The backend exposes a separate Local Channel Runtime resource. Attention CLI
-`0.3.4` may authorize it for privacy-safe runtime reporting and device-pairing
+`0.3.5` may authorize it for privacy-safe runtime reporting and device-pairing
 results:
 
 ```text
@@ -468,7 +493,7 @@ receive a reply and Web can show only the last heartbeat and checkpoint.
 
 - iLink token, context token, sync cursor, contact data, and media keys remain
   local to the Channel Owner.
-- Attention receives normal authenticated MCP calls. The optional CLI `0.3.4`
+- Attention receives normal authenticated MCP calls. The optional CLI `0.3.5`
   Runtime reporter may submit installation metadata, opaque fingerprints,
   pairing results, health timestamps, bounded queue counts, and checkpoints—but
   never the channel credential, Codex thread, message, URL, or reply. Normal MCP
