@@ -10,6 +10,7 @@ import {
 import { CHANNEL_RUNTIME_RESOURCE } from "@attention/contracts";
 
 export type OAuthConnectionIntent =
+  | { mode: "auto" }
   | { mode: "create"; label: string }
   | { mode: "replace"; label: string; replacementConnectionId: string }
   | { mode: "rotate"; connectionId: string; label: string };
@@ -49,6 +50,41 @@ export function normalizeOAuthConnectionLabel(
     throw new Error("invalid_connection_label");
   }
   return { label, normalizedLabel };
+}
+
+export function oauthConnectionLabelCandidate(
+  baseLabel: string,
+  ordinal: number,
+): { label: string; normalizedLabel: string } {
+  if (!Number.isSafeInteger(ordinal) || ordinal < 1) {
+    throw new Error("invalid_connection_label_ordinal");
+  }
+  const normalizedBase = baseLabel
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/gu, " ");
+  if (!normalizedBase || /[\p{Cc}\p{Cf}]/u.test(normalizedBase)) {
+    throw new Error("invalid_connection_label");
+  }
+
+  const suffix = ordinal === 1 ? "" : ` ${ordinal}`;
+  const suffixLength = [...suffix].length;
+  const baseCodePoints = [...normalizedBase];
+  for (
+    let baseLength = Math.min(baseCodePoints.length, 80 - suffixLength);
+    baseLength >= 1;
+    baseLength -= 1
+  ) {
+    const candidate = `${baseCodePoints.slice(0, baseLength).join("").trimEnd()}${suffix}`;
+    try {
+      return normalizeOAuthConnectionLabel(candidate);
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "invalid_connection_label") {
+        throw error;
+      }
+    }
+  }
+  throw new Error("invalid_connection_label");
 }
 
 export async function checkOAuthConnectionName(

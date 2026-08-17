@@ -4,9 +4,41 @@ import type { AttentionDatabase } from "@attention/db";
 import {
   checkOAuthConnectionName,
   normalizeOAuthConnectionLabel,
+  oauthConnectionLabelCandidate,
 } from "./oauth-connection";
 
 describe("OAuth connection labels", () => {
+  it("adds a numeric suffix while preserving the eighty-code-point limit", () => {
+    expect(oauthConnectionLabelCandidate("Codex", 1)).toEqual({
+      label: "Codex",
+      normalizedLabel: "codex",
+    });
+    expect(oauthConnectionLabelCandidate("Codex", 2)).toEqual({
+      label: "Codex 2",
+      normalizedLabel: "codex 2",
+    });
+
+    const candidate = oauthConnectionLabelCandidate("x".repeat(80), 12);
+    expect([...candidate.label]).toHaveLength(80);
+    expect(candidate.label.endsWith(" 12")).toBe(true);
+  });
+
+  it("normalizes a client name before adding a suffix", () => {
+    expect(oauthConnectionLabelCandidate("  Ｃｏｄｅｘ   Desktop  ", 3)).toEqual({
+      label: "Codex Desktop 3",
+      normalizedLabel: "codex desktop 3",
+    });
+  });
+
+  it("rejects invalid ordinal values", () => {
+    expect(() => oauthConnectionLabelCandidate("Codex", 0)).toThrowError(
+      "invalid_connection_label_ordinal",
+    );
+    expect(() => oauthConnectionLabelCandidate("Codex", 1.5)).toThrowError(
+      "invalid_connection_label_ordinal",
+    );
+  });
+
   it("normalizes compatibility forms, JS whitespace, and comparison case", () => {
     expect(normalizeOAuthConnectionLabel("  Office   MacBook  ")).toEqual({
       label: "Office MacBook",

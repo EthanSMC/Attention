@@ -319,7 +319,9 @@ export async function createAuthorizationCode(
   intent: OAuthConnectionIntent,
   now = new Date(),
 ): Promise<string> {
-  const normalized = normalizeOAuthConnectionLabel(intent.label);
+  const normalized = intent.mode === "auto"
+    ? null
+    : normalizeOAuthConnectionLabel(intent.label);
   const connectionId = intent.mode === "rotate" ? intent.connectionId : null;
   const replacementConnectionId =
     intent.mode === "replace" ? intent.replacementConnectionId : null;
@@ -331,10 +333,10 @@ export async function createAuthorizationCode(
     codeChallenge: request.codeChallenge,
     codeHash: await hashOpaqueToken(code),
     connectionId,
-    connectionLabel: normalized.label,
+    connectionLabel: normalized?.label ?? null,
     createdAt: now,
     expiresAt: new Date(now.getTime() + codeTtlMs),
-    normalizedConnectionLabel: normalized.normalizedLabel,
+    normalizedConnectionLabel: normalized?.normalizedLabel ?? null,
     redirectUri: request.redirectUri,
     replacementConnectionId,
     scopes: request.scopes,
@@ -488,6 +490,7 @@ async function materializeLegacyOAuthConnection(
       if (error instanceof OAuthConnectionNameConflictError) throw error;
       throw new OAuthError("invalid_grant");
     }
+    if (intent.mode === "auto") throw new OAuthError("invalid_grant");
     const normalized = normalizeOAuthConnectionLabel(intent.label);
     if (intent.mode === "rotate") {
       const [existing] = await tx

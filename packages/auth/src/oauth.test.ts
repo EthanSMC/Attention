@@ -391,6 +391,33 @@ describe("OAuth connection-aware authorization", () => {
     });
   });
 
+  it("stores no connection identity for an automatic authorization intent", async () => {
+    const inserted: Array<Record<string, unknown>> = [];
+    const db = {
+      insert: () => ({
+        values: async (value: Record<string, unknown>) => {
+          inserted.push(value);
+        },
+      }),
+    } as unknown as AttentionDatabase;
+
+    await createAuthorizationCode(
+      db,
+      accountId,
+      authorizationRequest(),
+      { mode: "auto" },
+      now,
+    );
+
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]).toMatchObject({
+      connectionId: null,
+      connectionLabel: null,
+      normalizedConnectionLabel: null,
+      replacementConnectionId: null,
+    });
+  });
+
   it("creates one logical connection and binds both issued tokens to it", async () => {
     const code = opaqueToken("create-code");
     const db = new OAuthStateDatabase({
