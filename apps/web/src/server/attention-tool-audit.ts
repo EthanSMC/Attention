@@ -39,6 +39,7 @@ const attentionToolAuditInputSchema = z
     attemptId: z.string().uuid().nullish(),
     clientId: opaqueIdentifierSchema.nullish(),
     collectionId: z.string().uuid().nullish(),
+    contentId: z.string().uuid().nullish(),
     contractVersion: opaqueIdentifierSchema,
     credentialId: z.string().uuid(),
     credentialKind: z.enum(["oauth", "pat"]),
@@ -50,7 +51,7 @@ const attentionToolAuditInputSchema = z
     publicCitationIds: z.array(z.string().uuid()).max(8).default([]),
     reportedSkillId: z.literal("attention").nullish(),
     reportedSkillVersion: z
-      .enum(["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"])
+      .enum(["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"])
       .nullish(),
     reportedWorkflowId: opaqueIdentifierSchema.nullish(),
     requestId: opaqueIdentifierSchema,
@@ -76,6 +77,7 @@ function auditMetadata(
       ? workflowFingerprint(input.reportedWorkflowId)
       : null,
     collection_id: input.collectionId ?? null,
+    content_id: input.contentId ?? null,
     contract_version: input.contractVersion,
     credential_id: input.credentialId,
     credential_kind: input.credentialKind,

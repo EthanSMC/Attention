@@ -8,6 +8,8 @@ import {
   channelLogout,
   channelStart,
   channelStatus,
+  loadRuntimeRegistrationIdentity,
+  type RuntimeRegistrationIdentity,
 } from "./channel/channel-command";
 import {
   type ApplyConfigureOptions,
@@ -23,8 +25,9 @@ import {
   doctorExitCode,
   runDoctor,
 } from "./doctor";
+import { ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256 } from "./bridge-update-contract";
 import { requireAttentionOrigin } from "./origin";
-import type { RuntimeAuthorizer } from "./runtime-oauth";
+import { authorizeRuntime, type RuntimeAuthorizer } from "./runtime-oauth";
 import { ATTENTION_CLI_VERSION } from "./version";
 
 interface OutputWriter {
@@ -39,6 +42,7 @@ export interface AttentionCliDependencies {
   ) => Promise<readonly ApplyResult[]>;
   readonly authorizeRuntime?: RuntimeAuthorizer;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly loadRuntimeIdentity?: () => Promise<RuntimeRegistrationIdentity>;
   readonly output?: OutputWriter;
   readonly runChannel?: (input: {
     readonly action: "logout" | "start" | "status";
@@ -77,6 +81,7 @@ Usage:
                           [--background]
   attention channel status [--json]
   attention channel logout
+  attention device sync enable --origin <https-origin>
 
 Hosts:
   openclaw  hermes  codex  claude-code  workbuddy
@@ -94,8 +99,11 @@ Safety:
   configure is a dry run by default. --apply installs, stages, or downloads
   the public Skill according to the host manifest and runs declared MCP
   commands without a shell. WorkBuddy import remains an explicit UI step.
-  MCP OAuth and the separate Runtime OAuth are started only when --apply
-  --login is explicit. Background channel startup never opens a browser.
+  MCP OAuth starts only when configure receives explicit --apply --login.
+  Device status sync is optional and uses a separate Runtime OAuth client;
+  enable it explicitly with attention device sync enable. It also lets the
+  Bridge pull completed-summary notices for delivery to the verified WeChat
+  binding. Background channel startup never opens a browser.
   Local iLink tokens are never requested, uploaded, or printed: the channel
   bridge stores them under ~/.attention/channel/ and reports only bounded,
   privacy-safe health checkpoints through the dedicated Runtime credential.
@@ -381,6 +389,16 @@ export async function runAttentionCli(
   dependencies: AttentionCliDependencies = {},
 ): Promise<number> {
   const output = dependencies.output ?? defaultOutput();
+  if (args.length === 1 && args[0] === "--bridge-update-probe") {
+    output.log(
+      JSON.stringify({
+        permission_profile_sha256:
+          ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+        version: ATTENTION_CLI_VERSION,
+      }),
+    );
+    return 0;
+  }
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     output.log(HELP.trimEnd());
     return 0;
@@ -435,9 +453,6 @@ export async function runAttentionCli(
       }
       const apply = dependencies.applyConfigure ?? applyConfigurePlan;
       const results = await apply(plan, {
-        ...(dependencies.authorizeRuntime
-          ? { authorizeRuntime: dependencies.authorizeRuntime }
-          : {}),
         forceSkill: options.forceSkill,
         login: options.login,
       });
@@ -484,6 +499,45 @@ export async function runAttentionCli(
       });
       output.log(formatDoctor(checks, options.json));
       return doctorExitCode(checks);
+    }
+
+    if (command === "device") {
+      if (
+        options.apply ||
+        options.background ||
+        options.forceSkill ||
+        options.json ||
+        options.login ||
+        options.probe ||
+        options.service ||
+        options.skillDirectory ||
+        options.positionals.join(" ") !== "sync enable"
+      ) {
+        throw new Error(
+          "Usage: attention device sync enable --origin <https-origin>",
+        );
+      }
+      const origin = requireAttentionOrigin(
+        options.origin,
+        dependencies.environment ?? process.env,
+      );
+      const identity = await (
+        dependencies.loadRuntimeIdentity ?? loadRuntimeRegistrationIdentity
+      )();
+      try {
+        await (dependencies.authorizeRuntime ?? authorizeRuntime)({
+          ...identity,
+          origin,
+        });
+      } catch {
+        throw new Error(
+          "设备状态同步未启用。MCP、微信和收藏不受影响；请在交互式终端中重试。",
+        );
+      }
+      output.log(
+        "设备状态同步已启用。Attention Web 可以显示设备在线状态、故障断点和微信绑定结果；Bridge 也会补发已完成的摘要。不会同步对话、凭据或 Agent 会话 ID。",
+      );
+      return 0;
     }
 
     if (command === "channel") {

@@ -32,6 +32,10 @@ function isStandalonePath(pathname: string): boolean {
   return pathname.startsWith("/doc") || pathname.startsWith("/oauth/");
 }
 
+export function shouldShowCollectAction(pathname: string): boolean {
+  return pathname === "/account" || pathname === "/ai" || pathname.startsWith("/ai/");
+}
+
 export interface NavigationIdentity {
   isFilter: boolean;
   isMember: boolean;
@@ -104,6 +108,7 @@ export function SiteHeader({ identity }: { identity: NavigationIdentity | null }
   const pathname = usePathname();
   const [collectOpen, setCollectOpen] = useState(false);
   const settingsActive = isSettingsPath(pathname);
+  const showCollectAction = shouldShowCollectAction(pathname);
   const closeCollect = useCallback(() => setCollectOpen(false), []);
 
   if (isStandalonePath(pathname)) return null;
@@ -140,7 +145,7 @@ export function SiteHeader({ identity }: { identity: NavigationIdentity | null }
             ) : null}
           </div>
         </div>
-        {collectOpen ? (
+        {showCollectAction && collectOpen ? (
           <CollectModal
             allowPublic={identity?.isFilter ?? false}
             authenticated={identity !== null}
@@ -148,11 +153,13 @@ export function SiteHeader({ identity }: { identity: NavigationIdentity | null }
           />
         ) : null}
       </header>
-      <CollectTrigger
-        className="collect-fab"
-        expanded={collectOpen}
-        onOpen={() => setCollectOpen(true)}
-      />
+      {showCollectAction ? (
+        <CollectTrigger
+          className="collect-fab"
+          expanded={collectOpen}
+          onOpen={() => setCollectOpen(true)}
+        />
+      ) : null}
     </>
   );
 }

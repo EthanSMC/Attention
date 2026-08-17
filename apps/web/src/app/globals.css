@@ -1169,9 +1169,9 @@ main {
 }
 
 .status-label--processing {
-  border-color: #aab6eb;
-  background: var(--ai-soft);
-  color: var(--ai-signal);
+  border-color: var(--line);
+  background: var(--surface-muted);
+  color: var(--muted);
 }
 
 .status-label--paused {
@@ -2497,7 +2497,8 @@ main {
 }
 
 .status-label--processing {
-  background: var(--ai-soft);
+  background: var(--surface-muted);
+  color: var(--muted);
 }
 
 .status-label--blocked,
@@ -6770,7 +6771,7 @@ body:has(.agent-doc-layout) main {
   display: grid;
   gap: 12px 24px;
   grid-column: 1 / -1;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin: 0;
   padding-top: 12px;
   border-top: 1px solid var(--line);
@@ -7427,5 +7428,141 @@ body:has(.agent-doc-layout) main {
 @media (prefers-reduced-motion: reduce) {
   .agent-doc-index__list a {
     transition: none;
+  }
+}
+
+/* Focused security chrome keeps OAuth calm and host-neutral. */
+body:has(.site-header--focused) {
+  padding-bottom: 0;
+}
+
+.site-header--focused {
+  position: relative;
+  inset: auto;
+  display: block;
+  width: auto;
+  border-right: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--canvas);
+  backdrop-filter: none;
+}
+
+.site-header--focused .site-header__inner {
+  width: 100%;
+  height: auto;
+  min-height: 58px;
+  max-width: var(--content-wide);
+  align-items: center;
+  flex-direction: row;
+  gap: 16px;
+  margin: 0 auto;
+  padding: 0 var(--page-gutter);
+}
+
+.site-header--focused .brand {
+  min-height: 44px;
+  justify-content: flex-start;
+  padding: 0;
+}
+
+.site-header--focused .brand > span:last-child {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: 0;
+  margin: 0;
+  overflow: visible;
+  clip: auto;
+  white-space: nowrap;
+}
+
+.site-header__focused-back {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.site-header__focused-back:hover {
+  color: var(--ink);
+}
+
+.site-header--focused + main {
+  min-height: calc(100vh - 58px);
+  margin-left: 0;
+}
+
+/* Exact OAuth permissions remain visible, grouped for faster review. */
+.oauth-scope-groups {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0 0;
+}
+
+.oauth-scope-group {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+}
+
+.oauth-scope-group h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.authorization-card .oauth-scope-group ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  line-height: 1.45;
+  list-style: none;
+}
+
+.oauth-scope-group li {
+  display: grid;
+  gap: 2px;
+}
+
+.oauth-scope-group li > span {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.oauth-scope-group code {
+  color: var(--muted);
+  font-family: var(--font-data);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 700px) {
+  .oauth-scope-groups {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 780px) {
+  .settings-shell__navigation,
+  .agent-doc-sidebar nav {
+    padding-right: calc(var(--page-gutter) + 24px);
+    mask-image: linear-gradient(
+      to right,
+      #000 0,
+      #000 calc(100% - 28px),
+      transparent 100%
+    );
+  }
+
+  .agent-doc-sidebar nav {
+    scroll-padding-inline: 16px;
   }
 }

@@ -9,6 +9,7 @@ import {
   runCommand,
 } from "../command-runner";
 import type { ChannelBridgeHost } from "./channel-command";
+import { bootstrapManagedBridge } from "./managed-bridge";
 
 const SERVICE_LABEL = "cn.noveltystudio.attention.channel";
 
@@ -50,6 +51,19 @@ export interface ChannelServiceInput {
   readonly origin: string;
   readonly platform: NodeJS.Platform;
   readonly uid?: number;
+}
+
+export interface ManagedChannelServiceInput {
+  readonly currentCliScript: string;
+  readonly environmentPath?: string;
+  readonly homeDirectory?: string;
+  readonly hostId: ChannelBridgeHost;
+  readonly nodeExecutable: string;
+  readonly origin: string;
+  readonly permissionProfileSha256: string;
+  readonly platform: NodeJS.Platform;
+  readonly uid?: number;
+  readonly version: string;
 }
 
 function xml(value: string): string {
@@ -330,6 +344,36 @@ export async function installChannelService(
     }
   }
   await executeCommands(plan.commands, plan.label, runner, sleep);
+}
+
+export async function installManagedChannelService(
+  input: ManagedChannelServiceInput,
+  runner: CommandRunner = runCommand,
+  sleep?: (milliseconds: number) => Promise<void>,
+): Promise<void> {
+  const homeDirectory = input.homeDirectory ?? homedir();
+  const managed = await bootstrapManagedBridge({
+    currentArtifactPath: input.currentCliScript,
+    homeDirectory,
+    permissionProfileSha256: input.permissionProfileSha256,
+    version: input.version,
+  });
+  await installChannelService(
+    buildChannelServicePlan({
+      cliScript: managed.launcherPath,
+      ...(input.environmentPath
+        ? { environmentPath: input.environmentPath }
+        : {}),
+      homeDirectory,
+      hostId: input.hostId,
+      nodeExecutable: input.nodeExecutable,
+      origin: input.origin,
+      platform: input.platform,
+      ...(input.uid === undefined ? {} : { uid: input.uid }),
+    }),
+    runner,
+    sleep,
+  );
 }
 
 export async function uninstallChannelService(

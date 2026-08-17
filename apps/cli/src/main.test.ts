@@ -22,6 +22,24 @@ function captureOutput(): {
 }
 
 describe("Attention CLI", () => {
+  it("reports the exact side-effect-free identity used to probe an update candidate", async () => {
+    const capture = captureOutput();
+
+    expect(
+      await runAttentionCli(["--bridge-update-probe"], {
+        output: capture.output,
+      }),
+    ).toBe(0);
+    expect(capture.errors).toEqual([]);
+    expect(capture.logs).toEqual([
+      JSON.stringify({
+        permission_profile_sha256:
+          "008145538ba70eaef4d66a6e99c588dd0cae2087dba8de85202e21f2eb738230",
+        version: "0.3.6",
+      }),
+    ]);
+  });
+
   it("lists all integrations from the manifest", async () => {
     const capture = captureOutput();
     expect(
@@ -71,12 +89,9 @@ describe("Attention CLI", () => {
     expect(capture.errors.join("\n")).toMatch(/--apply/);
   });
 
-  it("passes the interactive Runtime authorizer only to configure apply", async () => {
+  it("keeps Runtime OAuth out of configure and enables it explicitly", async () => {
     const capture = captureOutput();
-    const authorizeRuntime = async () => {
-      throw new Error("the apply dependency owns invocation order");
-    };
-    let receivedAuthorizer: unknown;
+    let configureOptions: unknown;
     expect(await runAttentionCli(
       [
         "configure",
@@ -88,14 +103,89 @@ describe("Attention CLI", () => {
       ],
       {
         applyConfigure: async (_plan, options) => {
-          receivedAuthorizer = options.authorizeRuntime;
+          configureOptions = options;
           return [];
         },
-        authorizeRuntime,
         output: capture.output,
       },
     )).toBe(0);
-    expect(receivedAuthorizer).toBe(authorizeRuntime);
+    expect(configureOptions).not.toHaveProperty("authorizeRuntime");
+
+    const runtimeInputs: unknown[] = [];
+    expect(await runAttentionCli(
+      [
+        "device",
+        "sync",
+        "enable",
+        "--origin",
+        "https://attention.example",
+      ],
+      {
+        authorizeRuntime: async (input) => {
+          runtimeInputs.push(input);
+          return {
+            access_token: "not-rendered",
+            access_token_expires_at: "2026-08-12T12:00:00.000Z",
+            audience: "attention-channel-runtime",
+            authorization_server: "https://attention.example",
+            client_id: "runtime-client",
+            protected_resource_metadata_url:
+              "https://attention.example/.well-known/oauth-protected-resource/api/runtime",
+            refresh_token: "not-rendered",
+            resource: "https://attention.example/api/runtime",
+            scopes: [
+              "runtime:register",
+              "runtime:heartbeat",
+              "channel:bind:report",
+              "channel:disconnect:report",
+            ],
+            token_type: "Bearer",
+            version: 1,
+          };
+        },
+        loadRuntimeIdentity: async () => ({
+          deviceName: "Studio Mac",
+          installationId: "11111111-1111-4111-8111-111111111111",
+        }),
+        output: capture.output,
+      },
+    )).toBe(0);
+    expect(runtimeInputs).toEqual([
+      expect.objectContaining({
+        deviceName: "Studio Mac",
+        installationId: "11111111-1111-4111-8111-111111111111",
+        origin: "https://attention.example",
+      }),
+    ]);
+    expect(capture.logs.at(-1)).toContain("设备状态同步已启用");
+    expect(capture.logs.join("\n")).not.toContain("not-rendered");
+  });
+
+  it("reports device sync failure without exposing OAuth material or invalidating MCP", async () => {
+    const capture = captureOutput();
+    expect(await runAttentionCli(
+      [
+        "device",
+        "sync",
+        "enable",
+        "--origin",
+        "https://attention.example",
+      ],
+      {
+        authorizeRuntime: async () => {
+          throw new Error("refresh_token=runtime-refresh-secret");
+        },
+        loadRuntimeIdentity: async () => ({
+          deviceName: "Studio Mac",
+          installationId: "11111111-1111-4111-8111-111111111111",
+        }),
+        output: capture.output,
+      },
+    )).toBe(2);
+    const message = capture.errors.join("\n");
+    expect(message).toContain("设备状态同步未启用");
+    expect(message).toContain("MCP、微信和收藏不受影响");
+    expect(message).not.toContain("runtime-refresh-secret");
   });
 
   it("shows WorkBuddy's downloadable bundle without claiming it was imported", async () => {

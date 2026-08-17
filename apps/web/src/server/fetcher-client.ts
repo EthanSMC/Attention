@@ -18,7 +18,10 @@ const fetcherSuccessSchema = z.object({
 });
 
 const fetcherErrorSchema = z.object({
-  error: z.object({ code: z.string().min(1).max(100) }),
+  error: z.object({
+    code: z.string().min(1).max(100),
+    request_id: z.string().uuid().optional(),
+  }),
 });
 
 const unsafeFetcherCodes = new Set([
@@ -33,12 +36,14 @@ const unsafeFetcherCodes = new Set([
 
 export class FetcherClientError extends Error {
   readonly code: string;
+  readonly requestId: string | null;
   readonly unsafe: boolean;
 
-  constructor(code: string, unsafe = false) {
+  constructor(code: string, unsafe = false, requestId: string | null = null) {
     super(code);
     this.name = "FetcherClientError";
     this.code = code;
+    this.requestId = requestId;
     this.unsafe = unsafe;
   }
 }
@@ -92,7 +97,11 @@ export async function resolveExternalUrl(
   if (!response.ok) {
     const parsed = fetcherErrorSchema.safeParse(payload);
     const code = parsed.success ? parsed.data.error.code : "fetcher_failed";
-    throw new FetcherClientError(code, unsafeFetcherCodes.has(code));
+    throw new FetcherClientError(
+      code,
+      unsafeFetcherCodes.has(code),
+      parsed.success ? (parsed.data.error.request_id ?? null) : null,
+    );
   }
 
   const parsed = fetcherSuccessSchema.safeParse(payload);

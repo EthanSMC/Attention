@@ -170,6 +170,7 @@ describe("loadConnectionOverview Agent OAuth projection", () => {
         pats: [],
         runtimes: [
           {
+            adapterVersion: "0.3.5",
             agentIntegrationId: "codex",
             bindingLastSeenAt: new Date("2026-08-11T10:40:00.000Z"),
             bindingStatus: "healthy",
@@ -279,6 +280,7 @@ describe("loadConnectionOverview local Channel runtime projection", () => {
         pats: [],
         runtimes: [
           {
+            adapterVersion: "0.3.5",
             agentIntegrationId: "codex",
             bindingLastSeenAt: new Date("2026-08-10T10:01:00.000Z"),
             bindingStatus: "healthy",
@@ -306,6 +308,7 @@ describe("loadConnectionOverview local Channel runtime projection", () => {
       {
         deviceName: "Ethan's MacBook Pro",
         hostName: "Codex",
+        adapterVersion: "0.3.5",
         lastSeenAt: new Date("2026-08-10T10:01:00.000Z"),
         lastSuccessfulMessageAt: new Date("2026-08-10T09:59:00.000Z"),
         pendingInbound: 2,

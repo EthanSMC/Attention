@@ -223,10 +223,19 @@ export async function failJob(
     ), content_terminal AS (
       UPDATE contents AS content
       SET enrichment_status = CASE
-            WHEN transitioned.task_type = ${SUMMARY_TASK_TYPE} THEN 'partial'::enrichment_status
-            ELSE 'failed'::enrichment_status
+            WHEN transitioned.task_type = ${SUMMARY_TASK_TYPE}
+              AND content.summary_status NOT IN ('ready', 'hidden')
+              THEN 'partial'::enrichment_status
+            WHEN transitioned.task_type = ${METADATA_TASK_TYPE}
+              THEN 'failed'::enrichment_status
+            ELSE content.enrichment_status
           END,
-          summary_status = 'unavailable',
+          summary_status = CASE
+            WHEN transitioned.task_type = ${SUMMARY_TASK_TYPE}
+              AND content.summary_status NOT IN ('ready', 'hidden')
+              THEN 'unavailable'::summary_status
+            ELSE content.summary_status
+          END,
           updated_at = ${nowValue}
       FROM transitioned
       WHERE transitioned.status = 'failed'
@@ -235,6 +244,10 @@ export async function failJob(
         AND content.content_status = 'active'
         AND content.public_safety_status = 'allowed'
         AND content.takedown_status = 'none'
+        AND (
+          transitioned.task_type = ${METADATA_TASK_TYPE}
+          OR content.summary_status NOT IN ('ready', 'hidden')
+        )
       RETURNING content.id
     )
     SELECT transitioned.status
@@ -275,10 +288,19 @@ export async function reapExhaustedJobs(
     ), content_terminal AS (
       UPDATE contents AS content
       SET enrichment_status = CASE
-            WHEN transitioned.task_type = ${SUMMARY_TASK_TYPE} THEN 'partial'::enrichment_status
-            ELSE 'failed'::enrichment_status
+            WHEN transitioned.task_type = ${SUMMARY_TASK_TYPE}
+              AND content.summary_status NOT IN ('ready', 'hidden')
+              THEN 'partial'::enrichment_status
+            WHEN transitioned.task_type = ${METADATA_TASK_TYPE}
+              THEN 'failed'::enrichment_status
+            ELSE content.enrichment_status
           END,
-          summary_status = 'unavailable',
+          summary_status = CASE
+            WHEN transitioned.task_type = ${SUMMARY_TASK_TYPE}
+              AND content.summary_status NOT IN ('ready', 'hidden')
+              THEN 'unavailable'::summary_status
+            ELSE content.summary_status
+          END,
           updated_at = ${nowValue}
       FROM transitioned
       WHERE jsonb_typeof(transitioned.payload) = 'object'
@@ -286,6 +308,10 @@ export async function reapExhaustedJobs(
         AND content.content_status = 'active'
         AND content.public_safety_status = 'allowed'
         AND content.takedown_status = 'none'
+        AND (
+          transitioned.task_type = ${METADATA_TASK_TYPE}
+          OR content.summary_status NOT IN ('ready', 'hidden')
+        )
       RETURNING content.id
     )
     SELECT count(transitioned.id)::integer AS count

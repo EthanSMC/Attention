@@ -5,10 +5,15 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 import {
   accounts,
+  collections,
+  contents,
   createDatabase,
+  domains,
+  eq,
   eventLedger,
   agentInstallations,
   externalChannelBindingChallenges,
+  externalChannelBindings,
   oauthClients,
   oauthConnections,
   type DatabaseHandle,
@@ -60,6 +65,19 @@ const runtimeCheckpoint = {
 describe.skipIf(!databaseUrl)("local channel runtime service with PostgreSQL", () => {
   let handle: DatabaseHandle;
   let now = new Date("2026-08-07T08:00:00.000Z");
+
+  async function asWebRuntime<T>(
+    run: (runtime: DatabaseHandle) => Promise<T>,
+  ): Promise<T> {
+    const runtime = createDatabase(databaseUrl!, { maxConnections: 1 });
+    try {
+      await runtime.sql.unsafe("SET ROLE attention_web_runtime");
+      return await run(runtime);
+    } finally {
+      await runtime.sql.unsafe("RESET ROLE").catch(() => undefined);
+      await runtime.close();
+    }
+  }
 
   beforeAll(async () => {
     vi.stubEnv(
@@ -143,6 +161,134 @@ describe.skipIf(!databaseUrl)("local channel runtime service with PostgreSQL", (
       .resolves.toMatchObject({ installation_id: installationId });
     await expect(oldService.getInstallation(principal, installationId))
       .rejects.toMatchObject({ code: "installation_not_found", status: 404 });
+  });
+
+  it("updates release metadata without replacing the logical device installation", async () => {
+    const service = new ChannelRuntimeService(handle.db, {
+      now: () => now,
+      pairingSecret,
+    });
+    await service.registerInstallation(principal, registration);
+    now = new Date("2026-08-07T08:01:00.000Z");
+
+    await expect(
+      service.registerInstallation(principal, {
+        ...registration,
+        adapter_version: "1.2.1",
+        skill_version: "2.0.1",
+        tool_contract_version: "2026-08-08",
+      }),
+    ).resolves.toMatchObject({
+      adapter_version: "1.2.1",
+      installation_id: installationId,
+      skill_version: "2.0.1",
+      tool_contract_version: "2026-08-08",
+    });
+    const [stored] = await handle.db.select().from(agentInstallations);
+    expect(stored).toMatchObject({
+      adapterVersion: "1.2.1",
+      id: installationId,
+      oauthClientId: clientId,
+      skillVersion: "2.0.1",
+      toolContractVersion: "2026-08-08",
+      updatedAt: now,
+    });
+  });
+
+  it("returns a summary only to a verified device for a prior WeChat collection", async () => {
+    const contentId = "77777777-7777-4777-8777-777777777777";
+    const domainId = "88888888-8888-4888-8888-888888888888";
+    const notificationId = "99999999-9999-4999-8999-999999999999";
+    const service = new ChannelRuntimeService(handle.db, {
+      now: () => now,
+      pairingSecret,
+    });
+    await service.registerInstallation(principal, registration);
+    await handle.db.insert(externalChannelBindings).values({
+      accountId,
+      channelAccountFingerprint: "a".repeat(64),
+      createdAt: now,
+      id: bindingId,
+      installationId,
+      pairedPeerFingerprint: "b".repeat(64),
+      provider: "wechat_ilink",
+      status: "healthy",
+      updatedAt: now,
+      verifiedAt: now,
+    });
+    await handle.db.insert(domains).values({
+      id: domainId,
+      name: "AI",
+      slug: "ai-notification",
+    });
+    await handle.db.insert(contents).values({
+      aiSummary: "已经完成的摘要。",
+      canonicalUrl: "https://example.com/article",
+      contentType: "article",
+      id: contentId,
+      normalizedUrl: "https://example.com/article",
+      outboundUrl: "https://example.com/article",
+      source: "generic_web",
+      summaryStatus: "ready",
+      title: "测试文章",
+    });
+    await handle.db.insert(collections).values({
+      accountId,
+      collectedAt: new Date("2026-08-07T07:59:00.000Z"),
+      contentId,
+      domainId,
+      sourceChannel: "wechat",
+      visibility: "private",
+    });
+    await handle.db.insert(eventLedger).values({
+      accountId: null,
+      contentId,
+      dedupeKey: `content.summary.ready.v1:${contentId}`,
+      eventType: "content.summary.ready.v1",
+      id: notificationId,
+      metadata: { schema_version: 1 },
+      occurredAt: now,
+      requestId: "summary-job",
+      scope: "private",
+    });
+
+    await expect(asWebRuntime((runtime) =>
+      new ChannelRuntimeService(runtime.db, {
+        now: () => now,
+        pairingSecret,
+      }).listSummaryNotifications(principal, {
+        after: null,
+        bindingId,
+        installationId,
+        limit: 20,
+      })
+    )).resolves.toEqual({
+      items: [{
+        completed_at: now.toISOString(),
+        content_id: contentId,
+        notification_id: notificationId,
+        original_url: "https://example.com/article",
+        summary: "已经完成的摘要。",
+        title: "测试文章",
+      }],
+      nextCursor: `${now.toISOString()}|${notificationId}`,
+    });
+
+    await handle.db
+      .update(collections)
+      .set({ collectedAt: new Date("2026-08-07T08:01:00.000Z") })
+      .where(eq(collections.accountId, accountId));
+    await expect(asWebRuntime((runtime) =>
+      new ChannelRuntimeService(runtime.db, {
+        now: () => now,
+        pairingSecret,
+      }).listSummaryNotifications(principal, {
+        after: null,
+        bindingId,
+        installationId,
+        limit: 20,
+      })
+    )).resolves.toEqual({ items: [], nextCursor: null });
   });
 
   it("persists the complete lifecycle without storing the pairing code", async () => {

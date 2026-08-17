@@ -163,6 +163,15 @@ const runtimeDescriptors: readonly PermissionDescriptor[] = [
       };
     },
   },
+  {
+    scopes: ["channel:notifications:read"],
+    present: () => ({
+      id: "channel-summary-notifications",
+      title: "接收收藏完成通知",
+      description: "读取你通过微信收藏内容的标题、原始链接和摘要，把处理结果送回本地渠道。",
+      risk: "standard",
+    }),
+  },
 ] as const;
 
 const descriptors: Readonly<Record<OAuthAudience, readonly PermissionDescriptor[]>> = {
@@ -196,10 +205,11 @@ const dataItemsByScope: Readonly<Record<OAuthScope, readonly string[]>> = {
   "runtime:heartbeat": ["运行状态、最近活动时间和安全的队列数量"],
   "channel:bind:report": ["不透明的渠道连接验证状态"],
   "channel:disconnect:report": ["不透明的渠道连接断开状态"],
+  "channel:notifications:read": ["你通过微信收藏内容的标题、原始链接和摘要"],
 };
 
 const runtimeExclusion =
-  "不会接触对话内容、私人收藏、服务商凭据或本地 Session";
+  "不会接触微信对话内容、服务商凭据或本地 Session";
 
 export function buildOAuthConsentPresentation(
   audience: OAuthAudience,

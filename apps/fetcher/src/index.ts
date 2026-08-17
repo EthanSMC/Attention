@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
@@ -39,6 +39,24 @@ function isAuthorized(header: string | undefined, expected: string): boolean {
 }
 
 class RequestBodyTooLargeError extends Error {}
+
+function safeTargetLogFields(rawUrl: string): {
+  host: string | null;
+  pathFingerprint: string | null;
+} {
+  try {
+    const url = new URL(rawUrl);
+    return {
+      host: url.hostname.toLowerCase().replace(/\.+$/u, ""),
+      pathFingerprint: createHash("sha256")
+        .update(url.pathname)
+        .digest("hex")
+        .slice(0, 16),
+    };
+  } catch {
+    return { host: null, pathFingerprint: null };
+  }
+}
 
 async function cancelBody(body: ReadableStream<Uint8Array> | null): Promise<void> {
   await body?.cancel().catch(() => undefined);
@@ -195,6 +213,9 @@ export function createApp(sharedSecret: string, options: FetcherAppOptions = {})
       return context.json({ error: { code: "overloaded" } }, 503);
     }
 
+    const requestId = randomUUID();
+    context.header("X-Request-Id", requestId);
+    let requestForLog: z.infer<typeof requestSchema> | null = null;
     try {
       let payload: unknown;
       try {
@@ -210,14 +231,34 @@ export function createApp(sharedSecret: string, options: FetcherAppOptions = {})
       if (!parsed.success) {
         return context.json({ error: { code: "invalid_request" } }, 400);
       }
+      requestForLog = parsed.data;
 
       return context.json(
         await fetchOperation(parsed.data.url, parsed.data.sourceKind, parsed.data.mode)
       );
     } catch (error) {
       if (error instanceof FetcherError) {
-        return context.json({ error: { code: error.code } }, 422);
+        const target = requestForLog
+          ? safeTargetLogFields(requestForLog.url)
+          : { host: null, pathFingerprint: null };
+        console.warn(JSON.stringify({
+          code: error.code,
+          event: "fetcher.request_rejected",
+          host: target.host,
+          mode: requestForLog?.mode ?? null,
+          path_fingerprint: target.pathFingerprint,
+          request_id: requestId,
+          source_kind: requestForLog?.sourceKind ?? null,
+        }));
+        return context.json(
+          { error: { code: error.code, request_id: requestId } },
+          422,
+        );
       }
+      console.error(JSON.stringify({
+        event: "fetcher.request_failed",
+        request_id: requestId,
+      }));
       return context.json({ error: { code: "internal_error" } }, 500);
     } finally {
       release();

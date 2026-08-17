@@ -44,15 +44,12 @@ describe("production enrichment handlers", () => {
     expect(result).not.toHaveProperty("html");
   });
 
-  it("completes deterministic metadata and an honest unavailable summary without AI", async () => {
+  it("reports that hosted summary execution is not configured when no provider exists", async () => {
     const handlers = createProductionHandlers();
+    expect(handlers.summaryConfigured).toBe(false);
     await expect(handlers.metadata(context())).resolves.toMatchObject({
       author: null,
       title: "deep learning notes",
-    });
-    await expect(handlers.summary(context())).resolves.toMatchObject({
-      status: "unavailable",
-      summary: null,
     });
   });
 
@@ -70,6 +67,7 @@ describe("production enrichment handlers", () => {
       },
       provider: { completeJson },
     });
+    expect(handlers.summaryConfigured).toBe(true);
 
     await expect(handlers.summary(context())).resolves.toEqual({
       status: "ready",

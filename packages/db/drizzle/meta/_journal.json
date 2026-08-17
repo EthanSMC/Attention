@@ -225,6 +225,27 @@
       "when": 1786455761644,
       "tag": "0031_runtime_oauth_connection_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1786536000000,
+      "tag": "0032_local_agent_enrichment_repair",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786617600000,
+      "tag": "0033_owned_content_alias_function",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786701189142,
+      "tag": "0034_summary_ready_notifications",
+      "breakpoints": true
     }
   ]
 }

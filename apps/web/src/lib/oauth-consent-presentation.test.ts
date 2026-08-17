@@ -102,13 +102,22 @@ describe("Sync consent copy", () => {
 });
 
 describe("Runtime consent copy", () => {
-  it("states the sensitive local data that runtime reporting excludes", () => {
+  it("states notification data and the sensitive local data it excludes", () => {
     const presentation = buildOAuthConsentPresentation(
       "attention-channel-runtime",
       oauthScopesByAudience["attention-channel-runtime"],
     );
 
+    expect(presentation.permissionGroups).toContainEqual(
+      expect.objectContaining({ title: "接收收藏完成通知", risk: "standard" }),
+    );
     expect(presentation.dataItems).toContain(
+      "你通过微信收藏内容的标题、原始链接和摘要",
+    );
+    expect(presentation.dataItems).toContain(
+      "不会接触微信对话内容、服务商凭据或本地 Session",
+    );
+    expect(presentation.dataItems).not.toContain(
       "不会接触对话内容、私人收藏、服务商凭据或本地 Session",
     );
   });

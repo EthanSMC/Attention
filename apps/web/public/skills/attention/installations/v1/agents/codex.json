@@ -228,7 +228,8 @@
       "runtime:register",
       "runtime:heartbeat",
       "channel:bind:report",
-      "channel:disconnect:report"
+      "channel:disconnect:report",
+      "channel:notifications:read"
     ]
   },
   "skill": {
@@ -238,7 +239,7 @@
     "bundle_skill_path": null,
     "delivery": "host_user_directory",
     "docs_url": "https://learn.chatgpt.com/docs/build-skills",
-    "document_sha256": "b642849b94e893159db6763885b3636d1810ee74641a5dc39b8f47443d8c98eb",
+    "document_sha256": "7412970a7d0041b27bf7537fb8bafcc49fe428ee968407d7dc1fee93a8e351e2",
     "format": "skill_md",
     "id": "attention",
     "install": "filesystem_directory",
@@ -252,7 +253,7 @@
     "package_ref": null,
     "source_kind": "local_directory",
     "source_path": "/skills/attention/SKILL.md",
-    "tool_contract_version": "1.3.0",
-    "version": "1.4.0"
+    "tool_contract_version": "1.5.0",
+    "version": "1.7.0"
   }
 }

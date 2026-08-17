@@ -306,6 +306,7 @@ export type LocalChannelRuntimeStatus =
   | "stale";
 
 export interface LocalChannelRuntimeOverview {
+  adapterVersion: string;
   deviceName: string;
   hostName: string;
   lastSeenAt: Date | null;
@@ -316,6 +317,7 @@ export interface LocalChannelRuntimeOverview {
 }
 
 interface LocalChannelRuntimeRow {
+  adapterVersion: string;
   agentIntegrationId: Parameters<typeof getAgentIntegration>[0];
   bindingLastSeenAt: Date | null;
   bindingStatus:
@@ -394,6 +396,7 @@ function projectLocalChannelRuntimes(
     seenInstallations.add(row.installationId);
     const checkpoint = row.runtimeCheckpoint;
     runtimes.push({
+      adapterVersion: row.adapterVersion,
       deviceName: row.deviceName,
       hostName: getAgentIntegration(row.agentIntegrationId).display_name,
       lastSeenAt: latestDate(
@@ -515,6 +518,7 @@ export async function loadConnectionOverview(db: AttentionDatabase, accountId: s
       .orderBy(desc(apiCredentials.createdAt)),
     db
       .select({
+        adapterVersion: agentInstallations.adapterVersion,
         agentIntegrationId: agentInstallations.agentIntegrationId,
         bindingLastSeenAt: externalChannelBindings.lastSeenAt,
         bindingStatus: externalChannelBindings.status,

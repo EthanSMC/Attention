@@ -9,6 +9,8 @@ import {
   ChannelBindingViewSchema,
   ChannelRuntimeResourceSchema,
   ChannelRuntimeScopeSchema,
+  ChannelSummaryNotificationPollResponseSchema,
+  ChannelSummaryNotificationSchema,
   CreateChannelBindingRequestSchema,
   DisconnectChannelBindingRequestSchema,
   InstallationHeartbeatSchema,
@@ -353,6 +355,7 @@ describe("local channel runtime v1 contract", () => {
       "runtime:heartbeat",
       "channel:bind:report",
       "channel:disconnect:report",
+      "channel:notifications:read",
     ]);
     for (const scope of CHANNEL_RUNTIME_SCOPES) {
       expect(ChannelRuntimeScopeSchema.parse(scope)).toBe(scope);
@@ -362,6 +365,40 @@ describe("local channel runtime v1 contract", () => {
     expect(ChannelRuntimeScopeSchema.safeParse("channel:write").success).toBe(
       false,
     );
+  });
+
+  it("validates bounded private summary notifications", () => {
+    const notification = {
+      completed_at: "2026-08-14T08:30:00.000Z",
+      content_id: "55555555-5555-4555-8555-555555555555",
+      notification_id: "66666666-6666-4666-8666-666666666666",
+      original_url: "https://example.com/article",
+      summary: "这是一段摘要。",
+      title: "测试文章",
+    } as const;
+
+    expect(ChannelSummaryNotificationSchema.parse(notification)).toEqual(
+      notification,
+    );
+    expect(
+      ChannelSummaryNotificationPollResponseSchema.parse({
+        items: [notification],
+        next_cursor:
+          "2026-08-14T08:30:00.000Z|66666666-6666-4666-8666-666666666666",
+      }),
+    ).toMatchObject({ items: [notification] });
+    expect(
+      ChannelSummaryNotificationSchema.safeParse({
+        ...notification,
+        original_url: "javascript:alert(1)",
+      }).success,
+    ).toBe(false);
+    expect(
+      ChannelSummaryNotificationSchema.safeParse({
+        ...notification,
+        summary: "   ",
+      }).success,
+    ).toBe(false);
   });
 
   it("keeps installation health independent from binding activity", () => {

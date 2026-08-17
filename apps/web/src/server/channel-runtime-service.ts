@@ -10,8 +10,10 @@ import {
 
 import {
   CHANNEL_RUNTIME_RESOURCE,
+  CHANNEL_SUMMARY_READY_EVENT_TYPE,
   ChannelBindingChallengeSchema,
   ChannelBindingViewSchema,
+  ChannelSummaryNotificationSchema,
   InstallationViewSchema,
   RuntimeCheckpointReportSchema,
   getAgentIntegration,
@@ -19,6 +21,7 @@ import {
   type ChannelActivityReport,
   type ChannelBindingChallenge,
   type ChannelBindingView,
+  type ChannelSummaryNotification,
   type CreateChannelBindingRequest,
   type DisconnectChannelBindingRequest,
   type InstallationHeartbeat,
@@ -32,6 +35,9 @@ import { hashRuntimeInstallationId } from "@attention/auth";
 import {
   agentInstallations,
   and,
+  asc,
+  collections,
+  contents,
   desc,
   eq,
   eventLedger,
@@ -39,7 +45,9 @@ import {
   externalChannelBindings,
   gt,
   isNull,
+  lte,
   oauthConnections,
+  or,
   sql,
   type AttentionDatabase,
   type AttentionTransaction,
@@ -52,6 +60,7 @@ export interface RuntimePrincipal {
 
 export const CHANNEL_PAIRING_CHALLENGE_TTL_MS = 10 * 60 * 1_000;
 export const MAX_RUNTIME_OBSERVED_AT_SKEW_MS = 5 * 60 * 1_000;
+export const MAX_SUMMARY_NOTIFICATION_BATCH = 20;
 
 const PAIRING_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const PAIRING_CODE_LENGTH = 8;
@@ -61,6 +70,18 @@ type InstallationRow = typeof agentInstallations.$inferSelect;
 type NewInstallationRow = typeof agentInstallations.$inferInsert;
 type BindingRow = typeof externalChannelBindings.$inferSelect;
 type ChallengeRow = typeof externalChannelBindingChallenges.$inferSelect;
+
+export interface SummaryNotificationCursor {
+  id: string;
+  occurredAt: Date;
+}
+
+export interface ListSummaryNotificationsInput {
+  after: SummaryNotificationCursor | null;
+  bindingId: string;
+  installationId: string;
+  limit: number;
+}
 
 export type ChannelRuntimeServiceErrorCode =
   | "binding_not_active"
@@ -85,6 +106,7 @@ export type ChannelRuntimeServiceErrorCode =
   | "oauth_client_conflict"
   | "pairing_code_invalid"
   | "pairing_secret_invalid"
+  | "summary_notification_cursor_invalid"
   | "unsupported_channel_provider";
 
 export class ChannelRuntimeServiceError extends Error {
@@ -130,6 +152,30 @@ function error(
   status: 400 | 404 | 409,
 ): never {
   throw new ChannelRuntimeServiceError(code, status);
+}
+
+export function encodeSummaryNotificationCursor(
+  cursor: SummaryNotificationCursor,
+): string {
+  return `${cursor.occurredAt.toISOString()}|${cursor.id}`;
+}
+
+export function decodeSummaryNotificationCursor(
+  value: string,
+): SummaryNotificationCursor {
+  const separator = value.indexOf("|");
+  const occurredAt = separator > 0 ? new Date(value.slice(0, separator)) : null;
+  const id = separator > 0 ? value.slice(separator + 1) : "";
+  if (
+    !occurredAt ||
+    !Number.isFinite(occurredAt.getTime()) ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      id,
+    )
+  ) {
+    error("summary_notification_cursor_invalid", 400);
+  }
+  return { id, occurredAt };
 }
 
 function assertPrincipal(principal: RuntimePrincipal): void {
@@ -218,6 +264,17 @@ export function isExactInstallationReplay(
     stored.skillVersion === expected.skillVersion &&
     stored.toolContractVersion === expected.toolContractVersion &&
     capabilitiesEqual(stored.capabilities, expected.capabilities);
+}
+
+function isSameInstallationIdentity(
+  stored: InstallationRow,
+  expected: DerivedInstallationRegistration,
+): boolean {
+  return stored.id === expected.id &&
+    stored.accountId === expected.accountId &&
+    stored.agentIntegrationId === expected.agentIntegrationId &&
+    stored.ownerKind === expected.ownerKind &&
+    stored.deviceName === expected.deviceName;
 }
 
 function assertPairingSecret(secret: string): void {
@@ -596,50 +653,52 @@ export class ChannelRuntimeService {
           if (isExactInstallationReplay(existing, registration)) {
             return installationView(existing);
           }
-          const installationKeyHash = hashRuntimeInstallationId(
-            registration.id,
-          );
-          const [trustedRotatedConnection] = await tx
-            .select({
-              deviceName: oauthConnections.deviceName,
-              id: oauthConnections.id,
-            })
-            .from(oauthConnections)
-            .where(
-              and(
-                eq(oauthConnections.accountId, principal.accountId),
-                eq(oauthConnections.audience, CHANNEL_RUNTIME_RESOURCE),
-                eq(oauthConnections.kind, "runtime"),
-                eq(oauthConnections.clientId, principal.clientId),
-                eq(
-                  oauthConnections.installationKeyHash,
-                  installationKeyHash,
-                ),
-                isNull(oauthConnections.revokedAt),
-              ),
-            )
-            .limit(1);
-          const replayAfterTrustedRotation = {
-            ...existing,
-            deviceName: registration.deviceName,
-            oauthClientId: registration.oauthClientId,
-          };
           if (
             existing.revokedAt ||
-            !trustedRotatedConnection ||
-            trustedRotatedConnection.deviceName !== registration.deviceName ||
-            !isExactInstallationReplay(
-              replayAfterTrustedRotation,
-              registration,
-            )
+            !isSameInstallationIdentity(existing, registration)
           ) {
             error("installation_conflict", 409);
+          }
+          if (existing.oauthClientId !== registration.oauthClientId) {
+            const installationKeyHash = hashRuntimeInstallationId(
+              registration.id,
+            );
+            const [trustedRotatedConnection] = await tx
+              .select({
+                deviceName: oauthConnections.deviceName,
+                id: oauthConnections.id,
+              })
+              .from(oauthConnections)
+              .where(
+                and(
+                  eq(oauthConnections.accountId, principal.accountId),
+                  eq(oauthConnections.audience, CHANNEL_RUNTIME_RESOURCE),
+                  eq(oauthConnections.kind, "runtime"),
+                  eq(oauthConnections.clientId, principal.clientId),
+                  eq(
+                    oauthConnections.installationKeyHash,
+                    installationKeyHash,
+                  ),
+                  isNull(oauthConnections.revokedAt),
+                ),
+              )
+              .limit(1);
+            if (
+              !trustedRotatedConnection ||
+              trustedRotatedConnection.deviceName !== registration.deviceName
+            ) {
+              error("installation_conflict", 409);
+            }
           }
           const [rebound] = await tx
             .update(agentInstallations)
             .set({
+              adapterVersion: registration.adapterVersion,
+              capabilities: registration.capabilities,
               deviceName: registration.deviceName,
               oauthClientId: registration.oauthClientId,
+              skillVersion: registration.skillVersion,
+              toolContractVersion: registration.toolContractVersion,
               updatedAt: registration.updatedAt,
             })
             .where(
@@ -1112,6 +1171,128 @@ export class ChannelRuntimeService {
         .returning();
       if (!updated) error("binding_not_found", 404);
       return bindingView(updated);
+    });
+  }
+
+  async listSummaryNotifications(
+    principal: RuntimePrincipal,
+    input: ListSummaryNotificationsInput,
+  ): Promise<{
+    items: ChannelSummaryNotification[];
+    nextCursor: string | null;
+  }> {
+    if (
+      !Number.isSafeInteger(input.limit) ||
+      input.limit < 1 ||
+      input.limit > MAX_SUMMARY_NOTIFICATION_BATCH
+    ) {
+      error("summary_notification_cursor_invalid", 400);
+    }
+
+    return withPrincipalTransaction(this.#db, principal, async (tx) => {
+      const installation = await principalInstallation(
+        tx,
+        principal,
+        input.installationId,
+      );
+      assertInstallationUsable(installation);
+      const binding = await scopedBinding(
+        tx,
+        principal,
+        input.installationId,
+        input.bindingId,
+      );
+      if (!binding) error("binding_not_found", 404);
+      if (
+        binding.status !== "verified" &&
+        binding.status !== "healthy" &&
+        binding.status !== "stale"
+      ) {
+        error("binding_not_active", 409);
+      }
+
+      const cursorCondition = input.after
+        ? or(
+            gt(eventLedger.occurredAt, input.after.occurredAt),
+            and(
+              eq(eventLedger.occurredAt, input.after.occurredAt),
+              gt(eventLedger.id, input.after.id),
+            ),
+          )
+        : undefined;
+      const rows = await tx
+        .select({
+          collectionId: collections.id,
+          completedAt: eventLedger.occurredAt,
+          contentId: contents.id,
+          notificationId: eventLedger.id,
+          originalUrl: contents.outboundUrl,
+          summary: contents.aiSummary,
+          summaryStatus: contents.summaryStatus,
+          title: contents.title,
+        })
+        .from(eventLedger)
+        .innerJoin(
+          contents,
+          and(
+            eq(contents.id, eventLedger.contentId),
+            eq(contents.contentStatus, "active"),
+            eq(contents.publicSafetyStatus, "allowed"),
+            eq(contents.takedownStatus, "none"),
+          ),
+        )
+        .innerJoin(
+          collections,
+          and(
+            eq(collections.accountId, principal.accountId),
+            eq(collections.contentId, contents.id),
+            eq(collections.sourceChannel, "wechat"),
+            eq(collections.collectionStatus, "active"),
+            lte(collections.collectedAt, eventLedger.occurredAt),
+          ),
+        )
+        .where(
+          and(
+            isNull(eventLedger.accountId),
+            eq(eventLedger.eventType, CHANNEL_SUMMARY_READY_EVENT_TYPE),
+            eq(eventLedger.scope, "private"),
+            ...(cursorCondition ? [cursorCondition] : []),
+          ),
+        )
+        .orderBy(asc(eventLedger.occurredAt), asc(eventLedger.id))
+        .limit(input.limit);
+
+      const items = rows.flatMap((row) => {
+        if (
+          row.summaryStatus !== "ready" ||
+          !row.summary?.trim() ||
+          !row.collectionId
+        ) {
+          return [];
+        }
+        return [
+          ChannelSummaryNotificationSchema.parse({
+            completed_at: row.completedAt.toISOString(),
+            content_id: row.contentId,
+            notification_id: row.notificationId,
+            original_url: row.originalUrl,
+            summary: row.summary,
+            title: row.title?.trim() || "已收藏内容",
+          }),
+        ];
+      });
+      const last = rows.at(-1);
+      return {
+        items,
+        nextCursor: last
+          ? encodeSummaryNotificationCursor({
+              id: last.notificationId,
+              occurredAt: last.completedAt,
+            })
+          : input.after
+            ? encodeSummaryNotificationCursor(input.after)
+            : null,
+      };
     });
   }
 

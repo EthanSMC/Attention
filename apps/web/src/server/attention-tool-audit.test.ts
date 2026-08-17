@@ -115,6 +115,7 @@ describe("Attention tool audit", () => {
         client_reported_workflow_fingerprint:
           expect.stringMatching(/^(?:hmac-)?sha256:[a-f0-9]{64}$/u),
         collection_id: collectionId,
+        content_id: null,
         contract_version: "1.0.0",
         credential_id: credentialId,
         credential_kind: "oauth",
@@ -132,6 +133,26 @@ describe("Attention tool audit", () => {
     for (const value of Object.values(canaries)) {
       expect(persisted).not.toContain(value);
     }
+  });
+
+  it("allows only the Content ID from an enrichment submission", async () => {
+    const contentId = "00000000-0000-4000-8000-000000000008";
+    const { db, values } = databaseMock();
+
+    await recordAttentionToolAuditBestEffort(db, {
+      ...validInput(),
+      attemptId: null,
+      collectionId: null,
+      contentId,
+      summary: "sensitive generated summary",
+      tags: ["sensitive-tag"],
+      toolName: "attention_submit_content_enrichment",
+    } as Parameters<typeof recordAttentionToolAuditBestEffort>[1]);
+
+    const persisted = JSON.stringify(values.mock.calls);
+    expect(persisted).toContain(contentId);
+    expect(persisted).not.toContain("sensitive generated summary");
+    expect(persisted).not.toContain("sensitive-tag");
   });
 
   it("does not throw or persist an invalid record", async () => {

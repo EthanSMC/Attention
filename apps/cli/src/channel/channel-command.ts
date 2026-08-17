@@ -23,6 +23,7 @@ import {
 } from "@attention/contracts";
 
 import { runCommand } from "../command-runner";
+import { ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256 } from "../bridge-update-contract";
 import { resolveAttentionPublicUrl } from "../origin";
 import {
   loadRuntimeCredential,
@@ -30,10 +31,25 @@ import {
 } from "../runtime-oauth";
 import { ATTENTION_CLI_VERSION } from "../version";
 import { createBrainAdapter, type BrainAdapter } from "./brain";
+import {
+  type BridgeUpdateCheckResult,
+  checkAndStageBridgeUpdate,
+} from "./bridge-updater";
 import { prepareChannelCodexHome } from "./codex-home";
 import { ILinkClient } from "./ilink-client";
 import { ILinkSessionExpiredError, ILINK_BASE_URL } from "./ilink-protocol";
 import { acquireChannelLock } from "./lock";
+import {
+  enqueueSummaryNotifications,
+  pollSummaryNotifications,
+  type SummaryNotificationPollOptions,
+} from "./notifications";
+import {
+  BRIDGE_UPDATE_RESTART_EXIT_CODE,
+  loadManagedBridgeUpdateState,
+  markManagedBridgeHealthy,
+  type ManagedBridgeUpdateState,
+} from "./managed-bridge";
 import {
   CODEX_RESTART_BACKOFF_MS,
   ILINK_LONG_POLL_TIMEOUT_MS,
@@ -63,9 +79,8 @@ import {
   type RuntimeReporterSnapshot,
 } from "./runtime-reporter";
 import {
-  buildChannelServicePlan,
   buildChannelServiceRemovalPlan,
-  installChannelService,
+  installManagedChannelService,
   isChannelServiceConfigured,
   uninstallChannelService,
 } from "./service";
@@ -80,6 +95,7 @@ import {
 export const CHANNEL_BRIDGE_HOSTS = ["codex", "claude-code"] as const;
 export type ChannelBridgeHost = (typeof CHANNEL_BRIDGE_HOSTS)[number];
 const ACCOUNT_VERIFICATION_CACHE_MS = 24 * 60 * 60 * 1_000;
+const SUMMARY_NOTIFICATION_POLL_INTERVAL_MS = 30_000;
 
 export interface ChannelCommandOptions {
   readonly accountVerifier?: (
@@ -97,8 +113,13 @@ export interface ChannelCommandOptions {
     options: {
       readonly codexHomeDirectory?: string;
       readonly mcpUrl: string;
+      readonly runtimeDirectory?: string;
     },
   ) => BrainAdapter;
+  readonly bridgeHealthyMarker?: () => Promise<void>;
+  readonly bridgeUpdateChecker?: () => Promise<BridgeUpdateCheckResult>;
+  readonly bridgeUpdateClock?: () => Date;
+  readonly bridgeUpdateStateLoader?: () => Promise<ManagedBridgeUpdateState>;
   readonly codexHomePreparer?: (input: {
     readonly baseDirectory?: string;
   }) => Promise<string>;
@@ -112,6 +133,7 @@ export interface ChannelCommandOptions {
     options: RuntimeReporterOptions,
   ) => RuntimeReporter;
   readonly runtimeTokenProvider?: RuntimeAccessTokenProvider;
+  readonly summaryNotificationPoller?: typeof pollSummaryNotifications;
   readonly service?: boolean;
   readonly serviceInspector?: () => Promise<boolean>;
   readonly serviceUninstaller?: () => Promise<void>;
@@ -162,6 +184,13 @@ const HOST_EXECUTABLES: Record<ChannelBridgeHost, string> = {
   codex: "codex",
 };
 const RUNTIME_REPORTER_CREDENTIAL_RETRY_MS = 60_000;
+const BRIDGE_UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1_000;
+const BRIDGE_UPDATE_MAXIMUM_JITTER_MS = 60 * 60 * 1_000;
+
+function deterministicBridgeUpdateJitter(seed: string): number {
+  const prefix = createHash("sha256").update(seed, "utf8").digest().readUInt32BE(0);
+  return prefix % BRIDGE_UPDATE_MAXIMUM_JITTER_MS;
+}
 
 export interface RuntimeRegistrationIdentity {
   readonly deviceName: string;
@@ -346,6 +375,7 @@ export async function channelStart(
     const activeBrain = (options.brainFactory ?? createBrainAdapter)(hostId, {
       ...(codexHomeDirectory ? { codexHomeDirectory } : {}),
       mcpUrl,
+      runtimeDirectory: cwd,
     });
     brain = activeBrain;
     setRuntimeStarting(state);
@@ -742,6 +772,86 @@ export async function channelStart(
       )}）`,
     );
 
+    const managedBridgeHome = options.baseDirectory ?? homedir();
+    const bridgeUpdateClock = options.bridgeUpdateClock ?? (() => new Date());
+    const bridgeUpdateJitterMs = deterministicBridgeUpdateJitter(
+      runtime.state.runtimeReporter.installationId ?? hostname(),
+    );
+    let nextBridgeUpdateCheckAt = 0;
+    if (options.service) {
+      await (
+        options.bridgeHealthyMarker ??
+        (async () =>
+          await markManagedBridgeHealthy(
+            ATTENTION_CLI_VERSION,
+            managedBridgeHome,
+          ))
+      )();
+      if (!options.bridgeUpdateChecker) {
+        try {
+          const updateState = await loadManagedBridgeUpdateState(managedBridgeHome);
+          const lastCheckAt = updateState.lastCheckAt
+            ? Date.parse(updateState.lastCheckAt)
+            : Number.NaN;
+          nextBridgeUpdateCheckAt = Number.isFinite(lastCheckAt)
+            ? lastCheckAt + BRIDGE_UPDATE_INTERVAL_MS + bridgeUpdateJitterMs
+            : 0;
+        } catch {
+          // A service installed before managed updates has no update state.
+          // It keeps running and can be upgraded once through the normal setup.
+          nextBridgeUpdateCheckAt = Number.POSITIVE_INFINITY;
+        }
+      }
+    }
+
+    const maybeStageBridgeUpdate = async (): Promise<boolean> => {
+      if (
+        !options.service ||
+        runtime.state.pendingInbound.length > 0 ||
+        runtime.state.pendingOutbound.length > 0 ||
+        bridgeUpdateClock().getTime() < nextBridgeUpdateCheckAt
+      ) {
+        return false;
+      }
+      const checkedAt = bridgeUpdateClock().getTime();
+      let result: BridgeUpdateCheckResult;
+      try {
+        result = await (
+          options.bridgeUpdateChecker ??
+          (async () =>
+            await checkAndStageBridgeUpdate({
+              currentPermissionProfileSha256:
+                ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+              currentVersion: ATTENTION_CLI_VERSION,
+              homeDirectory: managedBridgeHome,
+              nodeExecutable: process.execPath,
+              origin: options.origin as string,
+            }))
+        )();
+      } catch {
+        runtime.log("Bridge 自动更新检查暂时不可用；当前版本继续运行。");
+        nextBridgeUpdateCheckAt =
+          checkedAt + BRIDGE_UPDATE_INTERVAL_MS + bridgeUpdateJitterMs;
+        return false;
+      }
+      nextBridgeUpdateCheckAt =
+        checkedAt + BRIDGE_UPDATE_INTERVAL_MS + bridgeUpdateJitterMs;
+      if (result.status === "staged") {
+        runtime.log(`Bridge ${result.version} 已校验，将在空闲状态重启。`);
+        return true;
+      }
+      if (result.status === "consent_required") {
+        runtime.log(
+          `Bridge ${result.version} 需要新增权限或跨主版本；请手动确认升级。`,
+        );
+      } else if (result.status === "error") {
+        runtime.log(
+          `Bridge 自动更新失败（${result.errorCode}）；当前版本继续运行。`,
+        );
+      }
+      return false;
+    };
+
     let shutdownStarted = false;
     const shutdown = () => {
       if (shutdownStarted) return;
@@ -762,6 +872,7 @@ export async function channelStart(
     process.once("SIGTERM", shutdown);
 
     try {
+      let nextSummaryNotificationPollAt = 0;
       for (;;) {
         if (syncRuntimeCheckpoint(runtime.state, activeBrain)) {
           await persist();
@@ -787,6 +898,15 @@ export async function channelStart(
           buildReporterSnapshot(runtime, activeBrain),
         );
 
+        if (
+          reporterSlot.current &&
+          Date.now() >= nextSummaryNotificationPollAt
+        ) {
+          await pollAndQueueSummaryNotifications(runtime, options, persist);
+          nextSummaryNotificationPollAt =
+            Date.now() + SUMMARY_NOTIFICATION_POLL_INTERVAL_MS;
+        }
+
         await flushPendingOutbound(runtime, persist);
         if (!client.token) continue;
         await processPendingInbound(
@@ -797,6 +917,9 @@ export async function channelStart(
           reporterSlot.current,
         );
         if (!client.token) continue;
+        if (await maybeStageBridgeUpdate()) {
+          return BRIDGE_UPDATE_RESTART_EXIT_CODE;
+        }
 
         let updates;
         try {
@@ -1167,6 +1290,36 @@ async function flushPendingOutbound(
   }
 }
 
+async function pollAndQueueSummaryNotifications(
+  runtime: Runtime,
+  options: ChannelCommandOptions,
+  persist: () => Promise<void>,
+): Promise<void> {
+  const bindingId = runtime.state.runtimeReporter.bindingId;
+  const installationId = runtime.state.runtimeReporter.installationId;
+  if (!bindingId || !installationId) return;
+
+  const pollOptions: SummaryNotificationPollOptions = {
+    accessTokenProvider:
+      options.runtimeTokenProvider ?? defaultRuntimeTokenProvider,
+    bindingId,
+    cursor: runtime.state.summaryNotificationCursor,
+    installationId,
+    runtimeBaseUrl: resolveAttentionPublicUrl(
+      options.origin ?? "",
+      "/api/runtime",
+    ),
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  };
+  const response = await (
+    options.summaryNotificationPoller ?? pollSummaryNotifications
+  )(pollOptions);
+  if (!response) return;
+  if (enqueueSummaryNotifications(runtime.state, response)) {
+    await persist();
+  }
+}
+
 const ACCOUNT_VERIFICATION_PREFIX = "ATTENTION_ACCOUNT_OK ";
 
 export async function verifyAttentionAccount(
@@ -1228,6 +1381,16 @@ export async function channelStatus(
   const backgroundConfigured = await (
     options.serviceInspector ?? defaultServiceInspector
   )();
+  let managedUpdate: ManagedBridgeUpdateState | null = null;
+  try {
+    managedUpdate = await (
+      options.bridgeUpdateStateLoader ??
+      (async () =>
+        await loadManagedBridgeUpdateState(options.baseDirectory ?? homedir()))
+    )();
+  } catch {
+    // Pre-managed installations remain valid; status must be local and robust.
+  }
   const report = {
     accountIdPrefix: state.accountId ? `${state.accountId.slice(0, 6)}…` : null,
     brainSession: state.brainSession
@@ -1254,6 +1417,21 @@ export async function channelStatus(
       retryAttempt: state.runtimeState.retryAttempt,
     },
     stateDirectory: channelStateDirectory(options.baseDirectory),
+    update: managedUpdate
+      ? {
+          installedVersion: managedUpdate.current.version,
+          lastCheckAt: managedUpdate.lastCheckAt,
+          lastErrorCode: managedUpdate.lastErrorCode,
+          latestVersion: managedUpdate.latestVersion,
+          status: managedUpdate.status,
+        }
+      : {
+          installedVersion: ATTENTION_CLI_VERSION,
+          lastCheckAt: null,
+          lastErrorCode: null,
+          latestVersion: null,
+          status: "unmanaged",
+        },
   };
   if (options.json) {
     write(`${JSON.stringify(report, null, 2)}\n`);
@@ -1284,6 +1462,17 @@ export async function channelStatus(
   write(`最近活动: ${report.lastActivityAt ?? "无"}\n`);
   write(`待处理消息: ${report.pendingInbound}\n`);
   write(`待发送回执: ${report.pendingOutbound}\n`);
+  write(
+    `Bridge 更新: ${report.update.installedVersion}` +
+      `${report.update.latestVersion ? ` → ${report.update.latestVersion}` : ""}` +
+      `（${report.update.status}）\n`,
+  );
+  if (report.update.lastCheckAt) {
+    write(`最近更新检查: ${report.update.lastCheckAt}\n`);
+  }
+  if (report.update.lastErrorCode) {
+    write(`最近更新错误: ${report.update.lastErrorCode}\n`);
+  }
   write(`状态目录: ${report.stateDirectory}\n`);
   return 0;
 }
@@ -1318,18 +1507,18 @@ async function defaultBackgroundInstaller(input: {
   if (!cliScript) {
     throw new Error("Cannot resolve the Attention CLI entrypoint.");
   }
-  await installChannelService(
-    buildChannelServicePlan({
-      cliScript: resolve(cliScript),
+  await installManagedChannelService({
+      currentCliScript: resolve(cliScript),
       ...(process.env.PATH ? { environmentPath: process.env.PATH } : {}),
       homeDirectory: homedir(),
       hostId: input.hostId,
       nodeExecutable: process.execPath,
       origin: input.origin,
+      permissionProfileSha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
       platform: process.platform,
       ...(process.getuid ? { uid: process.getuid() } : {}),
-    }),
-  );
+      version: ATTENTION_CLI_VERSION,
+    });
 }
 
 async function defaultServiceUninstaller(): Promise<void> {

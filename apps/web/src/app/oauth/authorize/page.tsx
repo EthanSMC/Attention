@@ -6,9 +6,7 @@ import {
   validateAuthorizationRequest,
 } from "@attention/auth";
 
-import {
-  OAuthConsentPanel,
-} from "../../../components/oauth-consent-panel";
+import { OAuthConsentPanel } from "../../../components/oauth-consent-panel";
 import { accountIdentityLabel } from "../../../lib/attention";
 import {
   buildOAuthConsentPresentation,

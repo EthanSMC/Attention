@@ -24,9 +24,23 @@ export const CHANNEL_RUNTIME_SCOPES = [
   "runtime:heartbeat",
   "channel:bind:report",
   "channel:disconnect:report",
+  "channel:notifications:read",
 ] as const;
 export const ChannelRuntimeScopeSchema = z.enum(CHANNEL_RUNTIME_SCOPES);
 export type ChannelRuntimeScope = z.infer<typeof ChannelRuntimeScopeSchema>;
+
+export const CHANNEL_SUMMARY_READY_EVENT_TYPE =
+  "content.summary.ready.v1" as const;
+
+export function summaryReadyNotificationDedupeKey(contentId: string): string {
+  return `${CHANNEL_SUMMARY_READY_EVENT_TYPE}:${contentId}`;
+}
+
+export const ChannelSummaryNotificationCursorSchema = z
+  .string()
+  .regex(
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu,
+  );
 
 export const LOCAL_CHANNEL_PROVIDERS = [
   "wechat_ilink",
@@ -77,6 +91,39 @@ export type RuntimeEventId = z.infer<typeof RuntimeEventIdSchema>;
 
 export const IsoDateTimeSchema = z.string().datetime({ offset: true });
 export type IsoDateTime = z.infer<typeof IsoDateTimeSchema>;
+
+const ChannelSummaryNotificationUrlSchema = z
+  .string()
+  .url()
+  .max(4_096)
+  .refine((value) => {
+    const protocol = new URL(value).protocol;
+    return protocol === "https:" || protocol === "http:";
+  });
+
+export const ChannelSummaryNotificationSchema = z
+  .object({
+    completed_at: IsoDateTimeSchema,
+    content_id: z.string().uuid(),
+    notification_id: z.string().uuid(),
+    original_url: ChannelSummaryNotificationUrlSchema,
+    summary: z.string().trim().min(1).max(4_000),
+    title: z.string().trim().min(1).max(500),
+  })
+  .strict();
+export type ChannelSummaryNotification = z.infer<
+  typeof ChannelSummaryNotificationSchema
+>;
+
+export const ChannelSummaryNotificationPollResponseSchema = z
+  .object({
+    items: z.array(ChannelSummaryNotificationSchema).max(20),
+    next_cursor: ChannelSummaryNotificationCursorSchema.nullable(),
+  })
+  .strict();
+export type ChannelSummaryNotificationPollResponse = z.infer<
+  typeof ChannelSummaryNotificationPollResponseSchema
+>;
 
 export const RUNTIME_PHASES = [
   "starting",

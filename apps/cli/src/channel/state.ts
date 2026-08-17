@@ -13,6 +13,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
+import { ChannelSummaryNotificationCursorSchema } from "@attention/contracts";
+
 import { ILINK_BASE_URL, validateIlinkBaseUrl } from "./ilink-protocol";
 import { BRAIN_HISTORY_TURNS, PROCESSED_MESSAGE_RING_SIZE } from "./limits";
 import type { InboundMessage } from "./messages";
@@ -91,6 +93,7 @@ export interface ChannelState {
   lastActivityAt: string | null;
   pendingInbound: PendingInboundMessage[];
   pendingOutbound: PendingOutboundMessage[];
+  summaryNotificationCursor: string | null;
   runtimeReporter: RuntimeReporterLocalState;
   runtimeState: RuntimeCheckpoint;
 }
@@ -121,6 +124,7 @@ export function defaultChannelState(): ChannelState {
     pendingInbound: [],
     pendingOutbound: [],
     processedMessageIds: [],
+    summaryNotificationCursor: null,
     runtimeReporter: {
       bindingId: null,
       installationId: null,
@@ -228,6 +232,10 @@ function normalizeState(raw: unknown): ChannelState {
             typeof (item as PendingOutboundMessage).toUserId === "string",
         )
       : [],
+    summaryNotificationCursor:
+      ChannelSummaryNotificationCursorSchema.safeParse(
+        record.summaryNotificationCursor,
+      ).data ?? null,
     runtimeReporter: normalizeRuntimeReporterState(record.runtimeReporter),
     runtimeState: normalizeRuntimeCheckpoint(record.runtimeState),
     syncBuf: typeof record.syncBuf === "string" ? record.syncBuf : "",

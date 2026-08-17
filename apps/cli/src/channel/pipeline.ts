@@ -32,6 +32,7 @@ import {
   type ChannelState,
   rememberProcessedMessage,
 } from "./state";
+import { safeCollectionReply } from "./collection-reply-control";
 
 export interface PipelineInput {
   readonly brain: BrainAdapter;
@@ -172,7 +173,7 @@ export async function handleInboundMessage(
       completed: true,
       controlCommand,
       processed: true,
-      replies: [buildControlReply(controlCommand, state)],
+      replies: [buildControlReply(controlCommand, state, input.brain.hostId)],
     };
   }
 
@@ -181,7 +182,10 @@ export async function handleInboundMessage(
   const outcome = await invokeWithFallback(input, text, messageRef);
 
   state.lastActivityAt = new Date().toISOString();
-  if (!outcome.ok || !outcome.reply.trim()) {
+  if (
+    !outcome.collectionReplyControl &&
+    (!outcome.ok || !outcome.reply.trim())
+  ) {
     return {
       completed: false,
       processed: true,
@@ -193,12 +197,15 @@ export async function handleInboundMessage(
 
   state.runtimeState.activeTurnMessageRef = null;
   state.runtimeState.lastSuccessfulMessageAt = state.lastActivityAt;
-  appendHistory(state, text, outcome.reply.trim());
+  const safeReply = outcome.collectionReplyControl
+    ? safeCollectionReply(outcome.collectionReplyControl)
+    : outcome.reply.trim();
+  appendHistory(state, text, safeReply);
   rememberProcessedMessage(state, messageId);
   return {
     completed: true,
     processed: true,
-    replies: splitReply(outcome.reply.trim()),
+    replies: splitReply(safeReply),
   };
 }
 
@@ -216,6 +223,7 @@ function canResumeInterruptedTurn(state: ChannelState): boolean {
 function buildControlReply(
   command: Exclude<ControlCommand, "reset">,
   state: ChannelState,
+  hostId: BrainAdapter["hostId"],
 ): string {
   switch (command) {
     case "help":
@@ -237,9 +245,10 @@ function buildControlReply(
       const retry = runtime.nextRetryAt
         ? `下次自动重试：${runtime.nextRetryAt}。`
         : "";
+      const runtimeName = hostId === "claude-code" ? "Claude Code" : "Codex";
       return [
         `${wechat}。`,
-        `Codex Runtime：${runtime.phase}。`,
+        `${runtimeName} Runtime：${runtime.phase}。`,
         `最近成功处理：${lastSuccess}。`,
         `${state.pendingInbound.length} 条消息等待处理，${state.pendingOutbound.length} 条待发送。`,
         retry,

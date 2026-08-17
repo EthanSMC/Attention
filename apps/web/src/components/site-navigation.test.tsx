@@ -1,28 +1,44 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const navigationState = vi.hoisted(() => ({ pathname: "/oauth/authorize" }));
+let pathname = "/ai";
 
 vi.mock("next/navigation", () => ({
-  usePathname: () => navigationState.pathname,
+  usePathname: () => pathname,
 }));
 
-import { MobileNavigation, SiteHeader } from "./site-navigation";
+import {
+  MobileNavigation,
+  shouldShowCollectAction,
+  SiteHeader,
+} from "./site-navigation";
 
-describe("standalone navigation paths", () => {
+describe("SiteHeader", () => {
+  beforeEach(() => {
+    pathname = "/ai";
+  });
+
   it.each(["/oauth/authorize", "/oauth/authorize/cancel"])(
     "hides all product navigation on %s",
-    (pathname) => {
-      navigationState.pathname = pathname;
+    (oauthPath) => {
+      pathname = oauthPath;
 
       expect(renderToStaticMarkup(<SiteHeader identity={null} />)).toBe("");
       expect(renderToStaticMarkup(<MobileNavigation />)).toBe("");
     },
   );
 
-  it("keeps the header, collection action, and mobile navigation on product pages", () => {
-    navigationState.pathname = "/ai";
+  it("keeps collection actions on collection-oriented pages only", () => {
+    expect(shouldShowCollectAction("/ai")).toBe(true);
+    expect(shouldShowCollectAction("/account")).toBe(true);
+    expect(shouldShowCollectAction("/account/settings")).toBe(false);
+    expect(shouldShowCollectAction("/membership")).toBe(false);
+    expect(shouldShowCollectAction("/auth")).toBe(false);
+    expect(shouldShowCollectAction("/login")).toBe(false);
+    expect(shouldShowCollectAction("/oauth/authorize")).toBe(false);
+  });
 
+  it("keeps the header, collection action, and mobile navigation on product pages", () => {
     const header = renderToStaticMarkup(<SiteHeader identity={null} />);
     const mobile = renderToStaticMarkup(<MobileNavigation />);
 

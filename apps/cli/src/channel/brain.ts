@@ -3,8 +3,8 @@
  * restricted subprocess. Two adapters ship in this release (Codex CLI and
  * Claude Code); both must honor the restricted profile semantics from
  * `installations/v1/templates/restricted-profile.json`: only the Attention
- * MCP, no shell/code execution/filesystem write, no inherited session or
- * working directory.
+ * MCP plus the minimum conditional public-web reader, no shell/code
+ * execution/filesystem write, no inherited session or working directory.
  */
 
 import { spawn } from "node:child_process";
@@ -13,6 +13,7 @@ import { boundedDiagnosticOutput } from "../redact";
 import { createClaudeCodeBrain } from "./brains/claude-code";
 import { createCodexBrain } from "./brains/codex";
 import { BRAIN_TIMEOUT_MS } from "./limits";
+import type { CollectionReplyControl } from "./collection-reply-control";
 
 const MAXIMUM_CAPTURE_BYTES = 262_144;
 
@@ -42,6 +43,8 @@ export interface BrainOutcome {
   /** True when a resume attempt failed and the caller should replay history. */
   readonly resumeFailed: boolean;
   readonly timedOut: boolean;
+  /** Content-free control derived from Attention MCP results, when established. */
+  readonly collectionReplyControl?: CollectionReplyControl;
 }
 
 export interface BrainInvokeInput {
@@ -156,10 +159,16 @@ export function createBrainAdapter(
   options: {
     readonly codexHomeDirectory?: string;
     readonly mcpUrl: string;
+    readonly runtimeDirectory?: string;
   },
 ): BrainAdapter {
   return hostId === "claude-code"
-    ? createClaudeCodeBrain({ mcpUrl: options.mcpUrl })
+    ? createClaudeCodeBrain({
+        mcpUrl: options.mcpUrl,
+        ...(options.runtimeDirectory
+          ? { runtimeDirectory: options.runtimeDirectory }
+          : {}),
+      })
     : createCodexBrain({
         ...(options.codexHomeDirectory
           ? { codexHomeDirectory: options.codexHomeDirectory }

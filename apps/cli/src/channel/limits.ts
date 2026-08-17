@@ -30,6 +30,15 @@ export const CODEX_RESTART_BACKOFF_MS = [
   15_000,
 ] as const;
 
+/** Capped resident Claude Code restart schedule after consecutive failures. */
+export const CLAUDE_RESTART_BACKOFF_MS = [
+  1_000,
+  2_000,
+  4_000,
+  8_000,
+  15_000,
+] as const;
+
 /** Rolling conversation history kept for replay fallback and status output. */
 export const BRAIN_HISTORY_TURNS = 20;
 
@@ -56,11 +65,11 @@ export const RESET_REPLY = "对话历史已重置。";
 export const RESET_CONFIRMATION_REPLY =
   "如需清空本地对话历史，请发送 /reset 明确确认。";
 
-/** Deterministic replies that remain available while Codex is offline. */
+/** Deterministic replies that remain available while the local Agent is offline. */
 export const CONTROL_HELP_REPLY =
   "可用命令：状态、帮助、重试、重新连接；处理中断时可发送继续。清空对话请发送 /reset。";
 export const CONTROL_RETRY_REPLY =
-  "已请求重新连接 Codex；恢复后会从本地断点继续。";
+  "已请求重新连接本地 Agent；恢复后会从本地断点继续。";
 export const CONTROL_CONTINUE_REPLY = "已请求从本地断点继续处理。";
 
 /** Reply sent when the brain produces no usable answer. */

@@ -132,7 +132,9 @@ import {
   collectionEvents,
   collections,
   consumerReferrals,
+  contentAliases,
   contentLinks,
+  contentIdentities,
   contentReports,
   contents,
   createDatabase,
@@ -148,6 +150,7 @@ import {
   growthBillingEvents,
   growthTokenAttempts,
   inputAttempts,
+  inArray,
   invitations,
   jobs,
   listModerationCourtCases,
@@ -200,6 +203,14 @@ function normalizeOAuthConnectionLabel(value: string): string {
     .trim()
     .replace(/\s+/gu, " ")
     .toLowerCase();
+}
+
+function deferred<T>() {
+  let resolvePromise!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: resolvePromise };
 }
 
 describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
@@ -1707,6 +1718,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       "attention_get_membership_status",
       "attention_list_collections",
       "attention_collect_content",
+      "attention_submit_content_enrichment",
       "attention_select_collection_candidate",
       "attention_get_collection_status",
       "attention_update_collection",
@@ -2094,7 +2106,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     ).resolves.toEqual([{ accountId: first.redeemed.accountId }]);
   });
 
-  it("collects a safe direct link when Fetcher is temporarily unavailable without degrading short or unsafe links", async () => {
+  it("falls back every safe HTTP target to local Agent enrichment when Fetcher cannot resolve it", async () => {
     const { redeemed } = await createRedeemedAccount("member", "fetch-fallback");
     const principal = await principalFor(redeemed);
     vi.stubGlobal("fetch", vi.fn(async () => {
@@ -2108,6 +2120,8 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
     expect(direct).toMatchObject({
       current_visibility: "private",
+      enrichment_action: "generate_summary",
+      public_read_url: "https://mp.weixin.qq.com/s/fixtureArticle123",
       status: "accepted",
     });
     if (
@@ -2128,26 +2142,219 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     expect(fallbackLink?.resolutionStatus).toBe("pending");
     expect(fallbackContent?.enrichmentStatus).toBe("partial");
 
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              code: "unsafe_address",
+              request_id: "00000000-0000-4000-8000-000000000321",
+            },
+          }),
+          {
+            headers: { "content-type": "application/json" },
+            status: 422,
+          },
+        )),
+    );
+    const transientDnsRejection = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "fetch-fallback-direct-unsafe-address",
+      raw_input: "https://mp.weixin.qq.com/s/fixtureArticleDnsRetry",
+      visibility: "private",
+    });
+    expect(transientDnsRejection).toMatchObject({
+      current_visibility: "private",
+      status: "accepted",
+    });
+    if (
+      transientDnsRejection.status !== "accepted" &&
+      transientDnsRejection.status !== "already_collected" &&
+      transientDnsRejection.status !== "merged_with_existing_content"
+    ) {
+      throw new Error("Expected DNS-rejected direct fallback collection");
+    }
+    const [dnsFallbackLink] = await handle.db
+      .select({ resolutionStatus: contentLinks.resolutionStatus })
+      .from(contentLinks)
+      .where(eq(contentLinks.inputAttemptId, transientDnsRejection.attempt_id));
+    expect(dnsFallbackLink?.resolutionStatus).toBe("pending");
+    const fallbackWarning = warning.mock.calls
+      .flat()
+      .find((entry) =>
+        typeof entry === "string" &&
+        entry.includes('"event":"collection.fetcher_safety_fallback"'),
+      );
+    expect(fallbackWarning).toContain('"code":"unsafe_address"');
+    expect(fallbackWarning).toContain(
+      '"fetcher_request_id":"00000000-0000-4000-8000-000000000321"',
+    );
+    expect(fallbackWarning).toContain('"url_fingerprint":');
+    expect(fallbackWarning).not.toContain("fixtureArticleDnsRetry");
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: { code: "unsafe_credentials" } }), {
+          headers: { "content-type": "application/json" },
+          status: 422,
+        })),
+    );
+    const challengedPlatformTarget = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "fetch-fallback-direct-unsafe-credentials",
+      raw_input: "https://mp.weixin.qq.com/s/fixtureArticleUnsafeCredentials",
+      visibility: "private",
+    });
+    expect(challengedPlatformTarget).toMatchObject({
+      enrichment_action: "generate_summary",
+      public_read_url:
+        "https://mp.weixin.qq.com/s/fixtureArticleUnsafeCredentials",
+      status: "accepted",
+    });
+    const agentFallbackWarning = warning.mock.calls
+      .flat()
+      .find((entry) =>
+        typeof entry === "string" &&
+        entry.includes('"event":"collection.fetcher_agent_fallback"') &&
+        entry.includes('"code":"unsafe_credentials"'),
+      );
+    expect(agentFallbackWarning).toContain('"code":"unsafe_credentials"');
+    expect(agentFallbackWarning).not.toContain("fixtureArticleUnsafeCredentials");
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new TypeError("temporary fetcher outage");
+    }));
+
     const genericDirect = await collectFromWeb(handle.db, principal, {
       idempotency_key: "fetch-fallback-generic-direct",
       raw_input: "https://example.org/direct-content",
       visibility: "private",
     });
-    expect(genericDirect).toMatchObject({ status: "resolution_pending" });
+    expect(genericDirect).toMatchObject({
+      enrichment_action: "generate_summary",
+      public_read_url: "https://example.org/direct-content",
+      source: "generic_web",
+      status: "accepted",
+    });
 
     const shortLink = await collectFromWeb(handle.db, principal, {
       idempotency_key: "fetch-fallback-shortlink",
       raw_input: "https://v.douyin.com/example",
       visibility: "private",
     });
-    expect(shortLink).toMatchObject({ status: "resolution_pending" });
+    expect(shortLink).toMatchObject({
+      enrichment_action: "generate_summary",
+      public_read_url: "https://v.douyin.com/example",
+      status: "accepted",
+    });
 
     const genericShortLink = await collectFromWeb(handle.db, principal, {
       idempotency_key: "fetch-fallback-generic-shortlink",
       raw_input: "https://bit.ly/example",
       visibility: "private",
     });
-    expect(genericShortLink).toMatchObject({ status: "resolution_pending" });
+    expect(genericShortLink).toMatchObject({
+      enrichment_action: "generate_summary",
+      public_read_url: "https://bit.ly/example",
+      status: "accepted",
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            contentType: "text/html",
+            finalUrl: "https://www.douyin.com/video/1234567890",
+            redirects: [{
+              host: "v.douyin.com",
+              pathFingerprint: "short-path",
+              status: 302,
+            }],
+            status: 200,
+          }),
+          { headers: { "content-type": "application/json" }, status: 200 },
+        ),
+      ),
+    );
+    const resolvedShortLink = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "fetch-fallback-resolved-shortlink",
+      raw_input: "https://v.douyin.com/resolvedExample/",
+      visibility: "private",
+    });
+    expect(resolvedShortLink).toMatchObject({ status: "accepted" });
+    if (
+      resolvedShortLink.status !== "accepted" &&
+      resolvedShortLink.status !== "already_collected" &&
+      resolvedShortLink.status !== "merged_with_existing_content"
+    ) {
+      throw new Error("Expected resolved short-link collection");
+    }
+    expect(
+      await handle.db
+        .select({ dedupeKey: contentIdentities.dedupeKey })
+        .from(contentIdentities)
+        .where(eq(contentIdentities.contentId, resolvedShortLink.content_id)),
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          dedupeKey:
+            "generic_web:v1:url:https://v.douyin.com/resolvedExample/",
+        },
+        { dedupeKey: "douyin:v1:video:1234567890" },
+      ]),
+    );
+    const historicalAliases = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ];
+    for (const [index, aliasContentId] of historicalAliases.entries()) {
+      const aliasUrl = `https://legacy-short.example/${index + 1}`;
+      await handle.db.insert(contents).values({
+        canonicalUrl: aliasUrl,
+        contentType: "webpage",
+        id: aliasContentId,
+        normalizedUrl: aliasUrl,
+        outboundUrl: aliasUrl,
+        source: "generic_web",
+      });
+      await handle.db.insert(contentAliases).values({
+        aliasContentId,
+        aliasDedupeKey: `legacy-short:v1:${index + 1}`,
+        primaryContentId: resolvedShortLink.content_id,
+        reasonCode: "historical_split",
+        ruleVersion: "v1",
+      });
+      await handle.db.insert(collections).values({
+        accountId: redeemed.accountId,
+        contentId: aliasContentId,
+        domainId: (
+          await handle.db
+            .select({ id: domains.id })
+            .from(domains)
+            .where(eq(domains.slug, "ai"))
+            .limit(1)
+        )[0]!.id,
+        sourceChannel: "web",
+        visibility: "private",
+      });
+    }
+    const sameDirectLink = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "fetch-fallback-resolved-directlink",
+      raw_input: "https://www.douyin.com/video/1234567890",
+      visibility: "private",
+    });
+    expect(sameDirectLink).toMatchObject({
+      collection_id: resolvedShortLink.collection_id,
+      content_id: resolvedShortLink.content_id,
+      status: "merged_with_existing_content",
+    });
+    expect(
+      await handle.db
+        .select({ status: collections.collectionStatus })
+        .from(collections)
+        .where(inArray(collections.contentId, historicalAliases)),
+    ).toEqual([{ status: "deleted" }, { status: "deleted" }]);
 
     const sensitiveQuery = await collectFromWeb(handle.db, principal, {
       idempotency_key: "fetch-fallback-sensitive-query",
@@ -2169,7 +2376,11 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       visibility: "private",
     });
     expect(unsafe).toMatchObject({ status: "unsafe" });
-    expect(await handle.db.select().from(collections)).toHaveLength(1);
+    const allCollections = await handle.db.select().from(collections);
+    expect(
+      allCollections.filter((collection) => collection.collectionStatus === "active"),
+    ).toHaveLength(7);
+    expect(allCollections).toHaveLength(9);
   });
 
   it("keeps the 20-card public preview and outbound gate deterministic for timestamp ties", async () => {
@@ -2270,6 +2481,42 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
   });
 
+  it.each(["unavailable", "failed"] as const)(
+    "returns no enrichment action for genuine terminal %s Content",
+    async (summaryStatus) => {
+      const { redeemed } = await createRedeemedAccount(
+        "filter",
+        `web-terminal-${summaryStatus}`,
+      );
+      const normalizedUrl = `https://example.org/web-terminal-${summaryStatus}`;
+      const existing = await upsertContentByIdentity(handle.db, {
+        adapterVersion: "v1",
+        dedupeKey: `generic_web:v1:url:${normalizedUrl}`,
+        normalizedUrl,
+        outboundUrl: normalizedUrl,
+        source: "generic_web",
+        sourceAdapter: "generic_web",
+      });
+      await handle.db
+        .update(contents)
+        .set({ enrichmentStatus: "partial", summaryStatus })
+        .where(eq(contents.id, existing.content.id));
+
+      await expect(
+        collectFromWeb(handle.db, await principalFor(redeemed), {
+          idempotency_key: `web-terminal-${summaryStatus}`,
+          raw_input: normalizedUrl,
+          visibility: "private",
+        }),
+      ).resolves.toMatchObject({
+        content_id: existing.content.id,
+        enrichment_action: "none",
+        public_read_url: null,
+        summary_status: "unavailable",
+      });
+    },
+  );
+
   it("creates no Content for an ambiguous share until the Filter selects a candidate", async () => {
     const { redeemed } = await createRedeemedAccount("filter", "web-ambiguous");
     const principal = await principalFor(redeemed);
@@ -2298,7 +2545,12 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       selection_token: ambiguous.selection_token,
       visibility: "public"
     });
-    expect(selected).toMatchObject({ status: "accepted", current_visibility: "public" });
+    expect(selected).toMatchObject({
+      status: "accepted",
+      current_visibility: "public",
+      enrichment_action: "generate_summary",
+      public_read_url: "https://example.net/second"
+    });
     expect(await handle.db.select().from(contents)).toHaveLength(1);
     expect(await handle.db.select().from(collections)).toHaveLength(1);
     const [consumed] = await handle.db
@@ -2575,6 +2827,152 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     expect(await handle.db.select().from(contents)).toHaveLength(1);
   });
 
+  it("repairs only exact legacy provider-absence rows without replaying jobs", async () => {
+    const createLegacyContent = async (suffix: string) =>
+      upsertContentByIdentity(handle.db, {
+        adapterVersion: "1",
+        dedupeKey: `generic:v1:https://example.org/enrichment-repair-${suffix}`,
+        normalizedUrl: `https://example.org/enrichment-repair-${suffix}`,
+        outboundUrl: `https://example.org/enrichment-repair-${suffix}`,
+        source: "example.org",
+        sourceAdapter: "generic_web",
+      });
+    const legacyProviderAbsence = await createLegacyContent(
+      "provider-absence",
+    );
+    const terminalUnavailable = await createLegacyContent(
+      "terminal-unavailable",
+    );
+    const terminalFailed = await createLegacyContent("terminal-failed");
+    const unavailableWithoutHistory = await createLegacyContent(
+      "unavailable-without-history",
+    );
+    const ready = await createLegacyContent("ready");
+    const hidden = await createLegacyContent("hidden");
+    const hasSummary = await createLegacyContent("has-summary");
+    const blocked = await createLegacyContent("blocked");
+    const removed = await createLegacyContent("removed");
+    const pendingReview = await createLegacyContent("pending-review");
+    const mergedTarget = await createLegacyContent("merged-target");
+    const merged = await createLegacyContent("merged");
+    const restrictedAt = new Date("2026-08-12T00:00:00.000Z");
+
+    await Promise.all([
+      handle.db.update(contents).set({
+        enrichmentStatus: "partial",
+        summaryStatus: "unavailable",
+      }).where(eq(contents.id, legacyProviderAbsence.content.id)),
+      handle.db.update(contents).set({
+        enrichmentStatus: "partial",
+        summaryStatus: "unavailable",
+      }).where(eq(contents.id, terminalUnavailable.content.id)),
+      handle.db.update(contents).set({
+        enrichmentStatus: "partial",
+        summaryStatus: "failed",
+      }).where(eq(contents.id, terminalFailed.content.id)),
+      handle.db.update(contents).set({ summaryStatus: "unavailable" })
+        .where(eq(contents.id, unavailableWithoutHistory.content.id)),
+      handle.db.update(contents).set({
+        aiSummary: "ready summary",
+        summaryStatus: "ready",
+      }).where(eq(contents.id, ready.content.id)),
+      handle.db.update(contents).set({ summaryStatus: "hidden" })
+        .where(eq(contents.id, hidden.content.id)),
+      handle.db.update(contents).set({
+        aiSummary: "legacy retained summary",
+        summaryStatus: "unavailable",
+      }).where(eq(contents.id, hasSummary.content.id)),
+      handle.db.update(contents).set({
+        publicSafetyStatus: "blocked",
+        restrictedAt,
+        restrictionReasonCode: "safety_block",
+        summaryStatus: "unavailable",
+      }).where(eq(contents.id, blocked.content.id)),
+      handle.db.update(contents).set({
+        restrictedAt,
+        restrictionReasonCode: "legal_takedown",
+        summaryStatus: "failed",
+        takedownStatus: "removed",
+      }).where(eq(contents.id, removed.content.id)),
+      handle.db.update(contents).set({
+        communityModerationStatus: "pending_review",
+        summaryStatus: "unavailable",
+      }).where(eq(contents.id, pendingReview.content.id)),
+      handle.db.update(contents).set({
+        contentStatus: "merged",
+        mergedIntoContentId: mergedTarget.content.id,
+        summaryStatus: "failed",
+      }).where(eq(contents.id, merged.content.id)),
+    ]);
+    await handle.db.insert(jobs).values([
+      {
+        completedAt: new Date("2026-08-12T00:00:00.000Z"),
+        idempotencyKey: `content.summary.v1:${legacyProviderAbsence.content.id}`,
+        payload: { contentId: legacyProviderAbsence.content.id },
+        queue: "content-enrichment",
+        status: "completed",
+        taskType: "content.summary.v1",
+      },
+      {
+        completedAt: new Date("2026-08-11T23:59:00.000Z"),
+        idempotencyKey: `content.metadata.v1:${terminalUnavailable.content.id}`,
+        payload: { contentId: terminalUnavailable.content.id },
+        queue: "content-enrichment",
+        status: "completed",
+        taskType: "content.metadata.v1",
+      },
+      {
+        completedAt: new Date("2026-08-12T00:00:00.000Z"),
+        idempotencyKey: `content.summary.v1:${terminalUnavailable.content.id}`,
+        lastErrorCode: "ai_provider_unauthorized",
+        payload: { contentId: terminalUnavailable.content.id },
+        queue: "content-enrichment",
+        status: "failed",
+        taskType: "content.summary.v1",
+      },
+      {
+        completedAt: new Date("2026-08-12T00:00:00.000Z"),
+        idempotencyKey: `content.summary.v1:${terminalFailed.content.id}`,
+        lastErrorCode: "lease_expired",
+        payload: { contentId: terminalFailed.content.id },
+        queue: "content-enrichment",
+        status: "failed",
+        taskType: "content.summary.v1",
+      },
+    ]);
+    const jobsBefore = await handle.db.select({ id: jobs.id }).from(jobs);
+
+    await handle.sql.unsafe(
+      readFileSync(
+        new URL(
+          "../../packages/db/drizzle/0032_local_agent_enrichment_repair.sql",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+
+    const statuses = await handle.db
+      .select({
+        id: contents.id,
+        summaryStatus: contents.summaryStatus,
+      })
+      .from(contents);
+    const byId = new Map(statuses.map((row) => [row.id, row.summaryStatus]));
+    expect(byId.get(legacyProviderAbsence.content.id)).toBe("pending");
+    expect(byId.get(terminalUnavailable.content.id)).toBe("unavailable");
+    expect(byId.get(terminalFailed.content.id)).toBe("failed");
+    expect(byId.get(unavailableWithoutHistory.content.id)).toBe("unavailable");
+    expect(byId.get(ready.content.id)).toBe("ready");
+    expect(byId.get(hidden.content.id)).toBe("hidden");
+    expect(byId.get(hasSummary.content.id)).toBe("unavailable");
+    expect(byId.get(blocked.content.id)).toBe("unavailable");
+    expect(byId.get(removed.content.id)).toBe("failed");
+    expect(byId.get(pendingReview.content.id)).toBe("unavailable");
+    expect(byId.get(merged.content.id)).toBe("failed");
+    expect(await handle.db.select({ id: jobs.id }).from(jobs)).toEqual(jobsBefore);
+  });
+
   it("resolves platform shortlinks only through the internal Fetcher", async () => {
     const { redeemed } = await createRedeemedAccount("filter", "web-shortlink");
     const principal = await principalFor(redeemed);
@@ -2614,7 +3012,309 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     }
   });
 
-  it("claims enrichment jobs and exposes an honest unavailable state when handlers are absent", async () => {
+  it("does not enqueue a summary directly when a Member collects existing Content", async () => {
+    const { redeemed } = await createRedeemedAccount("member", "existing-no-summary-job");
+    const existing = await upsertContentByIdentity(handle.db, {
+      adapterVersion: "v1",
+      contentType: "web_page",
+      dedupeKey: "generic_web:v1:url:https://example.org/existing-no-summary-job",
+      normalizedUrl: "https://example.org/existing-no-summary-job",
+      outboundUrl: "https://example.org/existing-no-summary-job",
+      source: "generic_web",
+      sourceAdapter: "generic_web",
+    });
+
+    const response = await collectFromWeb(handle.db, await principalFor(redeemed), {
+      idempotency_key: "existing-no-summary-job",
+      raw_input: "https://example.org/existing-no-summary-job",
+      visibility: "private",
+    });
+    expect(response).toMatchObject({
+      content_id: existing.content.id,
+      status: "merged_with_existing_content",
+    });
+    expect(
+      await handle.db.select({ taskType: jobs.taskType }).from(jobs),
+    ).toEqual([{ taskType: "content.metadata.v1" }]);
+  });
+
+  it("does not schedule hosted summary execution when the handler has no provider", async () => {
+    const { redeemed } = await createRedeemedAccount("member", "worker-no-provider");
+    const response = await collectFromWeb(handle.db, await principalFor(redeemed), {
+      idempotency_key: "worker-no-provider-content",
+      raw_input: "https://example.org/worker-no-provider-content",
+      visibility: "private",
+    });
+    if (response.status !== "accepted" && response.status !== "merged_with_existing_content") {
+      throw new Error("Expected an established collection");
+    }
+    const claimed = await claimNextJob(handle.sql, {
+      leaseMs: 5_000,
+      queue: "content-enrichment",
+      workerId: "worker-no-provider",
+    });
+    if (!claimed) throw new Error("Expected the metadata job");
+    await executeClaimedJob(
+      handle.db,
+      claimed,
+      createProductionHandlers(),
+      new AbortController().signal,
+    );
+
+    expect(await handle.db.select({ taskType: jobs.taskType }).from(jobs)).toEqual([
+      { taskType: "content.metadata.v1" },
+    ]);
+    const [content] = await handle.db
+      .select({
+        enrichmentStatus: contents.enrichmentStatus,
+        summaryStatus: contents.summaryStatus,
+      })
+      .from(contents)
+      .where(eq(contents.id, response.content_id));
+    expect(content).toEqual({
+      enrichmentStatus: "partial",
+      summaryStatus: "pending",
+    });
+  });
+
+  it("completes a queued legacy summary job without a provider and keeps Content pending", async () => {
+    const { redeemed } = await createRedeemedAccount("member", "legacy-summary-no-provider");
+    const content = await upsertContentByIdentity(handle.db, {
+      adapterVersion: "1",
+      dedupeKey: "generic:v1:https://example.org/legacy-summary-no-provider",
+      normalizedUrl: "https://example.org/legacy-summary-no-provider",
+      outboundUrl: "https://example.org/legacy-summary-no-provider",
+      source: "example.org",
+      sourceAdapter: "generic_web",
+    });
+    await upsertCollection(handle.db, {
+      accountId: redeemed.accountId,
+      contentId: content.content.id,
+      domainId: await aiDomainId(),
+      sourceChannel: "web",
+      visibility: "private",
+    });
+    await handle.db.insert(jobs).values({
+      availableAt: new Date("2026-08-12T00:00:00.000Z"),
+      idempotencyKey: `content.summary.v1:${content.content.id}`,
+      payload: { contentId: content.content.id },
+      queue: "content-enrichment",
+      taskType: "content.summary.v1",
+    });
+    const claimed = await claimNextJob(handle.sql, {
+      leaseMs: 5_000,
+      now: new Date("2026-08-12T00:01:00.000Z"),
+      queue: "content-enrichment",
+      workerId: "legacy-summary-no-provider",
+    });
+    if (!claimed) throw new Error("Expected the legacy summary job");
+    await executeClaimedJob(
+      handle.db,
+      claimed,
+      createProductionHandlers(),
+      new AbortController().signal,
+    );
+
+    const [storedJob] = await handle.db
+      .select({ status: jobs.status })
+      .from(jobs)
+      .where(eq(jobs.id, claimed.id));
+    const [storedContent] = await handle.db
+      .select({ summaryStatus: contents.summaryStatus })
+      .from(contents)
+      .where(eq(contents.id, content.content.id));
+    expect(storedJob?.status).toBe("completed");
+    expect(storedContent?.summaryStatus).toBe("pending");
+  });
+
+  it.each([
+    ["ready", "local winner", ["local"]],
+    ["hidden", "local winner", ["local"]],
+    ["unavailable", null, []],
+    ["failed", null, []],
+  ] as const)(
+    "preserves a concurrent %s summary state while metadata is running",
+    async (summaryStatus, summary, tags) => {
+    const suffix = `metadata-local-race-${summaryStatus}`;
+    const { redeemed } = await createRedeemedAccount("member", suffix);
+    const content = await upsertContentByIdentity(handle.db, {
+      adapterVersion: "1",
+      dedupeKey: `generic:v1:https://example.org/${suffix}`,
+      normalizedUrl: `https://example.org/${suffix}`,
+      outboundUrl: `https://example.org/${suffix}`,
+      source: "example.org",
+      sourceAdapter: "generic_web",
+    });
+    await upsertCollection(handle.db, {
+      accountId: redeemed.accountId,
+      contentId: content.content.id,
+      domainId: await aiDomainId(),
+      sourceChannel: "web",
+      visibility: "private",
+    });
+    await handle.db.insert(jobs).values({
+      availableAt: new Date("2026-08-12T00:00:00.000Z"),
+      idempotencyKey: `content.metadata.v1:${content.content.id}`,
+      payload: { contentId: content.content.id },
+      queue: "content-enrichment",
+      taskType: "content.metadata.v1",
+    });
+    const claimed = await claimNextJob(handle.sql, {
+      leaseMs: 5_000,
+      now: new Date("2026-08-12T00:01:00.000Z"),
+      queue: "content-enrichment",
+      workerId: "metadata-local-race",
+    });
+    if (!claimed) throw new Error("Expected the metadata job");
+    const metadataStarted = deferred<void>();
+    const metadataResult = deferred<{
+      author: string | null;
+      cachedFaviconAssetKey: string | null;
+      publishedAt: Date | null;
+      title: string | null;
+    }>();
+    const execution = executeClaimedJob(
+      handle.db,
+      claimed,
+      {
+        metadata: async () => {
+          metadataStarted.resolve();
+          return metadataResult.promise;
+        },
+        summary: async () => ({ status: "ready", summary: "hosted", tags: ["hosted"] }),
+        summaryConfigured: true,
+      },
+      new AbortController().signal,
+    );
+    await metadataStarted.promise;
+    await handle.db
+      .update(contents)
+      .set({
+        aiSummary: summary,
+        aiTags: [...tags],
+        enrichmentStatus: summaryStatus === "ready" ? "complete" : "partial",
+        summaryStatus,
+      })
+      .where(eq(contents.id, content.content.id));
+    metadataResult.resolve({
+      author: "Metadata Author",
+      cachedFaviconAssetKey: null,
+      publishedAt: null,
+      title: "Metadata Title",
+    });
+    await execution;
+
+    const [stored] = await handle.db
+      .select({
+        summary: contents.aiSummary,
+        summaryStatus: contents.summaryStatus,
+        tags: contents.aiTags,
+        title: contents.title,
+      })
+      .from(contents)
+      .where(eq(contents.id, content.content.id));
+    expect(stored).toEqual({
+      summary,
+      summaryStatus,
+      tags: [...tags],
+      title: "Metadata Title",
+    });
+    expect(await handle.db.select().from(jobs)).toHaveLength(1);
+    },
+  );
+
+  it.each(["ready", "hidden"] as const)(
+    "does not let a hosted summary overwrite a local %s first writer",
+    async (summaryStatus) => {
+    const suffix = `summary-local-race-${summaryStatus}`;
+    const { redeemed } = await createRedeemedAccount("member", suffix);
+    const content = await upsertContentByIdentity(handle.db, {
+      adapterVersion: "1",
+      dedupeKey: `generic:v1:https://example.org/${suffix}`,
+      normalizedUrl: `https://example.org/${suffix}`,
+      outboundUrl: `https://example.org/${suffix}`,
+      source: "example.org",
+      sourceAdapter: "generic_web",
+    });
+    await upsertCollection(handle.db, {
+      accountId: redeemed.accountId,
+      contentId: content.content.id,
+      domainId: await aiDomainId(),
+      sourceChannel: "web",
+      visibility: "private",
+    });
+    await handle.db.insert(jobs).values({
+      availableAt: new Date("2026-08-12T00:00:00.000Z"),
+      idempotencyKey: `content.summary.v1:${content.content.id}`,
+      payload: { contentId: content.content.id },
+      queue: "content-enrichment",
+      taskType: "content.summary.v1",
+    });
+    const claimed = await claimNextJob(handle.sql, {
+      leaseMs: 5_000,
+      now: new Date("2026-08-12T00:01:00.000Z"),
+      queue: "content-enrichment",
+      workerId: "summary-local-race",
+    });
+    if (!claimed) throw new Error("Expected the summary job");
+    const summaryStarted = deferred<void>();
+    const hostedResult = deferred<{
+      status: "ready";
+      summary: string;
+      tags: string[];
+    }>();
+    const execution = executeClaimedJob(
+      handle.db,
+      claimed,
+      {
+        metadata: async () => ({
+          author: null,
+          cachedFaviconAssetKey: null,
+          publishedAt: null,
+          title: null,
+        }),
+        summary: async () => {
+          summaryStarted.resolve();
+          return hostedResult.promise;
+        },
+        summaryConfigured: true,
+      },
+      new AbortController().signal,
+    );
+    await summaryStarted.promise;
+    await handle.db
+      .update(contents)
+      .set({
+        aiSummary: "local winner",
+        aiTags: ["local"],
+        enrichmentStatus: "complete",
+        summaryStatus,
+      })
+      .where(eq(contents.id, content.content.id));
+    hostedResult.resolve({
+      status: "ready",
+      summary: "hosted loser",
+      tags: ["hosted"],
+    });
+    await execution;
+
+    const [stored] = await handle.db
+      .select({
+        summary: contents.aiSummary,
+        summaryStatus: contents.summaryStatus,
+        tags: contents.aiTags,
+      })
+      .from(contents)
+      .where(eq(contents.id, content.content.id));
+    expect(stored).toEqual({
+      summary: "local winner",
+      summaryStatus,
+      tags: ["local"],
+    });
+    },
+  );
+
+  it("keeps summaries pending when metadata handlers are absent", async () => {
     const { redeemed } = await createRedeemedAccount("member", "worker-stub");
     const principal = await principalFor(redeemed);
     const response = await collectFromWeb(handle.db, principal, {
@@ -2673,7 +3373,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       .where(eq(contents.id, response.content_id));
     expect(content).toEqual({
       enrichmentStatus: "failed",
-      summaryStatus: "unavailable"
+      summaryStatus: "pending"
     });
   });
 
@@ -2722,7 +3422,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       .where(eq(contents.id, response.content_id));
     expect(beforeUpgrade).toEqual({
       enrichmentStatus: "partial",
-      summaryStatus: "unavailable",
+      summaryStatus: "pending",
     });
 
     await handle.db.insert(entitlements).values({
@@ -2792,7 +3492,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     expect(stored).toEqual({
       enrichmentStatus: "partial",
       summary: null,
-      summaryStatus: "unavailable",
+      summaryStatus: "pending",
     });
   });
 
@@ -2976,6 +3676,169 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
   });
 
+  it("does not let terminal summary failure overwrite a ready Content", async () => {
+    const content = await upsertContentByIdentity(handle.db, {
+      dedupeKey: "generic:v1:https://example.com/summary-terminal-ready",
+      normalizedUrl: "https://example.com/summary-terminal-ready",
+      outboundUrl: "https://example.com/summary-terminal-ready",
+      source: "example.com",
+      sourceAdapter: "generic_web",
+      adapterVersion: "1",
+    });
+    await handle.db
+      .update(contents)
+      .set({
+        aiSummary: "local winner",
+        aiTags: ["local"],
+        enrichmentStatus: "complete",
+        summaryStatus: "ready",
+      })
+      .where(eq(contents.id, content.content.id));
+    await handle.db.insert(jobs).values({
+      availableAt: new Date("2026-08-12T00:00:00.000Z"),
+      idempotencyKey: `content.summary.v1:${content.content.id}`,
+      maxAttempts: 1,
+      payload: { contentId: content.content.id },
+      queue: "content-enrichment",
+      taskType: "content.summary.v1",
+    });
+    const claimed = await claimNextJob(handle.sql, {
+      leaseMs: 5_000,
+      now: new Date("2026-08-12T00:01:00.000Z"),
+      queue: "content-enrichment",
+      workerId: "summary-terminal-ready",
+    });
+    if (!claimed) throw new Error("Expected a summary job");
+    await failJob(handle.sql, {
+      baseRetryMs: 100,
+      errorCode: "ai_provider_unauthorized",
+      job: claimed,
+      maxRetryMs: 1_000,
+      retryable: false,
+    });
+
+    const [stored] = await handle.db
+      .select({
+        enrichmentStatus: contents.enrichmentStatus,
+        summary: contents.aiSummary,
+        summaryStatus: contents.summaryStatus,
+        tags: contents.aiTags,
+      })
+      .from(contents)
+      .where(eq(contents.id, content.content.id));
+    expect(stored).toEqual({
+      enrichmentStatus: "complete",
+      summary: "local winner",
+      summaryStatus: "ready",
+      tags: ["local"],
+    });
+  });
+
+  it.each(["ready", "hidden"] as const)(
+    "preserves a %s summary when metadata fails terminally",
+    async (summaryStatus) => {
+      const content = await upsertContentByIdentity(handle.db, {
+        dedupeKey: `generic:v1:https://example.com/metadata-terminal-${summaryStatus}`,
+        normalizedUrl: `https://example.com/metadata-terminal-${summaryStatus}`,
+        outboundUrl: `https://example.com/metadata-terminal-${summaryStatus}`,
+        source: "example.com",
+        sourceAdapter: "generic_web",
+        adapterVersion: "1",
+      });
+      await handle.db
+        .update(contents)
+        .set({
+          aiSummary: "local winner",
+          aiTags: ["local"],
+          enrichmentStatus: "complete",
+          summaryStatus,
+        })
+        .where(eq(contents.id, content.content.id));
+      await handle.db.insert(jobs).values({
+        availableAt: new Date("2026-08-12T00:00:00.000Z"),
+        idempotencyKey: `content.metadata.v1:${content.content.id}`,
+        maxAttempts: 1,
+        payload: { contentId: content.content.id },
+        queue: "content-enrichment",
+        taskType: "content.metadata.v1",
+      });
+      const claimed = await claimNextJob(handle.sql, {
+        leaseMs: 5_000,
+        now: new Date("2026-08-12T00:01:00.000Z"),
+        queue: "content-enrichment",
+        workerId: `metadata-terminal-${summaryStatus}`,
+      });
+      if (!claimed) throw new Error("Expected a metadata job");
+      await failJob(handle.sql, {
+        baseRetryMs: 100,
+        errorCode: "metadata_terminal_failure",
+        job: claimed,
+        maxRetryMs: 1_000,
+        retryable: false,
+      });
+
+      const [stored] = await handle.db
+        .select({
+          enrichmentStatus: contents.enrichmentStatus,
+          summary: contents.aiSummary,
+          summaryStatus: contents.summaryStatus,
+          tags: contents.aiTags,
+        })
+        .from(contents)
+        .where(eq(contents.id, content.content.id));
+      expect(stored).toEqual({
+        enrichmentStatus: "failed",
+        summary: "local winner",
+        summaryStatus,
+        tags: ["local"],
+      });
+    },
+  );
+
+  it("does not let a stale summary-job reap overwrite hidden Content", async () => {
+    const content = await upsertContentByIdentity(handle.db, {
+      dedupeKey: "generic:v1:https://example.com/summary-reap-hidden",
+      normalizedUrl: "https://example.com/summary-reap-hidden",
+      outboundUrl: "https://example.com/summary-reap-hidden",
+      source: "example.com",
+      sourceAdapter: "generic_web",
+      adapterVersion: "1",
+    });
+    await handle.db
+      .update(contents)
+      .set({ enrichmentStatus: "partial", summaryStatus: "hidden" })
+      .where(eq(contents.id, content.content.id));
+    const staleAt = new Date("2026-07-31T12:30:00.000Z");
+    await handle.db.insert(jobs).values({
+      attempts: 1,
+      idempotencyKey: `content.summary.v1:${content.content.id}`,
+      lockedAt: staleAt,
+      lockedBy: "summary-reap-hidden:claim",
+      maxAttempts: 1,
+      payload: { contentId: content.content.id },
+      queue: "content-enrichment",
+      status: "running",
+      taskType: "content.summary.v1",
+    });
+
+    await expect(reapExhaustedJobs(handle.sql, {
+      leaseMs: 5_000,
+      now: new Date("2026-07-31T12:30:06.000Z"),
+      queue: "content-enrichment",
+    })).resolves.toBe(1);
+    const [stored] = await handle.db
+      .select({
+        enrichmentStatus: contents.enrichmentStatus,
+        summaryStatus: contents.summaryStatus,
+      })
+      .from(contents)
+      .where(eq(contents.id, content.content.id));
+    expect(stored).toEqual({
+      enrichmentStatus: "partial",
+      summaryStatus: "hidden",
+    });
+  });
+
   it("reaps an exhausted stale job and updates its Content in the same operation", async () => {
     const content = await upsertContentByIdentity(handle.db, {
       dedupeKey: "generic:v1:https://example.com/worker-stale-reaper",
@@ -3033,7 +3896,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
     expect(storedContent).toEqual({
       enrichmentStatus: "failed",
-      summaryStatus: "unavailable"
+      summaryStatus: "pending"
     });
   });
 

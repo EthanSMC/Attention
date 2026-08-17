@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CollectionItem } from "../lib/attention";
 import { AgentAccessError } from "./agent-retrieval";
 import { CollectionServiceError } from "./collection-service";
+import { ContentEnrichmentServiceError } from "./content-enrichment-service";
 import { DigestSettingsError } from "./digest-settings";
 import {
   createAttentionToolRegistry,
@@ -75,6 +76,7 @@ function dependencies(
     reportPublicContent: vi.fn(),
     retrieveForAgent: vi.fn(),
     selectCandidateFromWeb: vi.fn(),
+    submitContentEnrichment: vi.fn(),
     updateDigestSettings: vi.fn(),
     updateCollectionVisibility: vi.fn(),
     ...overrides,
@@ -120,6 +122,79 @@ describe("Attention Tool Registry execution contract", () => {
     expect(Object.keys(AttentionToolSuccessOutputSchemas)).toEqual(
       createAttentionToolRegistry(dependencies()).map((definition) => definition.name),
     );
+  });
+
+  it("submits validated shared enrichment with collection write scope", async () => {
+    const core = dependencies({
+      submitContentEnrichment: vi.fn(async () => ({
+        contentId: collectionId,
+        status: "enriched" as const,
+        summaryStatus: "ready" as const,
+      })),
+    });
+
+    await expect(
+      tool(core, "attention_submit_content_enrichment").invoke(
+        context({ scopes: ["collection:write"] }),
+        {
+          content_id: collectionId,
+          idempotency_key: "enrichment-request-1",
+          resolved_url: "https://example.com/final",
+          summary: "A grounded summary.",
+          tags: ["Agents", "agents", "  MCP  "],
+          title: "A grounded title",
+        },
+      ),
+    ).resolves.toEqual({
+      ok: true,
+      value: {
+        content_id: collectionId,
+        status: "enriched",
+        summary_status: "ready",
+      },
+    });
+    expect(core.submitContentEnrichment).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ accountId }),
+      {
+        content_id: collectionId,
+        idempotency_key: "enrichment-request-1",
+        resolved_url: "https://example.com/final",
+        summary: "A grounded summary.",
+        tags: ["Agents", "agents", "MCP"],
+        title: "A grounded title",
+      },
+    );
+  });
+
+  it("returns a stable non-retryable error for terminal summary Content", async () => {
+    const core = dependencies({
+      submitContentEnrichment: vi.fn(async () => {
+        throw new ContentEnrichmentServiceError(
+          "content_enrichment_unavailable",
+          409,
+        );
+      }),
+    });
+
+    await expect(
+      tool(core, "attention_submit_content_enrichment").invoke(
+        context({ scopes: ["collection:write"] }),
+        {
+          content_id: collectionId,
+          idempotency_key: "terminal-enrichment-1",
+          resolved_url: "https://example.com/terminal",
+          summary: "This must not replace a terminal result.",
+          tags: ["terminal"],
+          title: "Terminal title",
+        },
+      ),
+    ).resolves.toEqual({
+      code: "content_enrichment_unavailable",
+      guidance:
+        "This Content has a terminal summary result and cannot be regenerated.",
+      ok: false,
+    });
   });
 
   it("exposes only public profile fields and live capabilities", async () => {

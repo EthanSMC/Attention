@@ -20,13 +20,8 @@ import type {
   CommandResult,
   CommandRunner,
 } from "./command-runner";
-import { loadRuntimeRegistrationIdentity } from "./channel/channel-command";
 import { formatInvocation, runCommand } from "./command-runner";
 import { resolveAttentionPublicUrl } from "./origin";
-import {
-  authorizeRuntime,
-  type RuntimeAuthorizer,
-} from "./runtime-oauth";
 
 const MAXIMUM_SKILL_BYTES = 262_144;
 const MAXIMUM_SKILL_BUNDLE_BYTES = 10 * 1024 * 1024;
@@ -74,8 +69,6 @@ export interface ApplyResult {
 }
 
 export interface ApplyConfigureOptions {
-  readonly authorizeRuntime?: RuntimeAuthorizer;
-  readonly channelBaseDirectory?: string;
   readonly fetchImpl?: typeof fetch;
   readonly forceSkill?: boolean;
   readonly login: boolean;
@@ -143,7 +136,7 @@ export function renderCommandTemplate(
 
 function describeInboundBoundary(profile: AgentInstallationProfile): string {
   if (profile.inbound.engine === "attention_channel_bridge") {
-    return `${profile.display_name} Skill/MCP is available for interactive use. Inbound WeChat is provided by the local attention-channel bridge: run \`attention channel start ${profile.id} --background\` after \`attention configure ${profile.id} --apply --login\`. The bridge keeps the iLink credential on this device, invokes ${profile.display_name} in a restricted Attention-only profile, and uses a separate Runtime OAuth client to report only privacy-safe health checkpoints.`;
+    return `${profile.display_name} Skill/MCP is available for interactive use. Inbound WeChat is provided by the local attention-channel bridge: run \`attention channel start ${profile.id} --background\` after \`attention configure ${profile.id} --apply --login\`. The bridge keeps the iLink credential on this device, invokes ${profile.display_name} in a restricted Attention-only profile, and uses a separate optional Runtime OAuth client for privacy-safe health checkpoints and completed-summary delivery.`;
   }
   if (profile.inbound.engine === "codex_sdk_companion") {
     return `${profile.display_name} Skill/MCP is available for interactive use. Inbound WeChat requires the planned Codex SDK companion (${profile.inbound.availability}), which is not shipped in this release.`;
@@ -711,46 +704,6 @@ export async function applyConfigurePlan(
       id: "authorize_mcp",
       status: "manual",
     });
-  }
-
-  const reportsRuntime =
-    plan.profile.channel.mode === "bridge" &&
-    plan.profile.runtime_reporting.mode === "attention_runtime_oauth";
-  if (reportsRuntime) {
-    if (!options.login) {
-      results.push({
-        command: null,
-        detail:
-          "Runtime OAuth was not started. Re-run with --apply --login before starting cloud status reporting.",
-        id: "authorize_runtime",
-        status: "manual",
-      });
-    } else {
-      try {
-        const identity = await loadRuntimeRegistrationIdentity(
-          options.channelBaseDirectory,
-        );
-        await (options.authorizeRuntime ?? authorizeRuntime)({
-          ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-          ...identity,
-          origin: plan.origin,
-        });
-        results.push({
-          command: null,
-          detail:
-            "Authorized the dedicated local Runtime reporter OAuth client.",
-          id: "authorize_runtime",
-          status: "applied",
-        });
-      } catch {
-        results.push({
-          command: null,
-          detail: "Runtime OAuth authorization failed. Re-run interactively.",
-          id: "authorize_runtime",
-          status: "failed",
-        });
-      }
-    }
   }
 
   return results;

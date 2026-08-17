@@ -58,9 +58,9 @@ afterEach(async () => {
 
 describe("canonical Attention tool registry", () => {
   it("exports the stable contract version and a defensive public-name list", () => {
-    expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe("1.3.0");
+    expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe("1.5.0");
     expect(getAttentionPublicToolNames()).toEqual(ATTENTION_TOOL_NAMES);
-    expect(new Set(ATTENTION_TOOL_NAMES).size).toBe(14);
+    expect(new Set(ATTENTION_TOOL_NAMES).size).toBe(15);
   });
 
   it("exposes only scoped tools that a Free account can currently use", async () => {
@@ -72,6 +72,7 @@ describe("canonical Attention tool registry", () => {
         { name: "attention_get_membership_status" },
         { name: "attention_list_collections" },
         { name: "attention_collect_content" },
+        { name: "attention_submit_content_enrichment" },
         { name: "attention_select_collection_candidate" },
         { name: "attention_get_collection_status" },
         { name: "attention_update_collection" },
@@ -135,7 +136,7 @@ describe("canonical Attention tool registry", () => {
     });
   });
 
-  it("publishes a strict structured-output contract for all fourteen tools", async () => {
+  it("publishes a strict structured-output contract for all fifteen tools", async () => {
     const client = await connectedClient(
       context({ isFilter: true, isMember: true, scopes: fullMcpScopes }),
     );
@@ -201,12 +202,28 @@ describe("canonical Attention tool registry", () => {
     const select = result.tools.find(
       (tool) => tool.name === "attention_select_collection_candidate",
     );
+    const enrichment = result.tools.find(
+      (tool) => tool.name === "attention_submit_content_enrichment",
+    );
 
     expect(collect?.inputSchema).toMatchObject({
       required: expect.arrayContaining(["idempotency_key", "input"]),
     });
     expect(collect?.annotations?.idempotentHint).toBe(true);
     expect(select?.annotations?.idempotentHint).toBe(false);
+    expect(enrichment?.annotations).toMatchObject({
+      idempotentHint: true,
+      openWorldHint: false,
+      readOnlyHint: false,
+    });
+    expect(enrichment?.inputSchema).toMatchObject({
+      required: expect.arrayContaining([
+        "content_id",
+        "idempotency_key",
+        "summary",
+        "tags",
+      ]),
+    });
   });
 
   it("marks content reporting as impactful and requires exact current confirmation", async () => {

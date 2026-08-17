@@ -278,6 +278,7 @@ export function createProductionHandlers(options: {
         throw new JobExecutionError("ai_provider_failed", { retryable: true });
       }
     },
+    summaryConfigured: provider !== null,
   };
 }
 

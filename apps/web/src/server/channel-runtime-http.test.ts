@@ -17,6 +17,7 @@ import {
   handleInstallationHeartbeat,
   handleListChannelBindings,
   handleListInstallations,
+  handleListSummaryNotifications,
   handleRegisterInstallation,
   handleRevokeInstallation,
   handleVerifyChannelBinding,
@@ -116,6 +117,10 @@ function service(
     getInstallation: vi.fn(async () => installation),
     listChannelBindings: vi.fn(async () => [binding]),
     listInstallations: vi.fn(async () => [installation]),
+    listSummaryNotifications: vi.fn(async () => ({
+      items: [],
+      nextCursor: null,
+    })),
     recordChannelActivity: vi.fn(async () => binding),
     recordInstallationHeartbeat: vi.fn(async () => installation),
     registerInstallation: vi.fn(async () => installation),
@@ -529,6 +534,63 @@ describe("channel runtime HTTP route operations", () => {
     expect(runtimeService.verifyPairing).toHaveBeenCalledOnce();
     expect(runtimeService.recordChannelActivity).toHaveBeenCalledOnce();
     expect(runtimeService.disconnectChannelBinding).toHaveBeenCalledOnce();
+  });
+
+  it("returns account-scoped summary notifications only with the dedicated read scope", async () => {
+    const notification = {
+      completed_at: observedAt,
+      content_id: "66666666-6666-4666-8666-666666666666",
+      notification_id: "77777777-7777-4777-8777-777777777777",
+      original_url: "https://example.com/article",
+      summary: "这是一段摘要。",
+      title: "测试文章",
+    } as const;
+    const runtimeService = service({
+      listSummaryNotifications: vi.fn(async () => ({
+        items: [notification],
+        nextCursor: `${observedAt}|${notification.notification_id}`,
+      })),
+    });
+    const scopedPrincipal = {
+      ...principal,
+      scopes: [...principal.scopes, "channel:notifications:read"],
+    } satisfies OAuthCloudPrincipal;
+    const requestUrl =
+      `https://attention.example/api/runtime/notifications?binding_id=${bindingId}` +
+      `&installation_id=${installationId}&limit=20`;
+
+    const forbidden = await handleListSummaryNotifications(
+      new Request(requestUrl, {
+        headers: { authorization: "Bearer runtime-token" },
+      }),
+      dependencies(runtimeService),
+    );
+    expect(forbidden.status).toBe(403);
+    expect(forbidden.headers.get("www-authenticate")).toContain(
+      'scope="channel:notifications:read"',
+    );
+
+    const response = await handleListSummaryNotifications(
+      new Request(requestUrl, {
+        headers: { authorization: "Bearer runtime-token" },
+      }),
+      dependencies(runtimeService, scopedPrincipal),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      items: [notification],
+      next_cursor: `${observedAt}|${notification.notification_id}`,
+    });
+    expect(runtimeService.listSummaryNotifications).toHaveBeenCalledWith(
+      { accountId, clientId: principal.clientId },
+      {
+        after: null,
+        bindingId,
+        installationId,
+        limit: 20,
+      },
+    );
   });
 
   it("revokes the installation and its dedicated runtime OAuth tokens", async () => {
