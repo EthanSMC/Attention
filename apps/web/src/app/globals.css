@@ -4400,6 +4400,77 @@ main {
     width: 100%;
   }
 }
+
+.oauth-connection-list__heading > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.oauth-connection-action--rename {
+  border: 1px solid var(--line-strong) !important;
+  background: var(--surface) !important;
+  color: var(--ink) !important;
+}
+
+.oauth-connection-rename {
+  display: grid;
+  gap: 8px;
+}
+
+.oauth-connection-rename label {
+  display: grid;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.oauth-connection-rename input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  outline: none;
+}
+
+.oauth-connection-rename input:focus {
+  border-color: var(--ai-signal);
+}
+
+.oauth-connection-rename > p {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.oauth-connection-rename > div {
+  display: flex;
+  gap: 8px;
+}
+
+.oauth-connection-rename .button,
+.oauth-connection-list__heading button {
+  min-height: 44px !important;
+}
+
+.oauth-scope-disclosure > strong {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.oauth-scope-disclosure ul {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding-left: 1rem;
+  color: var(--ink);
+  font-size: 12px;
+}
+
 .auth-modal {
   align-items: center;
   display: flex;

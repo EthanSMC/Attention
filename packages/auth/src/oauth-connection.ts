@@ -36,6 +36,13 @@ export class OAuthConnectionNameConflictError extends Error {
   }
 }
 
+export class OAuthConnectionNotFoundError extends Error {
+  constructor() {
+    super("oauth_connection_not_found");
+    this.name = "OAuthConnectionNotFoundError";
+  }
+}
+
 export function normalizeOAuthConnectionLabel(
   value: string,
 ): { label: string; normalizedLabel: string } {
@@ -116,6 +123,60 @@ export async function checkOAuthConnectionName(
     ...normalized,
     existing,
   };
+}
+
+export async function renameOAuthConnection(
+  db: AttentionDatabase,
+  input: { accountId: string; connectionId: string; label: string },
+  now = new Date(),
+): Promise<{ label: string; renamed: boolean }> {
+  const normalized = normalizeOAuthConnectionLabel(input.label);
+  try {
+    return await db.transaction(async (tx) => {
+      const [connection] = await tx
+        .select({
+          label: oauthConnections.label,
+          normalizedLabel: oauthConnections.normalizedLabel,
+        })
+        .from(oauthConnections)
+        .where(
+          and(
+            eq(oauthConnections.id, input.connectionId),
+            eq(oauthConnections.accountId, input.accountId),
+            isNull(oauthConnections.revokedAt),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (!connection) throw new OAuthConnectionNotFoundError();
+      if (connection.normalizedLabel === normalized.normalizedLabel) {
+        return { label: connection.label, renamed: false };
+      }
+
+      const [updated] = await tx
+        .update(oauthConnections)
+        .set({
+          label: normalized.label,
+          normalizedLabel: normalized.normalizedLabel,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(oauthConnections.id, input.connectionId),
+            eq(oauthConnections.accountId, input.accountId),
+            isNull(oauthConnections.revokedAt),
+          ),
+        )
+        .returning({ label: oauthConnections.label });
+      if (!updated) throw new OAuthConnectionNotFoundError();
+      return { label: updated.label, renamed: true };
+    });
+  } catch (error) {
+    if (isOAuthConnectionNameConflict(error)) {
+      throw new OAuthConnectionNameConflictError();
+    }
+    throw error;
+  }
 }
 
 /**

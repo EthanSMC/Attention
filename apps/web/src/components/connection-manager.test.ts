@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createElement, type ComponentType } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import * as connectionManagerModule from "./connection-manager";
 
@@ -232,5 +232,81 @@ describe("ConnectionManager", () => {
     expect(feedbackCandidate("unknown")).toBe(
       "网络连接中断，撤销结果无法确认。请刷新连接列表后再操作。",
     );
+  });
+
+  it("renders a labeled inline rename editor with save and cancel actions", () => {
+    const candidate = Reflect.get(
+      connectionManagerModule,
+      "OAuthConnectionRenameEditor",
+    ) as ComponentType<Record<string, unknown>> | undefined;
+    expect(candidate).toBeTypeOf("function");
+    if (!candidate) return;
+
+    const markup = renderToStaticMarkup(createElement(candidate, {
+      busy: false,
+      error: null,
+      label: "工作 MacBook",
+      onCancel: () => undefined,
+      onChange: () => undefined,
+      onSubmit: () => undefined,
+    }));
+
+    expect(markup).toContain("连接名称");
+    expect(markup).toContain('value="工作 MacBook"');
+    expect(markup).toContain(">保存</button>");
+    expect(markup).toContain(">取消</button>");
+  });
+
+  it("maps rename responses and preserves a conflicting typed label", async () => {
+    const requestRename = Reflect.get(
+      connectionManagerModule,
+      "requestOAuthConnectionRename",
+    ) as ((
+      connectionId: string,
+      label: string,
+      request: typeof fetch,
+    ) => Promise<string>) | undefined;
+    expect(requestRename).toBeTypeOf("function");
+    if (!requestRename) return;
+
+    const request = vi.fn(async (
+      _input: RequestInfo | URL,
+      _init?: RequestInit,
+    ) => new Response(JSON.stringify({
+      error: { code: "oauth_connection_name_conflict" },
+    }), { status: 409 }));
+    await expect(requestRename(
+      "10000000-0000-4000-8000-000000000001",
+      "已有名称",
+      request,
+    )).resolves.toBe("conflict");
+    expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({
+      label: "已有名称",
+    });
+  });
+
+  it("updates only the renamed connection in the visible groups", () => {
+    const applyRename = Reflect.get(
+      connectionManagerModule,
+      "applyOAuthConnectionRename",
+    ) as ((
+      groups: typeof agentGroups,
+      connectionId: string,
+      label: string,
+    ) => typeof agentGroups) | undefined;
+    expect(applyRename).toBeTypeOf("function");
+    if (!applyRename) return;
+
+    const renamed = applyRename(
+      agentGroups,
+      "10000000-0000-4000-8000-000000000002",
+      "家中电脑",
+    );
+    expect(renamed[0]?.connections.map(({ label }) => label)).toEqual([
+      "工作 MacBook",
+      "家中电脑",
+      "测试容器",
+    ]);
+    expect(agentGroups[0]?.connections[1]?.label).toBe("家里 Mac mini");
   });
 });

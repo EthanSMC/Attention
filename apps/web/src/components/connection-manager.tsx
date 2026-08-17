@@ -33,7 +33,56 @@ interface AgentOAuthConnectionGroup {
   connections: AgentOAuthConnection[];
 }
 
+interface OAuthConnectionRenameState {
+  busy: boolean;
+  connectionId: string;
+  error: string | null;
+  value: string;
+}
+
 type OAuthGroupRevokeOutcome = "failed" | "revoked" | "stale" | "unknown";
+type OAuthConnectionRenameOutcome = "conflict" | "failed" | "renamed" | "unknown";
+
+export async function requestOAuthConnectionRename(
+  connectionId: string,
+  label: string,
+  request: typeof fetch = fetch,
+): Promise<OAuthConnectionRenameOutcome> {
+  try {
+    const response = await request(
+      `/api/account/oauth/${encodeURIComponent(connectionId)}`,
+      {
+        body: JSON.stringify({ label }),
+        headers: { "Content-Type": "application/json" },
+        method: "PATCH",
+      },
+    );
+    if (response.status === 409) return "conflict";
+    if (!response.ok) return "failed";
+    const result = (await response.json().catch(() => ({}))) as {
+      label?: unknown;
+      renamed?: unknown;
+    };
+    return typeof result.label === "string" && typeof result.renamed === "boolean"
+      ? "renamed"
+      : "failed";
+  } catch {
+    return "unknown";
+  }
+}
+
+export function applyOAuthConnectionRename(
+  groups: readonly AgentOAuthConnectionGroup[],
+  connectionId: string,
+  label: string,
+): AgentOAuthConnectionGroup[] {
+  return groups.map((group) => ({
+    ...group,
+    connections: group.connections.map((connection) =>
+      connection.id === connectionId ? { ...connection, label } : connection
+    ),
+  }));
+}
 
 export async function requestOAuthGroupSnapshotRevoke(
   group: AgentOAuthConnectionGroup,
@@ -122,6 +171,51 @@ function oauthPermissionTitles(
   } catch {
     return ["权限信息暂时不可用"];
   }
+}
+
+export function OAuthConnectionRenameEditor({
+  busy,
+  error,
+  label,
+  onCancel,
+  onChange,
+  onSubmit,
+}: {
+  busy: boolean;
+  error: string | null;
+  label: string;
+  onCancel: () => void;
+  onChange: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <form className="oauth-connection-rename" onSubmit={onSubmit}>
+      <label>
+        <span>连接名称</span>
+        <input
+          autoFocus
+          disabled={busy}
+          maxLength={80}
+          onChange={(event) => onChange(event.target.value)}
+          value={label}
+        />
+      </label>
+      {error ? <p role="alert">{error}</p> : null}
+      <div>
+        <button className="button button--primary" disabled={busy} type="submit">
+          {busy ? "保存中…" : "保存"}
+        </button>
+        <button
+          className="button button--secondary"
+          disabled={busy}
+          onClick={onCancel}
+          type="button"
+        >
+          取消
+        </button>
+      </div>
+    </form>
+  );
 }
 
 export function OAuthGroupRevokeModal({
@@ -223,8 +317,14 @@ export function ConnectionManager({
     AgentOAuthConnectionGroup | null
   >(null);
   const [revokingOAuthGroup, setRevokingOAuthGroup] = useState(false);
+  const [oauthConnectionGroups, setOAuthConnectionGroups] = useState(
+    agentOAuthConnections,
+  );
+  const [oauthRename, setOAuthRename] = useState<OAuthConnectionRenameState | null>(null);
   const createRequestInFlight = useRef(false);
+  const renameRequestInFlight = useRef(false);
   const revokeRequestInFlight = useRef(false);
+  const renameButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const activePats = apiKeys.rows.filter((item) => item.status === "active");
 
   async function copy(value: string, label = "内容") {
@@ -235,7 +335,6 @@ export function ConnectionManager({
       showFeedback("复制失败，请重试。", "error");
     }
   }
-
   const closeApiKeyModal = useCallback(() => {
     if (createRequestInFlight.current) return;
     dispatchApiKey({ type: "close" });
@@ -370,6 +469,46 @@ export function ConnectionManager({
     }
   }
 
+  function finishOAuthRename(connectionId: string) {
+    setOAuthRename(null);
+    queueMicrotask(() => renameButtonRefs.current.get(connectionId)?.focus());
+  }
+
+  async function saveOAuthRename(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!oauthRename || renameRequestInFlight.current) return;
+    const value = oauthRename.value;
+    if (!value.trim()) {
+      setOAuthRename({ ...oauthRename, error: "请输入连接名称。" });
+      return;
+    }
+
+    renameRequestInFlight.current = true;
+    setOAuthRename({ ...oauthRename, busy: true, error: null });
+    const connectionId = oauthRename.connectionId;
+    const outcome = await requestOAuthConnectionRename(connectionId, value);
+    if (outcome === "renamed") {
+      const normalizedLabel = value.normalize("NFKC").trim().replace(/\s+/gu, " ");
+      setOAuthConnectionGroups((groups) =>
+        applyOAuthConnectionRename(groups, connectionId, normalizedLabel)
+      );
+      showFeedback("连接名称已更新。");
+      finishOAuthRename(connectionId);
+    } else {
+      const error = outcome === "conflict"
+        ? "这个名称已被同类连接使用，请换一个名称。"
+        : outcome === "unknown"
+          ? "网络连接中断，修改结果无法确认。请刷新页面检查。"
+          : "名称没有更新，请重试。";
+      setOAuthRename((current) =>
+        current?.connectionId === connectionId
+          ? { ...current, busy: false, error }
+          : current
+      );
+    }
+    renameRequestInFlight.current = false;
+  }
+
   return (
     <div className="connection-stack">
       <section className="connection-card connection-card--agent-entry">
@@ -399,7 +538,6 @@ export function ConnectionManager({
           </a>
         </div>
       </section>
-
       {localChannelRuntimes.length ? (
         <section className="connection-card connection-card--runtime">
           <div className="connection-card__intro">
@@ -454,9 +592,9 @@ export function ConnectionManager({
         <p className="settings-card__eyebrow">已授权客户端</p>
         <h2>OAuth 连接</h2>
         <p>每个名称代表一次独立授权。展开客户端后，可以查看权限与最近活动，或只撤销其中一个连接。</p>
-        {agentOAuthConnections.length ? (
+        {oauthConnectionGroups.length ? (
           <div className="oauth-connection-groups">
-            {agentOAuthConnections.map((group) => (
+            {oauthConnectionGroups.map((group) => (
               <details
                 className="oauth-connection-group"
                 key={`${group.audience}:${group.clientName}`}
@@ -481,19 +619,55 @@ export function ConnectionManager({
                   <ul className="oauth-connection-list">
                     {group.connections.map((connection) => (
                       <li key={connection.id}>
-                        <div className="oauth-connection-list__heading">
-                          <strong>{connection.label}</strong>
-                          <button
-                            aria-label={`撤销连接：${connection.label}`}
-                            disabled={revokingOAuthConnectionId !== null}
-                            onClick={() => revokeOAuthConnection(connection.id)}
-                            type="button"
-                          >
-                            {revokingOAuthConnectionId === connection.id
-                              ? "撤销中…"
-                              : "撤销"}
-                          </button>
-                        </div>
+                        {oauthRename?.connectionId === connection.id ? (
+                          <OAuthConnectionRenameEditor
+                            busy={oauthRename.busy}
+                            error={oauthRename.error}
+                            label={oauthRename.value}
+                            onCancel={() => finishOAuthRename(connection.id)}
+                            onChange={(value) => setOAuthRename({
+                              ...oauthRename,
+                              error: null,
+                              value,
+                            })}
+                            onSubmit={saveOAuthRename}
+                          />
+                        ) : (
+                          <div className="oauth-connection-list__heading">
+                            <strong>{connection.label}</strong>
+                            <div>
+                              <button
+                                aria-label={`重命名连接：${connection.label}`}
+                                className="oauth-connection-action oauth-connection-action--rename"
+                                disabled={oauthRename !== null}
+                                onClick={() => setOAuthRename({
+                                  busy: false,
+                                  connectionId: connection.id,
+                                  error: null,
+                                  value: connection.label,
+                                })}
+                                ref={(node) => {
+                                  if (node) renameButtonRefs.current.set(connection.id, node);
+                                  else renameButtonRefs.current.delete(connection.id);
+                                }}
+                                type="button"
+                              >
+                                重命名
+                              </button>
+                              <button
+                                aria-label={`撤销连接：${connection.label}`}
+                                className="oauth-connection-action oauth-connection-action--revoke"
+                                disabled={revokingOAuthConnectionId !== null}
+                                onClick={() => revokeOAuthConnection(connection.id)}
+                                type="button"
+                              >
+                                {revokingOAuthConnectionId === connection.id
+                                  ? "撤销中…"
+                                  : "撤销"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
                         <dl className="oauth-connection-facts">
                           {connection.deviceName ? (
                             <div>
