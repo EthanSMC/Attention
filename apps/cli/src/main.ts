@@ -101,8 +101,9 @@ Safety:
   commands without a shell. WorkBuddy import remains an explicit UI step.
   MCP OAuth starts only when configure receives explicit --apply --login.
   Device status sync is optional and uses a separate Runtime OAuth client;
-  enable it explicitly with attention device sync enable. Background channel
-  startup never opens a browser.
+  enable it explicitly with attention device sync enable. It also lets the
+  Bridge pull completed-summary notices for delivery to the verified WeChat
+  binding. Background channel startup never opens a browser.
   Local iLink tokens are never requested, uploaded, or printed: the channel
   bridge stores them under ~/.attention/channel/ and reports only bounded,
   privacy-safe health checkpoints through the dedicated Runtime credential.
@@ -534,7 +535,7 @@ export async function runAttentionCli(
         );
       }
       output.log(
-        "设备状态同步已启用。Attention Web 现在可以显示这台设备的在线状态、故障断点和微信绑定结果；不会同步对话、链接、凭据或 Agent 会话 ID。",
+        "设备状态同步已启用。Attention Web 可以显示设备在线状态、故障断点和微信绑定结果；Bridge 也会补发已完成的摘要。不会同步对话、凭据或 Agent 会话 ID。",
       );
       return 0;
     }

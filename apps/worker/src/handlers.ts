@@ -4,6 +4,7 @@ import {
   collections,
   contents,
   eq,
+  eventLedger,
   jobs,
   type AttentionDatabase,
 } from "@attention/db";
@@ -18,6 +19,7 @@ import {
 } from "./contracts.js";
 import { JobExecutionError, LostLeaseError } from "./errors.js";
 import type { ClaimedJob } from "./job-repository.js";
+import { buildSummaryReadyNotificationEvent } from "./summary-notification.js";
 
 export interface ContentHandlerContext {
   author: string | null;
@@ -326,6 +328,10 @@ async function finalizeSummary(
     }
 
     const now = new Date();
+    const transitionedToReady =
+      result.status === "ready" &&
+      currentContent.summaryStatus !== "ready" &&
+      currentContent.summaryStatus !== "hidden";
     if (currentContent.summaryStatus !== "ready" && currentContent.summaryStatus !== "hidden") {
       await tx
         .update(contents)
@@ -337,6 +343,30 @@ async function finalizeSummary(
           updatedAt: now,
         })
         .where(eq(contents.id, contentId));
+    }
+
+    if (transitionedToReady) {
+      const [wechatCollection] = await tx
+        .select({ id: collections.id })
+        .from(collections)
+        .where(
+          and(
+            eq(collections.contentId, contentId),
+            eq(collections.sourceChannel, "wechat"),
+            eq(collections.collectionStatus, "active"),
+          ),
+        )
+        .limit(1);
+      if (wechatCollection) {
+        await tx
+          .insert(eventLedger)
+          .values(buildSummaryReadyNotificationEvent({
+            contentId,
+            occurredAt: now,
+            requestId: job.id,
+          }))
+          .onConflictDoNothing({ target: eventLedger.dedupeKey });
+      }
     }
 
     await tx

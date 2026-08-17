@@ -40,6 +40,11 @@ import { ILinkClient } from "./ilink-client";
 import { ILinkSessionExpiredError, ILINK_BASE_URL } from "./ilink-protocol";
 import { acquireChannelLock } from "./lock";
 import {
+  enqueueSummaryNotifications,
+  pollSummaryNotifications,
+  type SummaryNotificationPollOptions,
+} from "./notifications";
+import {
   BRIDGE_UPDATE_RESTART_EXIT_CODE,
   loadManagedBridgeUpdateState,
   markManagedBridgeHealthy,
@@ -90,6 +95,7 @@ import {
 export const CHANNEL_BRIDGE_HOSTS = ["codex", "claude-code"] as const;
 export type ChannelBridgeHost = (typeof CHANNEL_BRIDGE_HOSTS)[number];
 const ACCOUNT_VERIFICATION_CACHE_MS = 24 * 60 * 60 * 1_000;
+const SUMMARY_NOTIFICATION_POLL_INTERVAL_MS = 30_000;
 
 export interface ChannelCommandOptions {
   readonly accountVerifier?: (
@@ -127,6 +133,7 @@ export interface ChannelCommandOptions {
     options: RuntimeReporterOptions,
   ) => RuntimeReporter;
   readonly runtimeTokenProvider?: RuntimeAccessTokenProvider;
+  readonly summaryNotificationPoller?: typeof pollSummaryNotifications;
   readonly service?: boolean;
   readonly serviceInspector?: () => Promise<boolean>;
   readonly serviceUninstaller?: () => Promise<void>;
@@ -865,6 +872,7 @@ export async function channelStart(
     process.once("SIGTERM", shutdown);
 
     try {
+      let nextSummaryNotificationPollAt = 0;
       for (;;) {
         if (syncRuntimeCheckpoint(runtime.state, activeBrain)) {
           await persist();
@@ -889,6 +897,15 @@ export async function channelStart(
         reporterSlot.current?.reporter.transition(
           buildReporterSnapshot(runtime, activeBrain),
         );
+
+        if (
+          reporterSlot.current &&
+          Date.now() >= nextSummaryNotificationPollAt
+        ) {
+          await pollAndQueueSummaryNotifications(runtime, options, persist);
+          nextSummaryNotificationPollAt =
+            Date.now() + SUMMARY_NOTIFICATION_POLL_INTERVAL_MS;
+        }
 
         await flushPendingOutbound(runtime, persist);
         if (!client.token) continue;
@@ -1269,6 +1286,36 @@ async function flushPendingOutbound(
     runtime.log(`${sent ? "回复成功" : "回复保留待重试"}（id=${pending.id}）`);
     if (!sent) return;
     markOutboundSent(runtime.state, pending.id);
+    await persist();
+  }
+}
+
+async function pollAndQueueSummaryNotifications(
+  runtime: Runtime,
+  options: ChannelCommandOptions,
+  persist: () => Promise<void>,
+): Promise<void> {
+  const bindingId = runtime.state.runtimeReporter.bindingId;
+  const installationId = runtime.state.runtimeReporter.installationId;
+  if (!bindingId || !installationId) return;
+
+  const pollOptions: SummaryNotificationPollOptions = {
+    accessTokenProvider:
+      options.runtimeTokenProvider ?? defaultRuntimeTokenProvider,
+    bindingId,
+    cursor: runtime.state.summaryNotificationCursor,
+    installationId,
+    runtimeBaseUrl: resolveAttentionPublicUrl(
+      options.origin ?? "",
+      "/api/runtime",
+    ),
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+  };
+  const response = await (
+    options.summaryNotificationPoller ?? pollSummaryNotifications
+  )(pollOptions);
+  if (!response) return;
+  if (enqueueSummaryNotifications(runtime.state, response)) {
     await persist();
   }
 }

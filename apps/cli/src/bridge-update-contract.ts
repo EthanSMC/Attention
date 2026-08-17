@@ -3,6 +3,16 @@ import { createHash } from "node:crypto";
 export const ATTENTION_BRIDGE_PERMISSION_PROFILE = {
   cloud: {
     mcp_server: "attention_only",
+    runtime_oauth: {
+      resource: "attention-channel-runtime",
+      scopes: [
+        "runtime:register",
+        "runtime:heartbeat",
+        "channel:bind:report",
+        "channel:disconnect:report",
+        "channel:notifications:read",
+      ],
+    },
     tools: [
       "attention_get_my_account",
       "attention_list_collections",
@@ -28,7 +38,7 @@ export const ATTENTION_BRIDGE_PERMISSION_PROFILE = {
     ],
   },
   native_network: ["public_web_reader"],
-  schema_version: 1,
+  schema_version: 2,
 } as const;
 
 export const ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256 = createHash("sha256")

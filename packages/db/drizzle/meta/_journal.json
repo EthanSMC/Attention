@@ -239,6 +239,13 @@
       "when": 1786617600000,
       "tag": "0033_owned_content_alias_function",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786701189142,
+      "tag": "0034_summary_ready_notifications",
+      "breakpoints": true
     }
   ]
 }

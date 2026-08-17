@@ -2,12 +2,17 @@ import "server-only";
 
 import { classifySourceUrl, genericWebAdapter } from "@attention/collector";
 import {
+  CHANNEL_SUMMARY_READY_EVENT_TYPE,
+  summaryReadyNotificationDedupeKey,
+} from "@attention/contracts";
+import {
   and,
   collectionEvents,
   collections,
   contentIdentities,
   contents,
   eq,
+  eventLedger,
   inputAttempts,
   sql,
   setAccountContext,
@@ -91,6 +96,7 @@ interface OwnedEnrichmentTarget {
   contentStatus: "active" | "merged";
   id: string;
   publicSafetyStatus: "allowed" | "blocked";
+  sourceChannel: "web" | "wechat";
   summaryStatus: "failed" | "hidden" | "pending" | "ready" | "unavailable";
   takedownStatus: "none" | "removed";
 }
@@ -325,7 +331,15 @@ async function resolveEnrichmentTarget(
       ),
     );
 
-  return { ...primary, collectionId: targetCollectionId };
+  return {
+    ...primary,
+    collectionId: targetCollectionId,
+    sourceChannel:
+      owned.sourceChannel === "wechat" ||
+      targetCollection.sourceChannel === "wechat"
+        ? "wechat"
+        : "web",
+  };
 }
 
 export async function submitContentEnrichment(
@@ -353,6 +367,7 @@ export async function submitContentEnrichment(
         contentStatus: contents.contentStatus,
         id: contents.id,
         publicSafetyStatus: contents.publicSafetyStatus,
+        sourceChannel: collections.sourceChannel,
         summaryStatus: contents.summaryStatus,
         takedownStatus: contents.takedownStatus,
       })
@@ -405,6 +420,24 @@ export async function submitContentEnrichment(
         ),
       )
       .returning({ id: contents.id });
+
+    if (updated && target.sourceChannel === "wechat") {
+      const occurredAt = new Date();
+      await tx
+        .insert(eventLedger)
+        .values({
+          accountId: null,
+          anonymousSessionId: null,
+          contentId: target.id,
+          dedupeKey: summaryReadyNotificationDedupeKey(target.id),
+          eventType: CHANNEL_SUMMARY_READY_EVENT_TYPE,
+          metadata: { schema_version: 1 },
+          occurredAt,
+          requestId: input.idempotency_key,
+          scope: "private",
+        })
+        .onConflictDoNothing({ target: eventLedger.dedupeKey });
+    }
 
     return {
       contentId: target.id,

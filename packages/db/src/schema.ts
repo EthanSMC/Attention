@@ -2190,6 +2190,24 @@ export const eventLedger = pgTable(
       for: "select",
       to: "attention_web_runtime",
       using: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid AND ${table.eventType} IN ('agent.installation.registered.v1', 'agent.installation.heartbeat.v1', 'agent.installation.revoked.v1', 'channel.binding.reported.v1', 'channel.binding.verified.v1', 'channel.binding.activity.v1', 'channel.binding.disconnected.v1') AND ${table.scope} = 'private' AND ${table.contentId} IS NULL AND ${table.anonymousSessionId} IS NULL AND ${table.requestId} IS NOT NULL AND ${table.dedupeKey} IS NOT NULL`
+    }),
+    pgPolicy("event_ledger_web_summary_ready_read", {
+      as: "permissive",
+      for: "select",
+      to: "attention_web_runtime",
+      using: sql`${table.accountId} IS NULL AND ${table.eventType} = 'content.summary.ready.v1' AND ${table.scope} = 'private' AND ${table.contentId} IS NOT NULL AND ${table.anonymousSessionId} IS NULL AND ${table.requestId} IS NOT NULL AND ${table.dedupeKey} IS NOT NULL AND ${table.metadata} = '{"schema_version":1}'::jsonb AND EXISTS (SELECT 1 FROM collections AS summary_collection WHERE summary_collection.account_id = NULLIF(current_setting('app.account_id', true), '')::uuid AND summary_collection.content_id = ${table.contentId} AND summary_collection.source_channel = 'wechat' AND summary_collection.collection_status = 'active' AND summary_collection.collected_at <= ${table.occurredAt})`
+    }),
+    pgPolicy("event_ledger_web_summary_ready_insert", {
+      as: "permissive",
+      for: "insert",
+      to: "attention_web_runtime",
+      withCheck: sql`${table.accountId} IS NULL AND ${table.eventType} = 'content.summary.ready.v1' AND ${table.scope} = 'private' AND ${table.contentId} IS NOT NULL AND ${table.anonymousSessionId} IS NULL AND ${table.requestId} IS NOT NULL AND ${table.dedupeKey} IS NOT NULL AND ${table.metadata} = '{"schema_version":1}'::jsonb AND EXISTS (SELECT 1 FROM collections AS summary_collection WHERE summary_collection.account_id = NULLIF(current_setting('app.account_id', true), '')::uuid AND summary_collection.content_id = ${table.contentId} AND summary_collection.source_channel = 'wechat' AND summary_collection.collection_status = 'active')`
+    }),
+    pgPolicy("event_ledger_worker_summary_ready_insert", {
+      as: "permissive",
+      for: "insert",
+      to: "attention_worker_runtime",
+      withCheck: sql`${table.accountId} IS NULL AND ${table.eventType} = 'content.summary.ready.v1' AND ${table.scope} = 'private' AND ${table.contentId} IS NOT NULL AND ${table.anonymousSessionId} IS NULL AND ${table.requestId} IS NOT NULL AND ${table.dedupeKey} IS NOT NULL AND ${table.metadata} = '{"schema_version":1}'::jsonb AND EXISTS (SELECT 1 FROM collections AS summary_collection WHERE summary_collection.content_id = ${table.contentId} AND summary_collection.source_channel = 'wechat' AND summary_collection.collection_status = 'active')`
     })
   ]
 ).enableRLS();

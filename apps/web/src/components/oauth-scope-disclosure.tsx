@@ -2,6 +2,7 @@ const scopeLabels: Record<string, string> = {
   "ai:search": "使用托管 AI 检索（需要实时 Member 权益）",
   "channel:bind:report": "报告本地渠道绑定与验证结果",
   "channel:disconnect:report": "报告本地渠道断开与凭证删除结果",
+  "channel:notifications:read": "读取你通过微信收藏内容的摘要完成通知",
   "collection:read": "读取你的个人收藏",
   "collection:write": "替你新增私人收藏",
   "digest:read": "读取你的日报订阅与发送时间",

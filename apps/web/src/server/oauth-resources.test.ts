@@ -80,6 +80,7 @@ describe("OAuth resource routing", () => {
         "runtime:heartbeat",
         "channel:bind:report",
         "channel:disconnect:report",
+        "channel:notifications:read",
       ],
     });
   });

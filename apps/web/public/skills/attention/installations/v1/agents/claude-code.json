@@ -207,7 +207,8 @@
       "runtime:register",
       "runtime:heartbeat",
       "channel:bind:report",
-      "channel:disconnect:report"
+      "channel:disconnect:report",
+      "channel:notifications:read"
     ]
   },
   "skill": {

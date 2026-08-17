@@ -26,7 +26,9 @@ describe("Drizzle migration snapshot", () => {
     ) as { entries: { tag: string }[] };
 
     expect(existsSync(migrationPath)).toBe(true);
-    expect(journal.entries.at(-1)?.tag).toBe("0033_owned_content_alias_function");
+    expect(journal.entries.some((entry) =>
+      entry.tag === "0033_owned_content_alias_function"
+    )).toBe(true);
     if (!existsSync(migrationPath)) return;
     const migration = readFileSync(migrationPath, "utf8");
     expect(migration).toContain('"summary_status" = \'unavailable\'');
@@ -46,6 +48,29 @@ describe("Drizzle migration snapshot", () => {
     expect(migration).not.toContain('"summary_status" IN');
     expect(migration).not.toContain("'failed'");
     expect(migration).not.toMatch(/INSERT\s+INTO\s+"?jobs"?/iu);
+  });
+
+  it("registers account-private summary notification policies", () => {
+    const root = resolve(import.meta.dirname, "..");
+    const migrationPath = resolve(
+      root,
+      "packages/db/drizzle/0034_summary_ready_notifications.sql",
+    );
+    const journal = JSON.parse(
+      readFileSync(resolve(root, "packages/db/drizzle/meta/_journal.json"), "utf8"),
+    ) as { entries: { tag: string }[] };
+
+    expect(journal.entries.at(-1)?.tag).toBe(
+      "0034_summary_ready_notifications",
+    );
+    const migration = readFileSync(migrationPath, "utf8");
+    expect(migration).toContain("event_ledger_web_summary_ready_read");
+    expect(migration).toContain("event_ledger_web_summary_ready_insert");
+    expect(migration).toContain("event_ledger_worker_summary_ready_insert");
+    expect(migration).toContain("summary_collection.source_channel = 'wechat'");
+    expect(migration).toContain(
+      "summary_collection.collected_at <= \"event_ledger\".\"occurred_at\"",
+    );
   });
 
   it("exposes only the constrained owned-alias function to Web runtime", () => {

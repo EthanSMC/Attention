@@ -233,6 +233,100 @@ describe("channel subcommands", () => {
     expect(lines.join("")).toContain("最近已验收");
   });
 
+  it("pulls a completed summary and durably sends it to the bound WeChat owner", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    state.token = "local-ilink-token";
+    state.accountId = "local-account";
+    state.ownerUserId = "wechat-owner";
+    state.contextTokens = { "wechat-owner": "ctx-owner" };
+    state.runtimeReporter = {
+      bindingId: "22222222-2222-4222-8222-222222222222",
+      installationId: "11111111-1111-4111-8111-111111111111",
+      runtimeClientFingerprint: null,
+    };
+    await saveChannelState(state, base);
+    const sentTexts: string[] = [];
+    const summaryNotificationPoller = vi.fn(async () => ({
+      items: [{
+        completed_at: "2026-08-14T08:30:00.000Z",
+        content_id: "33333333-3333-4333-8333-333333333333",
+        notification_id: "44444444-4444-4444-8444-444444444444",
+        original_url: "https://example.com/article",
+        summary: "这是一段摘要。",
+        title: "测试文章",
+      }],
+      next_cursor:
+        "2026-08-14T08:30:00.000Z|44444444-4444-4444-8444-444444444444",
+    }));
+
+    expect(
+      await channelStart("codex", {
+        accountVerifier: async () => ({
+          attentionId: "filter-demo",
+          displayName: "Filter Demo",
+          isFilter: true,
+          isMember: true,
+        }),
+        baseDirectory: base,
+        brainFactory: () => ({
+          ...brainLifecycle(),
+          hostId: "codex",
+          invoke: async () => ({
+            ok: true,
+            reply: "not reached",
+            resumeFailed: false,
+            sessionId: "thread-1",
+            timedOut: false,
+          }),
+        }),
+        fetchImpl: async (url, init) => {
+          const path = new URL(String(url)).pathname;
+          if (path.endsWith("/sendmessage")) {
+            const body = JSON.parse(String(init?.body)) as {
+              msg: { item_list: Array<{ text_item: { text: string } }> };
+            };
+            sentTexts.push(body.msg.item_list[0]?.text_item.text ?? "");
+            return new Response(JSON.stringify({ errcode: 0, ret: 0 }));
+          }
+          if (path.endsWith("/getupdates")) {
+            return new Response(JSON.stringify({ errcode: -14, ret: 0 }));
+          }
+          throw new Error(`Unexpected iLink path: ${path}`);
+        },
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        runtimeCredentialLoader: async () => true,
+        runtimeReporterFactory: () => ({
+          activity: () => undefined,
+          renewPairing: () => undefined,
+          snapshot: () => ({
+            bindingId: state.runtimeReporter.bindingId,
+            lastErrorCode: null,
+            status: "active",
+          }),
+          start: () => undefined,
+          stop: async () => undefined,
+          transition: () => undefined,
+          verifyPairing: () => undefined,
+        }),
+        service: true,
+        summaryNotificationPoller,
+        writeOutput: () => undefined,
+      }),
+    ).toBe(0);
+
+    expect(summaryNotificationPoller).toHaveBeenCalledOnce();
+    expect(sentTexts).toEqual([
+      "你收藏的《测试文章》摘要已完成：\n\n这是一段摘要。\n\n查看原文：https://example.com/article",
+    ]);
+    const persisted = await loadChannelState(base);
+    expect(persisted.summaryNotificationCursor).toContain(
+      "44444444-4444-4444-8444-444444444444",
+    );
+    expect(persisted.pendingOutbound).toEqual([]);
+  });
+
   it("uses a disposable preflight while preserving the persisted Channel thread", async () => {
     const base = await makeTempBase();
     const state = defaultChannelState();
