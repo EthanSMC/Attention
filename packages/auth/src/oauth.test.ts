@@ -64,6 +64,7 @@ describe("OAuth resource indicators", () => {
       "runtime:heartbeat",
       "channel:bind:report",
       "channel:disconnect:report",
+      "channel:notifications:read",
     ];
 
     expect(oauthAudiences).toContain("attention-channel-runtime");
@@ -164,7 +165,7 @@ describe("OAuth resource indicators", () => {
       resources,
       responseType: "code",
       scope:
-        "profile:read collection:read collection:write digest:read digest:write moderation:write moderation:court:read moderation:court:vote sync:read sync:write public:read public:full ai:search subscription:read runtime:register runtime:heartbeat channel:bind:report channel:disconnect:report",
+        "profile:read collection:read collection:write digest:read digest:write moderation:write moderation:court:read moderation:court:vote sync:read sync:write public:read public:full ai:search subscription:read runtime:register runtime:heartbeat channel:bind:report channel:disconnect:report channel:notifications:read",
     });
 
     expect(request.scopes).toEqual(
@@ -201,7 +202,7 @@ describe("OAuth resource indicators", () => {
         resources,
         responseType: "code",
         scope:
-          "profile:read collection:read collection:write digest:read digest:write moderation:write moderation:court:read moderation:court:vote sync:read sync:write public:read public:full ai:search subscription:read runtime:register runtime:heartbeat channel:bind:report channel:disconnect:report",
+          "profile:read collection:read collection:write digest:read digest:write moderation:write moderation:court:read moderation:court:vote sync:read sync:write public:read public:full ai:search subscription:read runtime:register runtime:heartbeat channel:bind:report channel:disconnect:report channel:notifications:read",
       }),
     ).rejects.toMatchObject({ code: "invalid_scope" });
   });
@@ -249,11 +250,12 @@ describe("OAuth dynamic client scope policy", () => {
   it("accepts the complete runtime-only scope set in any order", () => {
     expect(
       resolveOAuthClientAllowedScopes(
-        "runtime:heartbeat channel:disconnect:report runtime:register channel:bind:report",
+        "runtime:heartbeat channel:disconnect:report runtime:register channel:bind:report channel:notifications:read",
       ),
     ).toEqual([
       "channel:bind:report",
       "channel:disconnect:report",
+      "channel:notifications:read",
       "runtime:heartbeat",
       "runtime:register",
     ]);
@@ -261,7 +263,7 @@ describe("OAuth dynamic client scope policy", () => {
 
   it.each([
     "runtime:register",
-    "runtime:register runtime:heartbeat channel:bind:report channel:disconnect:report sync:read",
+    "runtime:register runtime:heartbeat channel:bind:report channel:disconnect:report channel:notifications:read sync:read",
   ])("rejects partial or mixed runtime registration scopes: %s", (scope) => {
     expect(() => resolveOAuthClientAllowedScopes(scope)).toThrowError(
       expect.objectContaining({ code: "invalid_scope" }),

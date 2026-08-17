@@ -22,10 +22,10 @@ const manifest = {
 describe("Bridge update contract", () => {
   it("publishes one canonical permission boundary with a reviewed digest", () => {
     expect(JSON.stringify(ATTENTION_BRIDGE_PERMISSION_PROFILE)).toBe(
-      '{"cloud":{"mcp_server":"attention_only","tools":["attention_get_my_account","attention_list_collections","attention_collect_content","attention_submit_content_enrichment","attention_select_collection_candidate","attention_get_collection_status","attention_update_collection"]},"local":{"deny":["browser_automation","code_execution","filesystem_outside_attention","other_mcp","shell"],"write":["attention_state","managed_bridge_artifacts","user_service_config"]},"native_network":["public_web_reader"],"schema_version":1}',
+      '{"cloud":{"mcp_server":"attention_only","runtime_oauth":{"resource":"attention-channel-runtime","scopes":["runtime:register","runtime:heartbeat","channel:bind:report","channel:disconnect:report","channel:notifications:read"]},"tools":["attention_get_my_account","attention_list_collections","attention_collect_content","attention_submit_content_enrichment","attention_select_collection_candidate","attention_get_collection_status","attention_update_collection"]},"local":{"deny":["browser_automation","code_execution","filesystem_outside_attention","other_mcp","shell"],"write":["attention_state","managed_bridge_artifacts","user_service_config"]},"native_network":["public_web_reader"],"schema_version":2}',
     );
     expect(ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256).toBe(
-      "2b2bca585577cd6f0d2adc310f798a8e200ac6a274862b3564c9b36408c1606d",
+      "008145538ba70eaef4d66a6e99c588dd0cae2087dba8de85202e21f2eb738230",
     );
   });
 

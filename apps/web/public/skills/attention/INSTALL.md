@@ -398,12 +398,16 @@ Privacy boundary for the bridge:
 - The iLink bot identifier is not an Attention identity and is never used
   for login, entitlements, or global identity.
 - Bridge logs omit tokens and full message bodies.
-- CLI `0.3.5` can optionally authorize a separate Runtime OAuth client. Its
+- CLI `0.3.6` can optionally authorize a separate Runtime OAuth client. Its
   reporter sends privacy-safe runtime status, timestamps, bounded queue counts,
-  checkpoints, and device-pairing results only.
+  checkpoints, and device-pairing results. The same client can also read a
+  minimal, account-private queue of completed summaries so the local Bridge can
+  deliver them to the verified WeChat binding.
 - The reporter never sends iLink credentials, Codex credentials or thread IDs,
   message identifiers or content, URLs, replies, contacts, or raw WeChat
-  identifiers.
+  identifiers. Summary delivery is a separate pull: only completed summaries
+  for content that this account had already collected through WeChat are
+  returned to the bound device.
 - This exclusion applies to the Runtime reporter, not to normal authenticated
   Attention MCP operations. When a user asks to save something,
   `attention_collect_content` necessarily sends the saved URL and associated
@@ -460,25 +464,32 @@ explicit consent before running:
 attention device sync enable --origin {attention_origin}
 ```
 
-This opens the separate device-status authorization. Declining it is a complete
-and successful setup: MCP, local WeChat, and collection keep working.
+This opens the separate device-status authorization. In CLI `0.3.6` it also
+enables delayed summary-completion replies in WeChat. Declining it is a
+complete and successful setup: MCP, local WeChat, and collection keep working,
+but Web status and delayed summary replies remain disabled.
 
 ## Runtime OAuth boundary
 
 The backend exposes a separate Local Channel Runtime resource. Attention CLI
-`0.3.5` may authorize it for privacy-safe runtime reporting and device-pairing
-results:
+`0.3.6` may authorize it for privacy-safe runtime reporting, device-pairing
+results, and account-private summary completion delivery:
 
 ```text
 Resource: {attention_origin}/api/runtime
-Scopes:   runtime:register runtime:heartbeat channel:bind:report channel:disconnect:report
+Scopes:   runtime:register runtime:heartbeat channel:bind:report channel:disconnect:report channel:notifications:read
 ```
 
 The Runtime and MCP clients have separate access tokens, refresh tokens,
 audiences, and revocation boundaries. An Attention API Key cannot replace the
 Runtime credential. Runtime OAuth is optional: declining it does not prevent
 the local bridge or MCP from working, but Attention Web cannot receive live
-runtime or pairing updates from that device.
+runtime or pairing updates from that device and the Bridge cannot pull
+completed-summary notices.
+
+`0.3.6` adds `channel:notifications:read`. Existing Runtime OAuth grants do not
+gain it silently. After installing `0.3.6`, run `attention device sync enable
+--origin {attention_origin}` once and approve the updated scope set.
 
 Runtime reporting is not remote channel hosting. Attention receives only
 privacy-safe state such as health, timestamps, bounded queue counts,
@@ -493,7 +504,7 @@ receive a reply and Web can show only the last heartbeat and checkpoint.
 
 - iLink token, context token, sync cursor, contact data, and media keys remain
   local to the Channel Owner.
-- Attention receives normal authenticated MCP calls. The optional CLI `0.3.5`
+- Attention receives normal authenticated MCP calls. The optional CLI `0.3.6`
   Runtime reporter may submit installation metadata, opaque fingerprints,
   pairing results, health timestamps, bounded queue counts, and checkpoints—but
   never the channel credential, Codex thread, message, URL, or reply. Normal MCP

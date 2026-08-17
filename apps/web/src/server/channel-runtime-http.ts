@@ -7,6 +7,8 @@ import {
 import {
   CHANNEL_RUNTIME_API_VERSION,
   ChannelActivityReportSchema,
+  ChannelSummaryNotificationCursorSchema,
+  ChannelSummaryNotificationPollResponseSchema,
   CreateChannelBindingRequestSchema,
   DisconnectChannelBindingRequestSchema,
   InstallationHeartbeatSchema,
@@ -29,6 +31,7 @@ import {
 import {
   ChannelRuntimeServiceError,
   createChannelRuntimeService,
+  decodeSummaryNotificationCursor,
   type ChannelRuntimeService,
   type RuntimePrincipal,
 } from "./channel-runtime-service";
@@ -50,6 +53,7 @@ export type ChannelRuntimeHttpService = Pick<
   | "getInstallation"
   | "listChannelBindings"
   | "listInstallations"
+  | "listSummaryNotifications"
   | "recordChannelActivity"
   | "recordInstallationHeartbeat"
   | "registerInstallation"
@@ -79,6 +83,14 @@ const bindingParamsSchema = z
   .strict();
 const installationQuerySchema = z
   .object({ installation_id: InstallationIdSchema })
+  .strict();
+const summaryNotificationQuerySchema = z
+  .object({
+    after: ChannelSummaryNotificationCursorSchema.optional(),
+    binding_id: z.string().uuid(),
+    installation_id: InstallationIdSchema,
+    limit: z.coerce.number().int().min(1).max(20).default(20),
+  })
   .strict();
 const revokeInstallationBodySchema = z
   .object({
@@ -546,6 +558,41 @@ export async function handleChannelBindingActivity(
     ChannelActivityReportSchema,
     (service, principal, input) =>
       service.recordChannelActivity(principal, input),
+    dependencies,
+  );
+}
+
+export async function handleListSummaryNotifications(
+  request: Request,
+  dependencies = defaultDependencies,
+): Promise<Response> {
+  return runRuntimeRequest(
+    request,
+    "channel:notifications:read",
+    "list_summary_notifications",
+    async ({ database, dependencies, runtimePrincipal }) => {
+      const query = summaryNotificationQuerySchema.parse(queryObject(request));
+      const service = dependencies.createService(database);
+      const installation = await service.getInstallation(
+        runtimePrincipal,
+        query.installation_id,
+      );
+      assertRuntimeControlledInstallation(installation);
+      const result = await service.listSummaryNotifications(runtimePrincipal, {
+        after: query.after
+          ? decodeSummaryNotificationCursor(query.after)
+          : null,
+        bindingId: query.binding_id,
+        installationId: query.installation_id,
+        limit: query.limit,
+      });
+      return noStoreJson(
+        ChannelSummaryNotificationPollResponseSchema.parse({
+          items: result.items,
+          next_cursor: result.nextCursor,
+        }),
+      );
+    },
     dependencies,
   );
 }

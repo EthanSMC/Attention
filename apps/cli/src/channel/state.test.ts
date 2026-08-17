@@ -182,10 +182,24 @@ describe("channel state persistence", () => {
       installationId: "11111111-1111-4111-8111-111111111111",
       runtimeClientFingerprint: "a".repeat(64),
     };
+    state.summaryNotificationCursor =
+      "2026-08-14T08:30:00.000Z|44444444-4444-4444-8444-444444444444";
     await saveChannelState(state, base);
 
     const loaded = await loadChannelState(base);
     expect(loaded).toEqual(state);
+  });
+
+  it("drops malformed summary notification cursors", async () => {
+    const base = await makeTempBase();
+    await saveChannelState(defaultChannelState(), base);
+    const raw = JSON.parse(
+      await readFile(channelStatePath(base), "utf8"),
+    ) as Record<string, unknown>;
+    raw.summaryNotificationCursor = "Bearer private-token";
+    await writeFile(channelStatePath(base), JSON.stringify(raw), "utf8");
+
+    expect((await loadChannelState(base)).summaryNotificationCursor).toBeNull();
   });
 
   it("round-trips only a bounded account-verification checkpoint", async () => {

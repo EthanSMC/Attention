@@ -8,6 +8,7 @@ import {
   createDatabase,
   domains,
   eq,
+  eventLedger,
   filterProfiles,
   sql,
   upsertContentByIdentity,
@@ -135,6 +136,41 @@ describe.skipIf(!databaseUrl)("content enrichment service with PostgreSQL", () =
       content: { id: contentId },
       created: false,
     });
+  });
+
+  it("emits one shared summary-ready event for a WeChat collection", async () => {
+    await handle.db
+      .update(collections)
+      .set({ sourceChannel: "wechat" })
+      .where(eq(collections.accountId, accountId));
+
+    await expect(
+      asWebRuntime((runtime) =>
+        submitContentEnrichment(runtime.db, { accountId }, input),
+      ),
+    ).resolves.toMatchObject({ status: "enriched" });
+
+    expect(
+      await handle.db
+        .select({
+          accountId: eventLedger.accountId,
+          contentId: eventLedger.contentId,
+          dedupeKey: eventLedger.dedupeKey,
+          eventType: eventLedger.eventType,
+          metadata: eventLedger.metadata,
+          scope: eventLedger.scope,
+        })
+        .from(eventLedger),
+    ).toEqual([
+      {
+        accountId: null,
+        contentId,
+        dedupeKey: `content.summary.ready.v1:${contentId}`,
+        eventType: "content.summary.ready.v1",
+        metadata: { schema_version: 1 },
+        scope: "private",
+      },
+    ]);
   });
 
   it("records the short and direct identities and converges an existing account duplicate", async () => {

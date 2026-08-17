@@ -69,7 +69,7 @@ describe("OAuth dynamic registration request limits", () => {
             resource: "https://attention.example/api/runtime",
             response_types: ["code"],
             scope:
-              "runtime:heartbeat channel:disconnect:report runtime:register channel:bind:report",
+              "runtime:heartbeat channel:disconnect:report runtime:register channel:bind:report channel:notifications:read",
             software_id: "attention-channel-runtime",
             token_endpoint_auth_method: "none",
           }),
@@ -163,7 +163,7 @@ describe("OAuth dynamic registration request limits", () => {
             client_name: "Runtime-shaped client",
             redirect_uris: ["http://127.0.0.1:43123/callback"],
             scope:
-              "runtime:heartbeat channel:disconnect:report runtime:register channel:bind:report",
+              "runtime:heartbeat channel:disconnect:report runtime:register channel:bind:report channel:notifications:read",
             ...metadata,
           }),
           headers: { "content-type": "application/json" },
@@ -204,7 +204,7 @@ describe("OAuth dynamic registration request limits", () => {
             redirect_uris: ["http://127.0.0.1:43123/callback"],
             resource: "https://attention.example/api/runtime",
             scope:
-              "runtime:heartbeat channel:disconnect:report runtime:register channel:bind:report",
+              "runtime:heartbeat channel:disconnect:report runtime:register channel:bind:report channel:notifications:read",
             software_id: "attention-channel-runtime",
             ...invalid,
           }),
@@ -242,7 +242,7 @@ describe("OAuth dynamic registration request limits", () => {
             ],
             response_types: ["code"],
             scope:
-              "profile:read collection:read collection:write digest:read digest:write moderation:write moderation:court:read moderation:court:vote sync:read sync:write public:read public:full ai:search subscription:read runtime:register runtime:heartbeat channel:bind:report channel:disconnect:report",
+              "profile:read collection:read collection:write digest:read digest:write moderation:write moderation:court:read moderation:court:vote sync:read sync:write public:read public:full ai:search subscription:read runtime:register runtime:heartbeat channel:bind:report channel:disconnect:report channel:notifications:read",
             token_endpoint_auth_method: "none",
           }),
           headers: { "content-type": "application/json" },
@@ -401,7 +401,7 @@ describe("OAuth dynamic registration request limits", () => {
             client_name: "Runtime client",
             redirect_uris: ["http://127.0.0.1:43123/callback"],
             scope:
-              "runtime:heartbeat channel:disconnect:report runtime:register channel:bind:report",
+              "runtime:heartbeat channel:disconnect:report runtime:register channel:bind:report channel:notifications:read",
           }),
           headers: { "content-type": "application/json" },
           method: "POST",
@@ -412,11 +412,12 @@ describe("OAuth dynamic registration request limits", () => {
       expect(response.status).toBe(201);
       await expect(response.json()).resolves.toMatchObject({
         scope:
-          "channel:bind:report channel:disconnect:report runtime:heartbeat runtime:register",
+          "channel:bind:report channel:disconnect:report channel:notifications:read runtime:heartbeat runtime:register",
       });
       expect(inserted[0]?.allowedScopes).toEqual([
         "channel:bind:report",
         "channel:disconnect:report",
+        "channel:notifications:read",
         "runtime:heartbeat",
         "runtime:register",
       ]);
