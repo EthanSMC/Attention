@@ -142,6 +142,23 @@ does not disclose another account's private collections.
 8. If the Agent cannot read the page, keep the collection saved and leave the
    summary pending. Never invent a summary.
 
+### 5.1 Automatic recovery from a later status check
+
+The same enrichment decision also applies when the Agent later calls
+`attention_get_collection_status`. For an owned, active, safe Content whose
+summary is still pending, the status response returns
+`enrichment_action=generate_summary` and the exact safe `public_read_url`.
+The Agent immediately runs steps 4–7 above without asking the user for another
+confirmation. This covers follow-ups such as “补一下摘要”, “处理一下”, and
+“这个摘要好了吗”, as well as a collection that was first saved while its
+public page was temporarily unreadable.
+
+The status API derives this instruction from the same server-side decision
+function as the initial collection response. It returns no public reader URL
+for ready, hidden, terminally unavailable, unsafe, removed, merged, or
+moderation-ineligible Content. A status lookup remains owner-scoped and must
+not expose another account's Content or source URL.
+
 The designated WeChat Bridge is allowed public-network access for this flow.
 Host-specific implementation may use Codex or Claude Code native public-web
 reading, but Shell writes, unrelated MCP servers, credentials, authenticated
