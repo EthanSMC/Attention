@@ -30,6 +30,7 @@ import {
   isOAuthConnectionNameConflict,
   normalizeOAuthConnectionLabel,
   OAuthConnectionNameConflictError,
+  oauthConnectionLabelCandidate,
   resolveRuntimeOAuthConnectionIntent,
   type OAuthConnectionIntent,
 } from "./oauth-connection";
@@ -464,6 +465,7 @@ async function materializeLegacyOAuthConnection(
     audience: OAuthAudience;
     authorizedAt: Date;
     clientId: string;
+    genericClientName: string | null;
     now: Date;
     reauthorize: boolean;
     trustedRuntimeClient: TrustedRuntimeClientMetadata | null;
@@ -491,7 +493,6 @@ async function materializeLegacyOAuthConnection(
       throw new OAuthError("invalid_grant");
     }
     if (intent.mode === "auto") throw new OAuthError("invalid_grant");
-    const normalized = normalizeOAuthConnectionLabel(intent.label);
     if (intent.mode === "rotate") {
       const [existing] = await tx
         .select()
@@ -523,9 +524,7 @@ async function materializeLegacyOAuthConnection(
           clientId: input.clientId,
           deviceName: trusted.deviceName,
           installationKeyHash: trusted.installationKeyHash,
-          label: normalized.label,
           ...(input.reauthorize ? { lastAuthorizedAt: input.now } : {}),
-          normalizedLabel: normalized.normalizedLabel,
           updatedAt: input.now,
         })
         .where(eq(oauthConnections.id, existing.id));
@@ -534,6 +533,7 @@ async function materializeLegacyOAuthConnection(
     if (intent.mode === "replace") {
       throw new OAuthConnectionNameConflictError();
     }
+    const normalized = normalizeOAuthConnectionLabel(trusted.deviceName);
     const connectionId = randomUUID();
     const [created] = await tx
       .insert(oauthConnections)
@@ -553,6 +553,31 @@ async function materializeLegacyOAuthConnection(
       .returning({ id: oauthConnections.id });
     if (!created) throw new OAuthError("invalid_grant");
     return created.id;
+  }
+
+  if (input.genericClientName) {
+    for (let ordinal = 1; ordinal <= 1_000; ordinal += 1) {
+      const candidate = oauthConnectionLabelCandidate(
+        input.genericClientName,
+        ordinal,
+      );
+      const [created] = await tx
+        .insert(oauthConnections)
+        .values({
+          accountId: input.accountId,
+          audience: input.audience,
+          clientId: input.clientId,
+          kind: "mcp",
+          label: candidate.label,
+          lastAuthorizedAt: input.authorizedAt,
+          normalizedLabel: candidate.normalizedLabel,
+          updatedAt: input.now,
+        })
+        .onConflictDoNothing()
+        .returning({ id: oauthConnections.id });
+      if (created) return created.id;
+    }
+    throw new OAuthError("invalid_grant");
   }
 
   const imported = importedOAuthConnectionIdentity();
@@ -613,22 +638,29 @@ export async function exchangeAuthorizationCode(
         throw new OAuthError("invalid_target");
       }
       runtimeExchange = code.audience === CHANNEL_RUNTIME_RESOURCE;
-      const trustedRuntimeClient = runtimeExchange
-        ? (await tx
-            .select({
-              deviceName: oauthClients.deviceName,
-              installationKeyHash: oauthClients.installationKeyHash,
-            })
-            .from(oauthClients)
-            .where(
-              and(
-                eq(oauthClients.clientId, code.clientId),
-                eq(oauthClients.active, true),
-                eq(oauthClients.connectionKind, "runtime"),
-              ),
-            )
-            .limit(1))[0]
-        : null;
+      const activeClient = (await tx
+        .select({
+          connectionKind: oauthClients.connectionKind,
+          deviceName: oauthClients.deviceName,
+          installationKeyHash: oauthClients.installationKeyHash,
+          name: oauthClients.name,
+        })
+        .from(oauthClients)
+        .where(
+          and(
+            eq(oauthClients.clientId, code.clientId),
+            eq(oauthClients.active, true),
+          ),
+        )
+        .limit(1))[0];
+      if (!activeClient?.name) throw new OAuthError("invalid_grant");
+      const trustedRuntimeClient =
+        runtimeExchange && activeClient.connectionKind === "runtime"
+          ? {
+              deviceName: activeClient.deviceName,
+              installationKeyHash: activeClient.installationKeyHash,
+            }
+          : null;
       if (
         runtimeExchange &&
         (
@@ -706,6 +738,7 @@ export async function exchangeAuthorizationCode(
           audience: requestedResource.audience,
           authorizedAt: now,
           clientId: code.clientId,
+          genericClientName: runtimeExchange ? null : activeClient.name,
           now,
           reauthorize: true,
           trustedRuntimeClient: trustedRuntimeClient ?? null,
@@ -894,6 +927,7 @@ export async function rotateRefreshToken(
           audience: requestedResource.audience,
           authorizedAt: candidate.createdAt,
           clientId: candidate.clientId,
+          genericClientName: null,
           now,
           reauthorize: false,
           trustedRuntimeClient: trustedRuntimeClient ?? null,

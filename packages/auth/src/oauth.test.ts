@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   oauthAccessTokens,
   oauthAuthorizationCodes,
+  oauthClients,
   oauthConnections,
   oauthRefreshTokens,
   type AttentionDatabase,
@@ -437,10 +438,62 @@ describe("OAuth connection-aware authorization", () => {
     expect(db.state.refreshTokens[0]?.connectionId).toBe(pair.connectionId);
   });
 
-  it("materializes an isolated imported connection for a legacy authorization code", async () => {
+  it("allocates client-name labels without replacing an existing connection", async () => {
+    const firstCode = opaqueToken("automatic-label-one");
+    const secondCode = opaqueToken("automatic-label-two");
+    const db = new OAuthStateDatabase({
+      authorizationCodes: [
+        await authorizationCode(firstCode),
+        await authorizationCode(secondCode),
+      ],
+      clients: [oauthClient({ name: "Codex" })],
+    });
+
+    const first = await exchangeAuthorizationCode(
+      db.database,
+      exchangeInput(firstCode),
+    );
+    const second = await exchangeAuthorizationCode(
+      db.database,
+      exchangeInput(secondCode),
+    );
+
+    expect(db.state.connections.find(({ id }) => id === first.connectionId)).toMatchObject({
+      label: "Codex",
+      normalizedLabel: "codex",
+      revokedAt: null,
+    });
+    expect(db.state.connections.find(({ id }) => id === second.connectionId)).toMatchObject({
+      label: "Codex 2",
+      normalizedLabel: "codex 2",
+      revokedAt: null,
+    });
+  });
+
+  it("retries the next label after a concurrent insertion collision", async () => {
+    const code = opaqueToken("automatic-label-race");
+    const db = new OAuthStateDatabase({
+      authorizationCodes: [await authorizationCode(code)],
+      clients: [oauthClient({ name: "Codex" })],
+      connectionInsertConflicts: 1,
+    });
+
+    const pair = await exchangeAuthorizationCode(db.database, exchangeInput(code));
+
+    expect(db.state.connections).toEqual([
+      expect.objectContaining({
+        id: pair.connectionId,
+        label: "Codex 2",
+        normalizedLabel: "codex 2",
+      }),
+    ]);
+  });
+
+  it("materializes a client-named connection for an automatic authorization code", async () => {
     const code = opaqueToken("legacy-create-code");
     const db = new OAuthStateDatabase({
       authorizationCodes: [await authorizationCode(code)],
+      clients: [oauthClient({ name: "Codex" })],
     });
 
     const pair = await exchangeAuthorizationCode(db.database, exchangeInput(code));
@@ -452,8 +505,8 @@ describe("OAuth connection-aware authorization", () => {
       clientId,
       id: pair.connectionId,
       kind: "mcp",
-      label: `Imported connection ${pair.connectionId}`,
-      normalizedLabel: `imported connection ${pair.connectionId}`,
+      label: "Codex",
+      normalizedLabel: "codex",
       revokedAt: null,
     });
     expect(db.state.authorizationCodes[0]).toMatchObject({
@@ -553,6 +606,68 @@ describe("OAuth connection-aware authorization", () => {
     })).rejects.toMatchObject({ code: "invalid_grant" });
     expect(db.state.authorizationCodes[0]?.consumedAt).toBeNull();
     expect(db.state.connections).toHaveLength(0);
+  });
+
+  it("preserves a Runtime user rename while rotating the trusted installation", async () => {
+    const code = opaqueToken("runtime-preserve-rename");
+    const runtimeClientId = "attention-runtime-client";
+    const runtimeConnectionId = "20000000-0000-4000-8000-000000000008";
+    const installationKeyHash = "b".repeat(64);
+    const db = new OAuthStateDatabase({
+      accessTokens: [credential({
+        audience: "attention-channel-runtime",
+        clientId: "previous-runtime-client",
+        connectionId: runtimeConnectionId,
+      })],
+      authorizationCodes: [await authorizationCode(code, {
+        audience: "attention-channel-runtime",
+        clientId: runtimeClientId,
+        scopes: ["runtime:register", "runtime:heartbeat"],
+      })],
+      clients: [oauthClient({
+        clientId: runtimeClientId,
+        connectionKind: "runtime",
+        deviceName: "Ethan MacBook",
+        installationKeyHash,
+        name: "Attention Local Channel Runtime",
+      })],
+      connections: [connection({
+        audience: "attention-channel-runtime",
+        clientId: "previous-runtime-client",
+        deviceName: "Ethan MacBook",
+        id: runtimeConnectionId,
+        installationKeyHash,
+        kind: "runtime",
+        label: "工作电脑",
+        normalizedLabel: "工作电脑",
+      })],
+      refreshTokens: [credential({
+        audience: "attention-channel-runtime",
+        clientId: "previous-runtime-client",
+        connectionId: runtimeConnectionId,
+      })],
+    });
+
+    const pair = await exchangeAuthorizationCode(db.database, {
+      ...exchangeInput(code),
+      clientId: runtimeClientId,
+      resource: resources["attention-channel-runtime"],
+    });
+
+    expect(pair.connectionId).toBe(runtimeConnectionId);
+    expect(db.state.connections).toEqual([
+      expect.objectContaining({
+        clientId: runtimeClientId,
+        deviceName: "Ethan MacBook",
+        id: runtimeConnectionId,
+        installationKeyHash,
+        label: "工作电脑",
+        normalizedLabel: "工作电脑",
+        revokedAt: null,
+      }),
+    ]);
+    expect(db.state.accessTokens[0]?.status).toBe("revoked");
+    expect(db.state.refreshTokens[0]?.status).toBe("revoked");
   });
 
   it("replaces the locked matching connection and its credentials atomically", async () => {
@@ -883,13 +998,24 @@ interface AuthorizationCodeRow {
   scopes: string[];
 }
 
+interface OAuthClientRow {
+  active: boolean;
+  clientId: string;
+  connectionKind: "generic" | "runtime";
+  deviceName: string | null;
+  installationKeyHash: string | null;
+  name: string;
+}
+
 interface ConnectionRow {
   accountId: string;
   audience: string;
   clientId: string;
   clientName: string;
   createdAt: Date;
+  deviceName: string | null;
   id: string;
+  installationKeyHash: string | null;
   kind: "mcp" | "runtime";
   label: string;
   lastAuthorizedAt: Date;
@@ -917,6 +1043,7 @@ interface CredentialRow {
 interface OAuthState {
   accessTokens: CredentialRow[];
   authorizationCodes: AuthorizationCodeRow[];
+  clients: OAuthClientRow[];
   connections: ConnectionRow[];
   refreshTokens: CredentialRow[];
 }
@@ -956,7 +1083,9 @@ function connection(overrides: Partial<ConnectionRow> = {}): ConnectionRow {
     clientId,
     clientName: "Attention Test Client",
     createdAt: new Date("2026-08-10T10:00:00.000Z"),
+    deviceName: null,
     id: "20000000-0000-4000-8000-000000000002",
+    installationKeyHash: null,
     kind: "mcp",
     label: "Office MacBook",
     lastAuthorizedAt: new Date("2026-08-10T10:00:00.000Z"),
@@ -964,6 +1093,18 @@ function connection(overrides: Partial<ConnectionRow> = {}): ConnectionRow {
     normalizedLabel: "office macbook",
     revokedAt: null,
     updatedAt: new Date("2026-08-10T10:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+function oauthClient(overrides: Partial<OAuthClientRow> = {}): OAuthClientRow {
+  return {
+    active: true,
+    clientId,
+    connectionKind: "generic",
+    deviceName: null,
+    installationKeyHash: null,
+    name: "Attention Test Client",
     ...overrides,
   };
 }
@@ -990,21 +1131,25 @@ class OAuthStateDatabase {
   readonly database: AttentionDatabase;
   private readonly failRefreshTokenInsert: boolean;
   private readonly failRefreshTokenRevoke: boolean;
+  private connectionInsertConflicts: number;
   private transactionTail: Promise<void> = Promise.resolve();
   private nextId = 10;
 
   constructor(input: Partial<OAuthState> & {
+    connectionInsertConflicts?: number;
     failRefreshTokenInsert?: boolean;
     failRefreshTokenRevoke?: boolean;
   }) {
     this.state = {
       accessTokens: input.accessTokens ?? [],
       authorizationCodes: input.authorizationCodes ?? [],
+      clients: input.clients ?? [oauthClient()],
       connections: input.connections ?? [],
       refreshTokens: input.refreshTokens ?? [],
     };
     this.failRefreshTokenInsert = input.failRefreshTokenInsert ?? false;
     this.failRefreshTokenRevoke = input.failRefreshTokenRevoke ?? false;
+    this.connectionInsertConflicts = input.connectionInsertConflicts ?? 0;
     this.database = {
       transaction: <T>(callback: (tx: AttentionDatabase) => Promise<T>) =>
         this.transaction(callback),
@@ -1060,6 +1205,11 @@ class OAuthStateDatabase {
           ? state.connections.filter((row) => strings.includes(row.id))
           : state.connections;
       }
+      if (table === oauthClients) {
+        return state.clients.filter((row) =>
+          strings.includes(row.clientId) && row.active
+        );
+      }
       return [];
     };
     const query = {
@@ -1083,14 +1233,20 @@ class OAuthStateDatabase {
   }
 
   private insert(state: OAuthState, table: unknown, value: Record<string, unknown>) {
+    let ignoreConflict = false;
     const execute = () => {
       if (table === oauthConnections) {
+        if (ignoreConflict && this.connectionInsertConflicts > 0) {
+          this.connectionInsertConflicts -= 1;
+          return [];
+        }
         if (state.connections.some((row) =>
           row.accountId === value.accountId &&
           row.audience === value.audience &&
           row.normalizedLabel === value.normalizedLabel &&
           row.revokedAt === null
         )) {
+          if (ignoreConflict) return [];
           throw Object.assign(new Error("duplicate key"), {
             code: "23505",
             constraint_name: "oauth_connections_active_name_unique",
@@ -1129,13 +1285,18 @@ class OAuthStateDatabase {
       }
       return [];
     };
-    return {
+    const query = {
+      onConflictDoNothing: () => {
+        ignoreConflict = true;
+        return query;
+      },
       returning: async () => execute(),
       then: <TResult1 = unknown, TResult2 = never>(
         onfulfilled?: ((value: unknown) => TResult1 | PromiseLike<TResult1>) | null,
         onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
       ) => Promise.resolve().then(execute).then(onfulfilled, onrejected),
     };
+    return query;
   }
 
   private update(
