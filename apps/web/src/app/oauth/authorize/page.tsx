@@ -77,7 +77,7 @@ export default async function OAuthAuthorizePage({
       scope: single(params.scope),
       ...(single(params.state) ? { state: single(params.state) } : {}),
     });
-  } catch (error) {
+  } catch {
     return (
       <div className="oauth-consent-shell">
         <section className="oauth-consent oauth-consent--error">

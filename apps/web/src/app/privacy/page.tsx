@@ -7,7 +7,7 @@ export const metadata: Metadata = { title: "隐私政策" };
 export default function PrivacyPage() {
   return (
     <article className="page-shell policy-page">
-      <PageIntro description={<p>了解账号、私人链接和第三方连接的数据边界。</p>} eyebrow="2026-08-04 版本" title="Attention 隐私政策" />
+      <PageIntro description={<p>了解账号、私人链接和第三方连接的数据边界。</p>} eyebrow="2026-08-17 版本" title="Attention 隐私政策" />
       <section>
         <h2>我们保存什么</h2>
         <p>账号会保存邮箱、可选的 Attention ID、展示名和安全凭据的不可逆摘要。网站 Session、OAuth token 与 API Key 分别保存和撤销。</p>
@@ -15,6 +15,10 @@ export default function PrivacyPage() {
         <p><strong>私人链接同步到云端意味着服务端可以看到并保存 URL。</strong>私人收藏不会进入公开流、公共检索、日报或其他账号的结果。</p>
         <h2>游客</h2>
         <p>游客没有 Attention 账号或私人云端空间。完成邮箱验证前，收藏入口不会接收或暂存链接。</p>
+        <h2>第三方 OAuth 客户端</h2>
+        <p>你连接的第三方客户端只会在你允许的权限和当前账号权益范围内访问数据，不会获得你的 Attention 网站登录 Session。</p>
+        <p>第三方接收数据后，由第三方按照其隐私政策负责处理。你可以随时前往<a href="/account/connections">连接与授权</a>撤销连接。</p>
+        <p>撤销只会阻止未来访问，不会删除第三方此前已经接收的数据；如需删除这些数据，请联系相应第三方。</p>
         <h2>第三方来源</h2>
         <p>打开原文会前往第三方网站；第三方平台将按照其自己的隐私政策处理访问。</p>
       </section>
