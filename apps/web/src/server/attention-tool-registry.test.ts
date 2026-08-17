@@ -550,6 +550,47 @@ describe("Attention Tool Registry execution contract", () => {
     );
   });
 
+  it("returns the owner-scoped automatic enrichment handoff from status", async () => {
+    const getStatus = vi.fn(async () => ({
+      attempt: null,
+      collection: ownedCollectionStatus(),
+      content: {
+        community_moderation_status: "clear" as const,
+        content_id: collectionId,
+        content_status: "active" as const,
+        content_type: "article",
+        enrichment_action: "generate_summary" as const,
+        enrichment_status: "partial" as const,
+        public_read_url: "https://example.org/status-source",
+        public_safety_status: "allowed" as const,
+        source: "generic_web",
+        summary_status: "pending" as const,
+        takedown_status: "none" as const,
+        title: "Example",
+        updated_at: statusTimestamp,
+      },
+    }));
+    const core = dependencies({
+      getCollectionStatus:
+        getStatus as unknown as AttentionToolCoreDependencies["getCollectionStatus"],
+    });
+
+    await expect(
+      tool(core, "attention_get_collection_status").invoke(
+        context({ scopes: ["collection:read"] }),
+        { collection_id: collectionId },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        content: {
+          enrichment_action: "generate_summary",
+          public_read_url: "https://example.org/status-source",
+        },
+      },
+    });
+  });
+
   it("records only allowlisted client context and result references", async () => {
     const recordAudit = vi.fn(async () => undefined);
     const core = dependencies({

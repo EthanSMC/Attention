@@ -62,4 +62,19 @@ describe("channel intent", () => {
     );
     expect(prompt).toMatch(/不要从原始多链接文案猜测/u);
   });
+
+  it("automatically enriches an eligible missing summary returned by status", () => {
+    const prompt = buildFirstTurnPrompt({
+      messageRef: "msg-recover-summary",
+      userMessage: "处理一下刚才待补全的摘要",
+    });
+
+    expect(prompt).toMatch(
+      /attention_get_collection_status[\s\S]*enrichment_action=`generate_summary`[\s\S]*public_read_url/u,
+    );
+    expect(prompt).toMatch(/无需再次询问或确认/u);
+    expect(prompt).toMatch(
+      /只使用[^\n]*public_read_url[\s\S]*attention_submit_content_enrichment/u,
+    );
+  });
 });

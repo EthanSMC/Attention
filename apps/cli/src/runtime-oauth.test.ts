@@ -235,7 +235,7 @@ describe("dedicated Runtime OAuth", () => {
       registrationEndpoint,
     ]);
     expect(new Set(harness.userAgents)).toEqual(
-      new Set(["attention-cli/0.3.6"]),
+      new Set(["attention-cli/0.3.7"]),
     );
     expect(harness.registrationBodies).toEqual([{
       application_type: "native",
@@ -249,7 +249,7 @@ describe("dedicated Runtime OAuth", () => {
       response_types: ["code"],
       scope: runtimeScope,
       software_id: "attention-channel-runtime",
-      software_version: "0.3.6",
+      software_version: "0.3.7",
       token_endpoint_auth_method: "none",
     }]);
     expect(harness.registrationBodies[0]).not.toHaveProperty("mac_address");

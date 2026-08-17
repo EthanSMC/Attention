@@ -40,20 +40,20 @@ async function setup(): Promise<{
   });
   const candidate = Buffer.from(`#!/usr/bin/env node
 if (process.argv.includes("--bridge-update-probe")) {
-  console.log(JSON.stringify({ permission_profile_sha256: ${JSON.stringify(ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256)}, version: "0.3.6" }));
+  console.log(JSON.stringify({ permission_profile_sha256: ${JSON.stringify(ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256)}, version: "0.3.7" }));
 }
 `);
   return {
     candidate,
     home,
     manifest: {
-      artifact_path: "/cli/attention-0.3.6.mjs",
+      artifact_path: "/cli/attention-0.3.7.mjs",
       minimum_supported_version: "0.3.5",
       node: ">=22.16.0",
       permission_profile_sha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
       schema_version: 2,
       sha256: createHash("sha256").update(candidate).digest("hex"),
-      version: "0.3.6",
+      version: "0.3.7",
     },
   };
 }
@@ -94,10 +94,10 @@ describe("Bridge update staging", () => {
     });
     const state = await loadManagedBridgeUpdateState(home);
 
-    expect(result).toEqual({ status: "staged", version: "0.3.6" });
+    expect(result).toEqual({ status: "staged", version: "0.3.7" });
     expect(state).toMatchObject({
-      current: { version: "0.3.6" },
-      pending: { version: "0.3.6" },
+      current: { version: "0.3.7" },
+      pending: { version: "0.3.7" },
       previous: { version: "0.3.5" },
       status: "restarting",
     });
@@ -129,7 +129,7 @@ describe("Bridge update staging", () => {
       origin: "https://attention.example",
     });
 
-    expect(result).toEqual({ status: "consent_required", version: "0.3.6" });
+    expect(result).toEqual({ status: "consent_required", version: "0.3.7" });
     expect(requests).toBe(1);
     expect(await loadManagedBridgeUpdateState(home)).toMatchObject({
       current: { version: "0.3.5" },
@@ -176,7 +176,7 @@ describe("Bridge update staging", () => {
     const { candidate, home, manifest } = await setup();
     const badCandidate =
       mutate === "probe"
-        ? Buffer.from(candidate.toString("utf8").replace('version: "0.3.6"', 'version: "9.9.9"'))
+        ? Buffer.from(candidate.toString("utf8").replace('version: "0.3.7"', 'version: "9.9.9"'))
         : candidate;
     const servedManifest = {
       ...manifest,

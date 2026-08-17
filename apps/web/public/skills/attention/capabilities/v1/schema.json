@@ -74,7 +74,7 @@
         },
         "contract_version": {
           "type": "string",
-          "const": "1.5.0"
+          "const": "1.6.0"
         },
         "scopes": {
           "type": "array",
@@ -103,7 +103,7 @@
             "properties": {
               "contract_version": {
                 "type": "string",
-                "const": "1.5.0"
+                "const": "1.6.0"
               },
               "entitlement": {
                 "type": "object",

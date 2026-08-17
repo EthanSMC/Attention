@@ -22,12 +22,19 @@ export type CollectionReplyControl =
       readonly kind: "established";
     }
   | {
+      readonly enrichmentAction: CollectionEnrichmentAction;
+      readonly enrichmentCompleted: boolean;
+      readonly kind: "recovery";
+      readonly summaryStatus: "hidden" | "pending" | "ready" | "unavailable";
+    }
+  | {
       readonly kind: "fixed";
       readonly reply:
         | "未保存：链接无效。"
         | "未保存：链接未通过安全检查。"
         | "链接仍在解析，收藏尚未完成。"
-        | "收藏结果无法确认，请稍后重试。";
+        | "收藏结果无法确认，请稍后重试。"
+        | "收藏状态无法确认，请稍后重试。";
     };
 
 const UNCONFIRMED_COLLECTION_REPLY = {
@@ -89,6 +96,27 @@ function enrichmentAction(value: unknown): CollectionEnrichmentAction | null {
     : null;
 }
 
+function summaryStatus(
+  value: unknown,
+): "hidden" | "pending" | "ready" | "unavailable" | null {
+  return value === "hidden" ||
+    value === "pending" ||
+    value === "ready" ||
+    value === "unavailable"
+    ? value
+    : null;
+}
+
+function isAbsoluteHttpUrl(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export function applyAttentionToolResult(
   current: CollectionReplyControl | null,
   toolName: string,
@@ -123,9 +151,36 @@ export function applyAttentionToolResult(
         }
       : UNCONFIRMED_COLLECTION_REPLY;
   }
+  if (normalizedToolName === "attention_get_collection_status") {
+    if (!payload) {
+      return {
+        kind: "fixed",
+        reply: "收藏状态无法确认，请稍后重试。",
+      };
+    }
+    if (payload.content === null) return current;
+    const content = record(payload.content);
+    const action = enrichmentAction(content?.enrichment_action);
+    const status = summaryStatus(content?.summary_status);
+    const safePublicReadUrl =
+      action !== "generate_summary" ||
+      isAbsoluteHttpUrl(content?.public_read_url);
+    if (!action || !status || !safePublicReadUrl) {
+      return {
+        kind: "fixed",
+        reply: "收藏状态无法确认，请稍后重试。",
+      };
+    }
+    return {
+      enrichmentAction: action,
+      enrichmentCompleted: false,
+      kind: "recovery",
+      summaryStatus: status,
+    };
+  }
   if (
     normalizedToolName === "attention_submit_content_enrichment" &&
-    current?.kind === "established" &&
+    (current?.kind === "established" || current?.kind === "recovery") &&
     current.enrichmentAction === "generate_summary" &&
     (payload?.status === "enriched" || payload?.status === "already_enriched")
   ) {
@@ -136,6 +191,17 @@ export function applyAttentionToolResult(
 
 export function safeCollectionReply(control: CollectionReplyControl): string {
   if (control.kind === "fixed") return control.reply;
+  if (control.kind === "recovery") {
+    if (control.enrichmentAction === "generate_summary") {
+      return control.enrichmentCompleted ? "摘要已补全。" : "摘要仍待补全。";
+    }
+    if (control.enrichmentAction === "reuse_summary") {
+      return "摘要已经就绪。";
+    }
+    return control.summaryStatus === "hidden"
+      ? "摘要不可用。"
+      : "摘要当前无法补全。";
+  }
   const prefix =
     control.collectionStatus === "already_collected"
       ? "已在收藏中"

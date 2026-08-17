@@ -168,4 +168,58 @@ describe("collector enrichment response contract", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("requires a safe enrichment handoff on collection status content", () => {
+    const schema =
+      AttentionToolSuccessOutputSchemas.attention_get_collection_status;
+    const status = {
+      attempt: null,
+      collection: {
+        collected_at: "2026-08-17T00:00:00.000Z",
+        collection_id: "00000000-0000-4000-8000-000000000001",
+        collection_status: "active",
+        effectively_public: false,
+        filter_revoked_at: null,
+        moderation_status: "clear",
+        original_url: "https://attention.example/out/mine/collection-1",
+        public_since: null,
+        updated_at: "2026-08-17T00:00:00.000Z",
+        visibility: "private",
+      },
+      content: {
+        community_moderation_status: "clear",
+        content_id: "00000000-0000-4000-8000-000000000002",
+        content_status: "active",
+        content_type: "article",
+        enrichment_action: "generate_summary",
+        enrichment_status: "partial",
+        public_read_url: "https://example.org/article",
+        public_safety_status: "allowed",
+        source: "generic_web",
+        summary_status: "pending",
+        takedown_status: "none",
+        title: "Example",
+        updated_at: "2026-08-17T00:00:00.000Z",
+      },
+    };
+
+    expect(schema.parse(status)).toMatchObject({
+      content: {
+        enrichment_action: "generate_summary",
+        public_read_url: "https://example.org/article",
+      },
+    });
+    expect(
+      schema.safeParse({
+        ...status,
+        content: { ...status.content, public_read_url: "/out/mine/collection-1" },
+      }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({
+        ...status,
+        content: { ...status.content, summary_status: "failed" },
+      }).success,
+    ).toBe(false);
+  });
 });

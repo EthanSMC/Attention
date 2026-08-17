@@ -33,10 +33,10 @@
 - Produces: `enrichmentResponseFields(content, publicReadUrl)` as the single mapping used by collection and status services.
 - Produces: `content.enrichment_action` and `content.public_read_url` in `attention_get_collection_status` success output.
 
-- [ ] Write RED tests proving pending owned Content returns `generate_summary` plus its exact outbound URL while ready and terminal/ineligible Content return no URL.
-- [ ] Run the focused contract/service tests and confirm failure because status output omits the recovery fields.
-- [ ] Extract the shared decision helper and project it from the owner-scoped status query.
-- [ ] Run focused tests and real PostgreSQL ownership/eligibility coverage.
+- [x] Write RED tests proving pending owned Content returns `generate_summary` plus its exact outbound URL while ready and terminal/ineligible Content return no URL.
+- [x] Run the focused contract/service tests and confirm failure because status output omits the recovery fields.
+- [x] Extract the shared decision helper and project it from the owner-scoped status query.
+- [x] Run focused tests and real PostgreSQL ownership/eligibility coverage.
 
 ### Task 2: Automatic Codex and Claude recovery workflow
 
@@ -54,10 +54,10 @@
 - Consumes: status `content.enrichment_action`, `content.public_read_url`, and `content.content_id`.
 - Produces: content-free recovery control with fixed acknowledgements for completed, reused, pending, and unavailable states.
 
-- [ ] Write RED host-protocol tests for status → public read → submit on Codex and Claude, including an empty model reply and adversarial model prose.
-- [ ] Write RED prompt tests proving no second confirmation and exact-URL-only reading.
-- [ ] Implement status-result correlation and fixed recovery acknowledgements without retaining URL/title/summary/tag payloads in Bridge state.
-- [ ] Run all channel tests and confirm normal chat and initial collection behavior remain unchanged.
+- [x] Write RED host-protocol tests for status → public read → submit on Codex and Claude, including an empty model reply and adversarial model prose.
+- [x] Write RED prompt tests proving no second confirmation and exact-URL-only reading.
+- [x] Implement status-result correlation and fixed recovery acknowledgements without retaining URL/title/summary/tag payloads in Bridge state.
+- [x] Run all channel tests and confirm normal chat and initial collection behavior remain unchanged.
 
 ### Task 3: Versioned public artifacts and verification
 
@@ -68,7 +68,7 @@
 - Modify: `apps/web/src/server/attention-tool-registry.ts`
 - Generate: public Skill, WorkBuddy, installation, capability, and CLI artifacts.
 
-- [ ] Bump the MCP contract, Skill package, and CLI versions because the public output/workflow contract changed.
-- [ ] Run capability, installation, and CLI artifact sync; inspect generated diffs and hashes.
-- [ ] Run focused suites, repository typechecks/lint, full tests, and `git diff --check`.
-- [ ] Review for privacy, ownership, terminal-state, Codex/Claude parity, and generated-artifact consistency before committing.
+- [x] Bump the MCP contract, Skill package, and CLI versions because the public output/workflow contract changed.
+- [x] Run capability, installation, and CLI artifact sync; inspect generated diffs and hashes.
+- [x] Run focused suites, repository typechecks/lint, full tests, and `git diff --check`.
+- [x] Review for privacy, ownership, terminal-state, Codex/Claude parity, and generated-artifact consistency before committing.

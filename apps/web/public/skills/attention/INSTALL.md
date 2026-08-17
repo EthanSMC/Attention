@@ -155,7 +155,7 @@ WeChat assistant and uploading a local Skill bundle through its UI. Attention
 publishes the uploadable bundle at:
 
 ```text
-{attention_origin}/skills/attention/bundles/attention-workbuddy-1.7.0.zip
+{attention_origin}/skills/attention/bundles/attention-workbuddy-1.8.0.zip
 SHA-256: 45b869576feae8e42c06ebe61658496fc9aa26918ab38f81fb54721351bc966c
 ```
 
@@ -398,7 +398,7 @@ Privacy boundary for the bridge:
 - The iLink bot identifier is not an Attention identity and is never used
   for login, entitlements, or global identity.
 - Bridge logs omit tokens and full message bodies.
-- CLI `0.3.6` can optionally authorize a separate Runtime OAuth client. Its
+- CLI `0.3.7` can optionally authorize a separate Runtime OAuth client. Its
   reporter sends privacy-safe runtime status, timestamps, bounded queue counts,
   checkpoints, and device-pairing results. The same client can also read a
   minimal, account-private queue of completed summaries so the local Bridge can
@@ -464,7 +464,7 @@ explicit consent before running:
 attention device sync enable --origin {attention_origin}
 ```
 
-This opens the separate device-status authorization. In CLI `0.3.6` it also
+This opens the separate device-status authorization. In CLI `0.3.7` it also
 enables delayed summary-completion replies in WeChat. Declining it is a
 complete and successful setup: MCP, local WeChat, and collection keep working,
 but Web status and delayed summary replies remain disabled.
@@ -472,7 +472,7 @@ but Web status and delayed summary replies remain disabled.
 ## Runtime OAuth boundary
 
 The backend exposes a separate Local Channel Runtime resource. Attention CLI
-`0.3.6` may authorize it for privacy-safe runtime reporting, device-pairing
+`0.3.7` may authorize it for privacy-safe runtime reporting, device-pairing
 results, and account-private summary completion delivery:
 
 ```text
@@ -487,8 +487,8 @@ the local bridge or MCP from working, but Attention Web cannot receive live
 runtime or pairing updates from that device and the Bridge cannot pull
 completed-summary notices.
 
-`0.3.6` adds `channel:notifications:read`. Existing Runtime OAuth grants do not
-gain it silently. After installing `0.3.6`, run `attention device sync enable
+`0.3.7` adds `channel:notifications:read`. Existing Runtime OAuth grants do not
+gain it silently. After installing `0.3.7`, run `attention device sync enable
 --origin {attention_origin}` once and approve the updated scope set.
 
 Runtime reporting is not remote channel hosting. Attention receives only
@@ -504,7 +504,7 @@ receive a reply and Web can show only the last heartbeat and checkpoint.
 
 - iLink token, context token, sync cursor, contact data, and media keys remain
   local to the Channel Owner.
-- Attention receives normal authenticated MCP calls. The optional CLI `0.3.6`
+- Attention receives normal authenticated MCP calls. The optional CLI `0.3.7`
   Runtime reporter may submit installation metadata, opaque fingerprints,
   pairing results, health timestamps, bounded queue counts, and checkpoints—but
   never the channel credential, Codex thread, message, URL, or reply. Normal MCP
@@ -600,6 +600,6 @@ Claude Code. Consumers moving from `2.2.0` should:
   does not inherit the user's normal working directory or session history;
 - keep treating `codex_sdk_companion` and `claude_channel_preview` as
   valid engine values for future or host-managed alternatives; and
-- read Skill `1.7.0` "Designated collection channels" for the conversation
+- read Skill `1.8.0` "Designated collection channels" for the conversation
   semantics and conditional shared enrichment workflow the bridge declares
-  (tool contract version `1.5.0`).
+  (tool contract version `1.6.0`).

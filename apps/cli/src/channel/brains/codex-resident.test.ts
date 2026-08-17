@@ -231,6 +231,85 @@ describe("resident Codex brain", () => {
     await brain.shutdown();
   });
 
+  it("automatically completes an eligible missing summary returned by status", async () => {
+    const rpc = new ScriptedRpc();
+    rpc.autoCompleteTurns = false;
+    const brain = createCodexResidentBrain({
+      mcpUrl: "https://attention.example/mcp",
+      rpc,
+    });
+    const pending = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "处理一下摘要",
+      sessionId: null,
+    });
+    await nextTurn();
+
+    rpc.emit({
+      method: "item/completed",
+      params: {
+        item: {
+          arguments: {},
+          id: "status-1",
+          result: {
+            content: [],
+            structuredContent: {
+              attempt: null,
+              collection: { collection_id: "collection-1" },
+              content: {
+                content_id: "content-1",
+                enrichment_action: "generate_summary",
+                public_read_url: "https://example.org/article",
+                summary_status: "pending",
+              },
+            },
+          },
+          server: "attention",
+          status: "completed",
+          tool: "attention_get_collection_status",
+          type: "mcpToolCall",
+        },
+        threadId: "thread-1",
+        turnId: "turn-1",
+      },
+    });
+    rpc.emit({
+      method: "item/completed",
+      params: {
+        item: {
+          arguments: {},
+          id: "enrich-recovery-1",
+          result: {
+            content: [],
+            structuredContent: { status: "enriched", summary_status: "ready" },
+          },
+          server: "attention",
+          status: "completed",
+          tool: "attention_submit_content_enrichment",
+          type: "mcpToolCall",
+        },
+        threadId: "thread-1",
+        turnId: "turn-1",
+      },
+    });
+    rpc.emit({
+      method: "turn/completed",
+      params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } },
+    });
+
+    await expect(pending).resolves.toMatchObject({
+      collectionReplyControl: {
+        enrichmentAction: "generate_summary",
+        enrichmentCompleted: true,
+        kind: "recovery",
+        summaryStatus: "pending",
+      },
+      ok: true,
+      reply: "",
+    });
+    await brain.shutdown();
+  });
+
   it("fails closed when a collection result has no parseable payload", async () => {
     const rpc = new ScriptedRpc();
     rpc.autoCompleteTurns = false;
@@ -355,7 +434,7 @@ describe("resident Codex brain", () => {
     });
     expect(rpc.requests[2]?.params).toMatchObject({
       developerInstructions: expect.stringContaining(
-        "attention_collect_content or attention_select_collection_candidate",
+        "attention_collect_content, attention_select_collection_candidate, or attention_get_collection_status",
       ),
     });
     expect(rpc.requests[2]?.params).toMatchObject({

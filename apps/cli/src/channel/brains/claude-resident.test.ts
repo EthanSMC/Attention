@@ -174,6 +174,97 @@ describe("resident Claude Code brain", () => {
     await brain.shutdown();
   });
 
+  it("automatically completes an eligible missing summary returned by status", async () => {
+    const { brain, rpcs } = fixture();
+    const pending = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "处理一下摘要",
+      sessionId: null,
+    });
+    await nextTurn();
+    const rpc = rpcs[0];
+    rpc?.emit({
+      message: {
+        content: [
+          {
+            id: "status-recovery-1",
+            input: {},
+            name: "mcp__attention__attention_get_collection_status",
+            type: "tool_use",
+          },
+        ],
+        role: "assistant",
+      },
+      session_id: "session-1",
+      type: "assistant",
+    });
+    rpc?.emit({
+      message: {
+        content: [
+          {
+            content: JSON.stringify({
+              attempt: null,
+              collection: { collection_id: "collection-1" },
+              content: {
+                content_id: "content-1",
+                enrichment_action: "generate_summary",
+                public_read_url: "https://example.org/article",
+                summary_status: "pending",
+              },
+            }),
+            tool_use_id: "status-recovery-1",
+            type: "tool_result",
+          },
+        ],
+        role: "user",
+      },
+      session_id: "session-1",
+      type: "user",
+    });
+    rpc?.emit({
+      message: {
+        content: [
+          {
+            id: "submit-recovery-1",
+            input: {},
+            name: "mcp__attention__attention_submit_content_enrichment",
+            type: "tool_use",
+          },
+        ],
+        role: "assistant",
+      },
+      session_id: "session-1",
+      type: "assistant",
+    });
+    rpc?.emit({
+      message: {
+        content: [
+          {
+            content: JSON.stringify({ status: "enriched", summary_status: "ready" }),
+            tool_use_id: "submit-recovery-1",
+            type: "tool_result",
+          },
+        ],
+        role: "user",
+      },
+      session_id: "session-1",
+      type: "user",
+    });
+    rpc?.complete("");
+
+    await expect(pending).resolves.toMatchObject({
+      collectionReplyControl: {
+        enrichmentAction: "generate_summary",
+        enrichmentCompleted: true,
+        kind: "recovery",
+        summaryStatus: "pending",
+      },
+      ok: true,
+      reply: "",
+    });
+    await brain.shutdown();
+  });
+
   it("returns a fixed content-free unsafe failure instead of model prose", async () => {
     const { brain, rpcs } = fixture();
     const pending = brain.invoke({ cwd: "/tmp/channel", prompt: "collect", sessionId: null });

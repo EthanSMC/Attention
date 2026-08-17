@@ -1086,7 +1086,7 @@ describe("channel subcommands", () => {
         },
         bridgeUpdateChecker: async () => {
           events.push("check");
-          return { status: "staged", version: "0.3.6" };
+          return { status: "staged", version: "0.3.7" };
         },
         fetchImpl: async () => {
           throw new Error("iLink long poll must not start after an update is staged");
@@ -1137,7 +1137,7 @@ describe("channel subcommands", () => {
         bridgeHealthyMarker: async () => undefined,
         bridgeUpdateChecker: async () => {
           checks += 1;
-          return { status: "staged", version: "0.3.6" };
+          return { status: "staged", version: "0.3.7" };
         },
         fetchImpl: async (url) => {
           const path = new URL(String(url)).pathname;
@@ -1278,7 +1278,7 @@ describe("channel subcommands", () => {
         },
         lastCheckAt: "2026-08-14T02:00:00.000Z",
         lastErrorCode: null,
-        latestVersion: "0.3.6",
+        latestVersion: "0.3.7",
         pending: null,
         previous: null,
         schemaVersion: 1,
@@ -1305,7 +1305,7 @@ describe("channel subcommands", () => {
       installedVersion: "0.3.5",
       lastCheckAt: "2026-08-14T02:00:00.000Z",
       lastErrorCode: null,
-      latestVersion: "0.3.6",
+      latestVersion: "0.3.7",
       status: "update_available",
     });
     expect(lines.join("")).not.toContain("super-secret-token");

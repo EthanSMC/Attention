@@ -239,19 +239,19 @@ describe("Skill staging and apply", () => {
   it.each([
     {
       document: validSkillDocument.replace(
-        "Skill version: `1.7.0`",
+        "Skill version: `1.8.0`",
         "Skill version: `1.2.0`",
       ),
-      expectedError: /Skill version mismatch.*expected 1\.7\.0.*received 1\.2\.0/i,
+      expectedError: /Skill version mismatch.*expected 1\.8\.0.*received 1\.2\.0/i,
       name: "Skill package version",
     },
     {
       document: validSkillDocument.replace(
-        "Tool contract version: `1.5.0`",
+        "Tool contract version: `1.6.0`",
         "Tool contract version: `1.2.0`",
       ),
       expectedError:
-        /Tool contract version mismatch.*expected 1\.5\.0.*received 1\.2\.0/i,
+        /Tool contract version mismatch.*expected 1\.6\.0.*received 1\.2\.0/i,
       name: "tool contract version",
     },
   ])("rejects a downloaded SKILL.md with a stale $name", async ({
@@ -386,7 +386,7 @@ describe("Skill staging and apply", () => {
       fetchImpl: async () =>
         new Response(
           validSkillDocument.replace(
-            "Tool contract version: `1.5.0`",
+            "Tool contract version: `1.6.0`",
             "Tool contract version: `1.0.0`",
           ),
           { status: 200 },
