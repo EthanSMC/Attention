@@ -28,8 +28,8 @@ function isSettingsPath(pathname: string): boolean {
   );
 }
 
-function isStandaloneDocumentationPath(pathname: string): boolean {
-  return pathname.startsWith("/doc");
+function isStandalonePath(pathname: string): boolean {
+  return pathname.startsWith("/doc") || pathname.startsWith("/oauth/");
 }
 
 export interface NavigationIdentity {
@@ -106,7 +106,7 @@ export function SiteHeader({ identity }: { identity: NavigationIdentity | null }
   const settingsActive = isSettingsPath(pathname);
   const closeCollect = useCallback(() => setCollectOpen(false), []);
 
-  if (isStandaloneDocumentationPath(pathname)) return null;
+  if (isStandalonePath(pathname)) return null;
 
   return (
     <>
@@ -159,7 +159,7 @@ export function SiteHeader({ identity }: { identity: NavigationIdentity | null }
 
 export function MobileNavigation() {
   const pathname = usePathname();
-  if (isStandaloneDocumentationPath(pathname)) return null;
+  if (isStandalonePath(pathname)) return null;
 
   return (
     <nav aria-label="移动端主导航" className="mobile-nav">
