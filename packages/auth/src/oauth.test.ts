@@ -19,6 +19,7 @@ import {
   oauthAudiences,
   oauthDefaultScopesByAudience,
   oauthScopesByAudience,
+  type OAuthAudience,
   registerPublicOAuthClient,
   resolveOAuthAccessToken,
   resolveOAuthClientAllowedScopes,
@@ -792,17 +793,18 @@ describe("OAuth connection-aware authorization", () => {
     expect(db.state.refreshTokens).toHaveLength(1);
   });
 
-  describe("atomic MCP connection snapshot revocation", () => {
+  describe("atomic OAuth connection snapshot revocation", () => {
     const firstConnectionId = "20000000-0000-4000-8000-000000000002";
     const secondConnectionId = "20000000-0000-4000-8000-000000000003";
     const thirdConnectionId = "20000000-0000-4000-8000-000000000004";
 
     function candidate() {
-      const value = Reflect.get(oauthModule, "revokeMcpOAuthConnectionSnapshot") as
+      const value = Reflect.get(oauthModule, "revokeOAuthConnectionSnapshot") as
         | ((
             db: AttentionDatabase,
             input: {
               accountId: string;
+              audience: OAuthAudience;
               clientName: string;
               connectionIds: string[];
             },
@@ -848,6 +850,7 @@ describe("OAuth connection-aware authorization", () => {
 
       await expect(revoke(db.database, {
         accountId,
+        audience: "attention-mcp",
         clientName: "Codex",
         connectionIds: [firstConnectionId, secondConnectionId],
       }, now)).rejects.toMatchObject({ message: "oauth_connection_snapshot_stale" });
@@ -871,6 +874,7 @@ describe("OAuth connection-aware authorization", () => {
 
       await expect(revoke(db.database, {
         accountId,
+        audience: "attention-mcp",
         clientName: "Codex",
         connectionIds: [firstConnectionId, secondConnectionId],
       }, now)).rejects.toMatchObject({ message: "oauth_connection_snapshot_stale" });
@@ -891,6 +895,7 @@ describe("OAuth connection-aware authorization", () => {
 
       await expect(revoke(db.database, {
         accountId,
+        audience: "attention-mcp",
         clientName: "Codex",
         connectionIds: [firstConnectionId, secondConnectionId],
       }, now)).rejects.toThrow("injected_refresh_revoke_failure");
@@ -911,6 +916,7 @@ describe("OAuth connection-aware authorization", () => {
 
       await expect(revoke(db.database, {
         accountId,
+        audience: "attention-mcp",
         clientName: "Ｃｏｄｅｘ",
         connectionIds: [firstConnectionId, secondConnectionId],
       }, now)).resolves.toBe(2);
@@ -930,6 +936,31 @@ describe("OAuth connection-aware authorization", () => {
         "revoked",
         "active",
       ]);
+    });
+
+    it("revokes a Runtime group only when kind and audience both match", async () => {
+      const runtimeConnection = connection({
+        audience: "attention-channel-runtime",
+        clientName: "Attention Local Channel Runtime",
+        deviceName: "Ethan MacBook",
+        id: firstConnectionId,
+        installationKeyHash: "d".repeat(64),
+        kind: "runtime",
+      });
+      const db = revokeState([runtimeConnection]);
+      const revoke = candidate();
+      if (!revoke) return;
+
+      await expect(revoke(db.database, {
+        accountId,
+        audience: "attention-channel-runtime",
+        clientName: "Attention Local Channel Runtime",
+        connectionIds: [firstConnectionId],
+      }, now)).resolves.toBe(1);
+
+      expect(db.state.connections[0]?.revokedAt).toEqual(now);
+      expect(db.state.accessTokens[0]?.status).toBe("revoked");
+      expect(db.state.refreshTokens[0]?.status).toBe("revoked");
     });
   });
 });

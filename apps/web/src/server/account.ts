@@ -1,6 +1,11 @@
 import "server-only";
 
-import { apiKeyScopes } from "@attention/auth";
+import {
+  apiKeyScopes,
+  oauthAudiences,
+  type OAuthAudience,
+  type OAuthScope,
+} from "@attention/auth";
 import {
   getAgentIntegration,
   type RuntimeCheckpointReport,
@@ -14,6 +19,7 @@ import {
   eq,
   externalChannelBindings,
   filterProfiles,
+  inArray,
   isNull,
   oauthClients,
   oauthConnections,
@@ -405,9 +411,11 @@ function projectLocalChannelRuntimes(
   return runtimes;
 }
 
-interface McpOAuthConnectionRow {
+
+interface AgentOAuthConnectionRow {
   audience: string;
   clientName: string;
+  deviceName: string | null;
   id: string;
   kind: "mcp" | "runtime";
   label: string;
@@ -416,41 +424,52 @@ interface McpOAuthConnectionRow {
   scopes: string[];
 }
 
-export interface McpOAuthConnectionOverview {
+export interface AgentOAuthConnectionOverview {
+  deviceName: string | null;
   id: string;
   label: string;
   lastAuthorizedAt: Date;
   lastUsedAt: Date | null;
-  scopes: string[];
+  scopes: OAuthScope[];
 }
 
-export interface McpOAuthConnectionGroupOverview {
+export interface AgentOAuthConnectionGroupOverview {
+  audience: OAuthAudience;
   clientName: string;
-  connections: McpOAuthConnectionOverview[];
+  connections: AgentOAuthConnectionOverview[];
 }
 
 function normalizedOAuthClientName(value: string): string {
   return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase("en-US");
 }
 
-function projectMcpOAuthConnections(
-  rows: McpOAuthConnectionRow[],
-): McpOAuthConnectionGroupOverview[] {
-  const groups = new Map<string, McpOAuthConnectionGroupOverview>();
+function projectAgentOAuthConnections(
+  rows: AgentOAuthConnectionRow[],
+): AgentOAuthConnectionGroupOverview[] {
+  const groups = new Map<string, AgentOAuthConnectionGroupOverview>();
   for (const row of rows) {
-    if (row.audience !== "attention-mcp" || row.kind !== "mcp") continue;
+    if (!oauthAudiences.includes(row.audience as OAuthAudience)) continue;
+    const audience = row.audience as OAuthAudience;
+    const expectedKind = audience === "attention-channel-runtime" ? "runtime" : "mcp";
+    if (row.kind !== expectedKind) continue;
     const normalizedClientName = normalizedOAuthClientName(row.clientName);
-    let group = groups.get(normalizedClientName);
+    const groupKey = `${audience}\0${normalizedClientName}`;
+    let group = groups.get(groupKey);
     if (!group) {
-      group = { clientName: row.clientName.normalize("NFKC").trim(), connections: [] };
-      groups.set(normalizedClientName, group);
+      group = {
+        audience,
+        clientName: row.clientName.normalize("NFKC").trim(),
+        connections: [],
+      };
+      groups.set(groupKey, group);
     }
     group.connections.push({
+      deviceName: row.deviceName,
       id: row.id,
       label: row.label,
       lastAuthorizedAt: row.lastAuthorizedAt,
       lastUsedAt: row.lastUsedAt,
-      scopes: row.scopes,
+      scopes: row.scopes as OAuthScope[],
     });
   }
   return [...groups.values()];
@@ -462,6 +481,7 @@ export async function loadConnectionOverview(db: AttentionDatabase, accountId: s
       .select({
         audience: oauthConnections.audience,
         clientName: oauthClients.name,
+        deviceName: oauthConnections.deviceName,
         id: oauthConnections.id,
         kind: oauthConnections.kind,
         label: oauthConnections.label,
@@ -474,8 +494,7 @@ export async function loadConnectionOverview(db: AttentionDatabase, accountId: s
       .where(
         and(
           eq(oauthConnections.accountId, accountId),
-          eq(oauthConnections.audience, "attention-mcp"),
-          eq(oauthConnections.kind, "mcp"),
+          inArray(oauthConnections.audience, [...oauthAudiences]),
           isNull(oauthConnections.revokedAt),
         ),
       )
@@ -519,9 +538,13 @@ export async function loadConnectionOverview(db: AttentionDatabase, accountId: s
         desc(externalChannelBindings.updatedAt),
       ),
   ]);
+  const agentOAuthConnections = projectAgentOAuthConnections(oauthConnectionRows);
   return {
+    agentOAuthConnections,
     localChannelRuntimes: projectLocalChannelRuntimes(localChannelRuntimeRows),
-    mcpOAuthConnections: projectMcpOAuthConnections(oauthConnectionRows),
+    mcpOAuthConnections: agentOAuthConnections.filter(
+      ({ audience }) => audience === "attention-mcp",
+    ),
     pats: pats.map((pat) => ({
       ...pat,
       needsRotation: apiKeyScopes.some((scope) => !pat.scopes.includes(scope)),

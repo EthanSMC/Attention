@@ -39,7 +39,7 @@ export default async function ConnectionsPage() {
           lastSuccessfulMessageAt:
             item.lastSuccessfulMessageAt?.toISOString() ?? null,
         }))}
-        mcpOAuthConnections={connections.mcpOAuthConnections.map((group) => ({
+        agentOAuthConnections={connections.agentOAuthConnections.map((group) => ({
           ...group,
           connections: group.connections.map((connection) => ({
             ...connection,

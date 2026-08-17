@@ -95,14 +95,15 @@ describe("loadConnectionOverview API Key scope truth", () => {
   });
 });
 
-describe("loadConnectionOverview logical MCP OAuth projection", () => {
-  it("groups active MCP connections without collapsing labels or leaking Runtime rows", async () => {
+describe("loadConnectionOverview Agent OAuth projection", () => {
+  it("groups MCP, Sync, and Runtime connections by audience and client", async () => {
     const result = await loadConnectionOverview(
       connectionDatabase({
         oauth: [
           {
             audience: "attention-mcp",
             clientName: "Codex",
+            deviceName: null,
             id: "10000000-0000-4000-8000-000000000001",
             kind: "mcp",
             label: "工作 MacBook",
@@ -113,6 +114,7 @@ describe("loadConnectionOverview logical MCP OAuth projection", () => {
           {
             audience: "attention-mcp",
             clientName: " Codex ",
+            deviceName: null,
             id: "10000000-0000-4000-8000-000000000002",
             kind: "mcp",
             label: "家里 Mac mini",
@@ -123,6 +125,7 @@ describe("loadConnectionOverview logical MCP OAuth projection", () => {
           {
             audience: "attention-mcp",
             clientName: "Ｃｏｄｅｘ",
+            deviceName: null,
             id: "10000000-0000-4000-8000-000000000003",
             kind: "mcp",
             label: "测试容器",
@@ -131,8 +134,20 @@ describe("loadConnectionOverview logical MCP OAuth projection", () => {
             scopes: ["profile:read"],
           },
           {
+            audience: "attention-sync",
+            clientName: "Codex",
+            deviceName: null,
+            id: "10000000-0000-4000-8000-000000000004",
+            kind: "mcp",
+            label: "Codex Sync",
+            lastAuthorizedAt: new Date("2026-08-11T08:00:00.000Z"),
+            lastUsedAt: null,
+            scopes: ["sync:read", "sync:write"],
+          },
+          {
             audience: "attention-channel-runtime",
             clientName: "Attention Local Channel Runtime",
+            deviceName: "Ethan MacBook Pro",
             id: "20000000-0000-4000-8000-000000000001",
             kind: "runtime",
             label: "Ethan MacBook Pro",
@@ -143,6 +158,7 @@ describe("loadConnectionOverview logical MCP OAuth projection", () => {
           {
             audience: "attention-channel-runtime",
             clientName: "Attention Local Channel Runtime",
+            deviceName: "Studio Mac",
             id: "20000000-0000-4000-8000-000000000002",
             kind: "runtime",
             label: "Studio Mac",
@@ -177,11 +193,13 @@ describe("loadConnectionOverview logical MCP OAuth projection", () => {
       crypto.randomUUID(),
     );
 
-    expect(result.mcpOAuthConnections).toEqual([
+    expect(result.agentOAuthConnections).toEqual([
       {
+        audience: "attention-mcp",
         clientName: "Codex",
         connections: [
           {
+            deviceName: null,
             id: "10000000-0000-4000-8000-000000000001",
             label: "工作 MacBook",
             lastAuthorizedAt: new Date("2026-08-11T10:00:00.000Z"),
@@ -189,6 +207,7 @@ describe("loadConnectionOverview logical MCP OAuth projection", () => {
             scopes: ["collection:read", "collection:write"],
           },
           {
+            deviceName: null,
             id: "10000000-0000-4000-8000-000000000002",
             label: "家里 Mac mini",
             lastAuthorizedAt: new Date("2026-08-10T10:00:00.000Z"),
@@ -196,11 +215,48 @@ describe("loadConnectionOverview logical MCP OAuth projection", () => {
             scopes: ["collection:read"],
           },
           {
+            deviceName: null,
             id: "10000000-0000-4000-8000-000000000003",
             label: "测试容器",
             lastAuthorizedAt: new Date("2026-08-09T10:00:00.000Z"),
             lastUsedAt: new Date("2026-08-09T11:00:00.000Z"),
             scopes: ["profile:read"],
+          },
+        ],
+      },
+      {
+        audience: "attention-sync",
+        clientName: "Codex",
+        connections: [
+          {
+            deviceName: null,
+            id: "10000000-0000-4000-8000-000000000004",
+            label: "Codex Sync",
+            lastAuthorizedAt: new Date("2026-08-11T08:00:00.000Z"),
+            lastUsedAt: null,
+            scopes: ["sync:read", "sync:write"],
+          },
+        ],
+      },
+      {
+        audience: "attention-channel-runtime",
+        clientName: "Attention Local Channel Runtime",
+        connections: [
+          {
+            deviceName: "Ethan MacBook Pro",
+            id: "20000000-0000-4000-8000-000000000001",
+            label: "Ethan MacBook Pro",
+            lastAuthorizedAt: new Date("2026-08-11T09:00:00.000Z"),
+            lastUsedAt: new Date("2026-08-11T09:30:00.000Z"),
+            scopes: ["runtime:heartbeat"],
+          },
+          {
+            deviceName: "Studio Mac",
+            id: "20000000-0000-4000-8000-000000000002",
+            label: "Studio Mac",
+            lastAuthorizedAt: new Date("2026-08-10T09:00:00.000Z"),
+            lastUsedAt: null,
+            scopes: ["runtime:register"],
           },
         ],
       },
@@ -210,8 +266,8 @@ describe("loadConnectionOverview logical MCP OAuth projection", () => {
       deviceName: "Ethan MacBook Pro",
       status: "online",
     });
-    expect(JSON.stringify(result.mcpOAuthConnections)).not.toMatch(
-      /Runtime|installation|deviceName|clientId|token|hash/u,
+    expect(JSON.stringify(result.agentOAuthConnections)).not.toMatch(
+      /installation|clientId|token|hash/u,
     );
   });
 });

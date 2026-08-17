@@ -7,7 +7,9 @@ import {
   useRef,
   useState,
 } from "react";
+import type { OAuthAudience, OAuthScope } from "@attention/auth";
 
+import { buildOAuthConsentPresentation } from "../lib/oauth-consent-presentation";
 import { ApiKeyCreateModal } from "./api-key-create-modal";
 import { TransientFeedback, useTransientFeedback } from "./transient-feedback";
 import {
@@ -16,29 +18,32 @@ import {
   createApiKeyManagerState,
 } from "./api-key-manager-state";
 
-interface McpOAuthConnection {
+interface AgentOAuthConnection {
+  deviceName: string | null;
   id: string;
   label: string;
   lastAuthorizedAt: string;
   lastUsedAt: string | null;
-  scopes: string[];
+  scopes: OAuthScope[];
 }
 
-interface McpOAuthConnectionGroup {
+interface AgentOAuthConnectionGroup {
+  audience: OAuthAudience;
   clientName: string;
-  connections: McpOAuthConnection[];
+  connections: AgentOAuthConnection[];
 }
 
 type OAuthGroupRevokeOutcome = "failed" | "revoked" | "stale" | "unknown";
 
 export async function requestOAuthGroupSnapshotRevoke(
-  group: McpOAuthConnectionGroup,
+  group: AgentOAuthConnectionGroup,
   request: typeof fetch = fetch,
 ): Promise<OAuthGroupRevokeOutcome> {
   const connectionIds = group.connections.map(({ id }) => id);
   try {
     const response = await request("/api/account/oauth/group", {
       body: JSON.stringify({
+        audience: group.audience,
         client_name: group.clientName,
         connection_ids: connectionIds,
       }),
@@ -99,6 +104,25 @@ const runtimeStatusLabels: Record<LocalChannelRuntime["status"], string> = {
   online: "在线",
   stale: "久未在线",
 };
+
+const oauthAudienceLabels: Record<OAuthAudience, string> = {
+  "attention-channel-runtime": "本地 Runtime",
+  "attention-mcp": "Agent",
+  "attention-sync": "同步",
+};
+
+function oauthPermissionTitles(
+  audience: OAuthAudience,
+  scopes: readonly OAuthScope[],
+): string[] {
+  try {
+    return buildOAuthConsentPresentation(audience, scopes).permissionGroups.map(
+      ({ title }) => title,
+    );
+  } catch {
+    return ["权限信息暂时不可用"];
+  }
+}
 
 export function OAuthGroupRevokeModal({
   busy,
@@ -175,14 +199,14 @@ export function OAuthGroupRevokeModal({
 export function ConnectionManager({
   agentConnectionPrompt,
   agentDocumentationUrl,
+  agentOAuthConnections,
   localChannelRuntimes,
-  mcpOAuthConnections,
   pats,
 }: {
   agentConnectionPrompt: string;
   agentDocumentationUrl: string;
+  agentOAuthConnections: AgentOAuthConnectionGroup[];
   localChannelRuntimes: LocalChannelRuntime[];
-  mcpOAuthConnections: McpOAuthConnectionGroup[];
   pats: PatConnection[];
 }) {
   const [apiKeys, dispatchApiKey] = useReducer(
@@ -196,7 +220,7 @@ export function ConnectionManager({
     string | null
   >(null);
   const [oauthGroupToRevoke, setOAuthGroupToRevoke] = useState<
-    McpOAuthConnectionGroup | null
+    AgentOAuthConnectionGroup | null
   >(null);
   const [revokingOAuthGroup, setRevokingOAuthGroup] = useState(false);
   const createRequestInFlight = useRef(false);
@@ -326,7 +350,7 @@ export function ConnectionManager({
     }
   }
 
-  async function revokeOAuthGroup(group: McpOAuthConnectionGroup) {
+  async function revokeOAuthGroup(group: AgentOAuthConnectionGroup) {
     if (revokeRequestInFlight.current) return;
     revokeRequestInFlight.current = true;
     setRevokingOAuthGroup(true);
@@ -430,13 +454,17 @@ export function ConnectionManager({
         <p className="settings-card__eyebrow">已授权客户端</p>
         <h2>OAuth 连接</h2>
         <p>每个名称代表一次独立授权。展开客户端后，可以查看权限与最近活动，或只撤销其中一个连接。</p>
-        {mcpOAuthConnections.length ? (
+        {agentOAuthConnections.length ? (
           <div className="oauth-connection-groups">
-            {mcpOAuthConnections.map((group) => (
-              <details className="oauth-connection-group" key={group.clientName}>
+            {agentOAuthConnections.map((group) => (
+              <details
+                className="oauth-connection-group"
+                key={`${group.audience}:${group.clientName}`}
+              >
                 <summary>
                   <strong>
                     {group.clientName} · {group.connections.length} 个连接
+                    <small> · {oauthAudienceLabels[group.audience]}</small>
                   </strong>
                   <span aria-hidden="true">⌄</span>
                 </summary>
@@ -467,6 +495,12 @@ export function ConnectionManager({
                           </button>
                         </div>
                         <dl className="oauth-connection-facts">
+                          {connection.deviceName ? (
+                            <div>
+                              <dt>可信设备</dt>
+                              <dd>{connection.deviceName}</dd>
+                            </div>
+                          ) : null}
                           <div>
                             <dt>最近授权</dt>
                             <dd>{formatAccountDateTime(connection.lastAuthorizedAt)}</dd>
@@ -480,14 +514,17 @@ export function ConnectionManager({
                             </dd>
                           </div>
                         </dl>
-                        <details className="oauth-scope-disclosure">
-                          <summary>权限范围（{connection.scopes.length}）</summary>
-                          <div>
-                            {connection.scopes.map((scope) => (
-                              <code key={scope}>{scope}</code>
+                        <div className="oauth-scope-disclosure">
+                          <strong>权限</strong>
+                          <ul>
+                            {oauthPermissionTitles(
+                              group.audience,
+                              connection.scopes,
+                            ).map((title) => (
+                              <li key={title}>{title}</li>
                             ))}
-                          </div>
-                        </details>
+                          </ul>
+                        </div>
                       </li>
                     ))}
                   </ul>

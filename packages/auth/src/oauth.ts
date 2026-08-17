@@ -1141,10 +1141,11 @@ async function revokeLockedOAuthConnections(
   await revokeConnectionCredentials(tx, accountId, connectionIds, now);
 }
 
-export async function revokeMcpOAuthConnectionSnapshot(
+export async function revokeOAuthConnectionSnapshot(
   db: AttentionDatabase,
   input: {
     accountId: string;
+    audience: OAuthAudience;
     clientName: string;
     connectionIds: readonly string[];
   },
@@ -1152,6 +1153,7 @@ export async function revokeMcpOAuthConnectionSnapshot(
 ): Promise<number> {
   const normalizedClientName = normalizeOAuthClientGroupKey(input.clientName);
   const requestedIds = validateOAuthConnectionIdSnapshot(input.connectionIds);
+  const expectedKind = input.audience === CHANNEL_RUNTIME_RESOURCE ? "runtime" : "mcp";
   return db.transaction(async (tx) => {
     const requestedRows = await tx
       .select({
@@ -1171,8 +1173,8 @@ export async function revokeMcpOAuthConnectionSnapshot(
       requestedRows.some((row) =>
         !requestedIds.has(row.id) ||
         row.accountId !== input.accountId ||
-        row.audience !== "attention-mcp" ||
-        row.kind !== "mcp" ||
+        row.audience !== input.audience ||
+        row.kind !== expectedKind ||
         row.revokedAt !== null ||
         normalizeOAuthClientGroupKey(row.clientName) !== normalizedClientName
       )
@@ -1193,8 +1195,8 @@ export async function revokeMcpOAuthConnectionSnapshot(
       .where(
         and(
           eq(oauthConnections.accountId, input.accountId),
-          eq(oauthConnections.audience, "attention-mcp"),
-          eq(oauthConnections.kind, "mcp"),
+          eq(oauthConnections.audience, input.audience),
+          eq(oauthConnections.kind, expectedKind),
           isNull(oauthConnections.revokedAt),
         ),
       )
@@ -1203,8 +1205,8 @@ export async function revokeMcpOAuthConnectionSnapshot(
       activeGroupRows
         .filter((row) =>
           row.accountId === input.accountId &&
-          row.audience === "attention-mcp" &&
-          row.kind === "mcp" &&
+          row.audience === input.audience &&
+          row.kind === expectedKind &&
           row.revokedAt === null &&
           normalizeOAuthClientGroupKey(row.clientName) === normalizedClientName
         )

@@ -7,12 +7,14 @@ import * as connectionManagerModule from "./connection-manager";
 
 const { ConnectionManager } = connectionManagerModule;
 
-const mcpGroups = [
+const agentGroups = [
   {
+    audience: "attention-mcp" as const,
     clientName: "Codex",
     connections: [
       {
         id: "10000000-0000-4000-8000-000000000001",
+        deviceName: null,
         label: "工作 MacBook",
         lastAuthorizedAt: "2026-08-11T10:00:00.000Z",
         lastUsedAt: "2026-08-11T10:30:00.000Z",
@@ -20,6 +22,7 @@ const mcpGroups = [
       },
       {
         id: "10000000-0000-4000-8000-000000000002",
+        deviceName: null,
         label: "家里 Mac mini",
         lastAuthorizedAt: "2026-08-10T10:00:00.000Z",
         lastUsedAt: null,
@@ -27,10 +30,39 @@ const mcpGroups = [
       },
       {
         id: "10000000-0000-4000-8000-000000000003",
+        deviceName: null,
         label: "测试容器",
         lastAuthorizedAt: "2026-08-09T10:00:00.000Z",
         lastUsedAt: null,
         scopes: ["profile:read"],
+      },
+    ],
+  },
+  {
+    audience: "attention-sync" as const,
+    clientName: "Codex",
+    connections: [
+      {
+        deviceName: null,
+        id: "10000000-0000-4000-8000-000000000004",
+        label: "Codex Sync",
+        lastAuthorizedAt: "2026-08-11T08:00:00.000Z",
+        lastUsedAt: null,
+        scopes: ["sync:read", "sync:write"],
+      },
+    ],
+  },
+  {
+    audience: "attention-channel-runtime" as const,
+    clientName: "Attention Local Channel Runtime",
+    connections: [
+      {
+        deviceName: "Ethan MacBook",
+        id: "20000000-0000-4000-8000-000000000001",
+        label: "工作电脑",
+        lastAuthorizedAt: "2026-08-11T09:00:00.000Z",
+        lastUsedAt: "2026-08-11T09:30:00.000Z",
+        scopes: ["runtime:heartbeat"],
       },
     ],
   },
@@ -43,8 +75,8 @@ function renderManager(): string {
       agentConnectionPrompt: "Connect Attention",
       agentDocumentationUrl: "https://attention.example/doc",
       localChannelRuntimes: [],
-      mcpOAuthConnections: mcpGroups,
       oauthConnections: [],
+      agentOAuthConnections: agentGroups,
       pats: [],
     },
   ));
@@ -99,20 +131,28 @@ describe("ConnectionManager", () => {
     );
   });
 
-  it("renders one collapsed app group with every logical connection independently actionable", () => {
+  it("renders every OAuth audience with readable permissions and no raw scopes", () => {
     const markup = renderManager();
 
     expect(markup).toContain("Codex · 3 个连接");
     expect(markup).toContain("工作 MacBook");
     expect(markup).toContain("家里 Mac mini");
     expect(markup).toContain("测试容器");
-    expect(markup).toContain("权限范围（2）");
-    expect(markup).toContain("collection:read");
+    expect(markup).toContain("Codex Sync");
+    expect(markup).toContain("工作电脑");
+    expect(markup).toContain("新增私人收藏");
+    expect(markup).toContain("同步你的私人收藏");
+    expect(markup).toContain("上报运行状态");
+    expect(markup).not.toContain("collection:read");
+    expect(markup).not.toContain("sync:read");
+    expect(markup).not.toContain("runtime:heartbeat");
+    expect(markup).not.toContain("<code");
     expect(markup).toMatch(/<details[^>]*class="oauth-connection-group"(?![^>]*open)/u);
     expect(markup).toContain('aria-label="撤销连接：工作 MacBook"');
     expect(markup).toContain("撤销全部");
-    expect(markup).not.toContain("Attention Local Channel Runtime");
-    expect(markup).not.toContain("Runtime OAuth");
+    expect(markup).toContain("Attention Local Channel Runtime");
+    expect(markup).toContain("本地 Runtime");
+    expect(markup).toContain("同步");
   });
 
   it("renders the destructive group confirmation with the exact connection count", () => {
@@ -139,19 +179,20 @@ describe("ConnectionManager", () => {
       connectionManagerModule,
       "requestOAuthGroupSnapshotRevoke",
     ) as ((
-      group: (typeof mcpGroups)[number],
+      group: (typeof agentGroups)[number],
       request: typeof fetch,
     ) => Promise<string>) | undefined;
     expect(candidate).toBeTypeOf("function");
     if (!candidate) return;
     let requestBody: unknown;
 
-    const result = await candidate(mcpGroups[0]!, async (_input, init) => {
+    const result = await candidate(agentGroups[0]!, async (_input, init) => {
       requestBody = JSON.parse(String(init?.body));
       return new Response(JSON.stringify({ revoked_count: 3 }), { status: 200 });
     });
 
     expect(requestBody).toEqual({
+      audience: "attention-mcp",
       client_name: "Codex",
       connection_ids: [
         "10000000-0000-4000-8000-000000000001",
@@ -167,13 +208,13 @@ describe("ConnectionManager", () => {
       connectionManagerModule,
       "requestOAuthGroupSnapshotRevoke",
     ) as ((
-      group: (typeof mcpGroups)[number],
+      group: (typeof agentGroups)[number],
       request: typeof fetch,
     ) => Promise<string>) | undefined;
     expect(candidate).toBeTypeOf("function");
     if (!candidate) return;
 
-    await expect(candidate(mcpGroups[0]!, async () => new Response(
+    await expect(candidate(agentGroups[0]!, async () => new Response(
       JSON.stringify({ error: { code: "oauth_connection_snapshot_stale" } }),
       { status: 409 },
     ))).resolves.toBe("stale");
@@ -185,7 +226,7 @@ describe("ConnectionManager", () => {
     expect(feedbackCandidate).toBeTypeOf("function");
     if (!feedbackCandidate) return;
     expect(feedbackCandidate("stale")).toBe("连接列表已变化，请刷新后重试。");
-    await expect(candidate(mcpGroups[0]!, async () => {
+    await expect(candidate(agentGroups[0]!, async () => {
       throw new Error("connection_lost");
     })).resolves.toBe("unknown");
     expect(feedbackCandidate("unknown")).toBe(

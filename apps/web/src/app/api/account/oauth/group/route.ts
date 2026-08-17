@@ -1,6 +1,6 @@
 import {
   OAuthConnectionSnapshotConflictError,
-  revokeMcpOAuthConnectionSnapshot,
+  revokeOAuthConnectionSnapshot,
 } from "@attention/auth";
 import type { NextRequest, NextResponse } from "next/server";
 import { z, ZodError } from "zod";
@@ -15,6 +15,11 @@ import {
 import { getRequestSession } from "../../../../../server/session";
 
 const bodySchema = z.object({
+  audience: z.enum([
+    "attention-mcp",
+    "attention-sync",
+    "attention-channel-runtime",
+  ]),
   client_name: z.string().min(1).max(100),
   connection_ids: z
     .array(z.string().uuid())
@@ -37,10 +42,11 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
   }
   try {
     const body = bodySchema.parse(await readJsonRequestWithinLimit(request, 4_096));
-    const revokedCount = await revokeMcpOAuthConnectionSnapshot(
+    const revokedCount = await revokeOAuthConnectionSnapshot(
       getWebDatabase(),
       {
         accountId: session.principal.accountId,
+        audience: body.audience,
         clientName: body.client_name,
         connectionIds: body.connection_ids,
       },
