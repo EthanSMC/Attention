@@ -1,18 +1,20 @@
 import { readFileSync } from "node:fs";
 import { createElement, type ComponentType } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import * as connectionManagerModule from "./connection-manager";
 
 const { ConnectionManager } = connectionManagerModule;
 
-const mcpGroups = [
+const agentGroups = [
   {
+    audience: "attention-mcp" as const,
     clientName: "Codex",
     connections: [
       {
         id: "10000000-0000-4000-8000-000000000001",
+        deviceName: null,
         label: "工作 MacBook",
         lastAuthorizedAt: "2026-08-11T10:00:00.000Z",
         lastUsedAt: "2026-08-11T10:30:00.000Z",
@@ -20,6 +22,7 @@ const mcpGroups = [
       },
       {
         id: "10000000-0000-4000-8000-000000000002",
+        deviceName: null,
         label: "家里 Mac mini",
         lastAuthorizedAt: "2026-08-10T10:00:00.000Z",
         lastUsedAt: null,
@@ -27,10 +30,39 @@ const mcpGroups = [
       },
       {
         id: "10000000-0000-4000-8000-000000000003",
+        deviceName: null,
         label: "测试容器",
         lastAuthorizedAt: "2026-08-09T10:00:00.000Z",
         lastUsedAt: null,
         scopes: ["profile:read"],
+      },
+    ],
+  },
+  {
+    audience: "attention-sync" as const,
+    clientName: "Codex",
+    connections: [
+      {
+        deviceName: null,
+        id: "10000000-0000-4000-8000-000000000004",
+        label: "Codex Sync",
+        lastAuthorizedAt: "2026-08-11T08:00:00.000Z",
+        lastUsedAt: null,
+        scopes: ["sync:read", "sync:write"],
+      },
+    ],
+  },
+  {
+    audience: "attention-channel-runtime" as const,
+    clientName: "Attention Local Channel Runtime",
+    connections: [
+      {
+        deviceName: "Ethan MacBook",
+        id: "20000000-0000-4000-8000-000000000001",
+        label: "工作电脑",
+        lastAuthorizedAt: "2026-08-11T09:00:00.000Z",
+        lastUsedAt: "2026-08-11T09:30:00.000Z",
+        scopes: ["runtime:heartbeat"],
       },
     ],
   },
@@ -43,8 +75,8 @@ function renderManager(): string {
       agentConnectionPrompt: "Connect Attention",
       agentDocumentationUrl: "https://attention.example/doc",
       localChannelRuntimes: [],
-      mcpOAuthConnections: mcpGroups,
       oauthConnections: [],
+      agentOAuthConnections: agentGroups,
       pats: [],
     },
   ));
@@ -116,7 +148,7 @@ describe("ConnectionManager", () => {
           status: "online",
           version: { latestVersion: "0.3.6", status: "recommended" },
         }],
-        mcpOAuthConnections: [],
+        agentOAuthConnections: [],
         pats: [],
       },
     ));
@@ -126,20 +158,28 @@ describe("ConnectionManager", () => {
     expect(markup).not.toContain("artifactPath");
   });
 
-  it("renders one collapsed app group with every logical connection independently actionable", () => {
+  it("renders every OAuth audience with readable permissions and no raw scopes", () => {
     const markup = renderManager();
 
     expect(markup).toContain("Codex · 3 个连接");
     expect(markup).toContain("工作 MacBook");
     expect(markup).toContain("家里 Mac mini");
     expect(markup).toContain("测试容器");
-    expect(markup).toContain("权限范围（2）");
-    expect(markup).toContain("collection:read");
+    expect(markup).toContain("Codex Sync");
+    expect(markup).toContain("工作电脑");
+    expect(markup).toContain("新增私人收藏");
+    expect(markup).toContain("同步你的私人收藏");
+    expect(markup).toContain("上报运行状态");
+    expect(markup).not.toContain("collection:read");
+    expect(markup).not.toContain("sync:read");
+    expect(markup).not.toContain("runtime:heartbeat");
+    expect(markup).not.toContain("<code");
     expect(markup).toMatch(/<details[^>]*class="oauth-connection-group"(?![^>]*open)/u);
     expect(markup).toContain('aria-label="撤销连接：工作 MacBook"');
     expect(markup).toContain("撤销全部");
-    expect(markup).not.toContain("Attention Local Channel Runtime");
-    expect(markup).not.toContain("Runtime OAuth");
+    expect(markup).toContain("Attention Local Channel Runtime");
+    expect(markup).toContain("本地 Runtime");
+    expect(markup).toContain("同步");
   });
 
   it("renders the destructive group confirmation with the exact connection count", () => {
@@ -166,19 +206,20 @@ describe("ConnectionManager", () => {
       connectionManagerModule,
       "requestOAuthGroupSnapshotRevoke",
     ) as ((
-      group: (typeof mcpGroups)[number],
+      group: (typeof agentGroups)[number],
       request: typeof fetch,
     ) => Promise<string>) | undefined;
     expect(candidate).toBeTypeOf("function");
     if (!candidate) return;
     let requestBody: unknown;
 
-    const result = await candidate(mcpGroups[0]!, async (_input, init) => {
+    const result = await candidate(agentGroups[0]!, async (_input, init) => {
       requestBody = JSON.parse(String(init?.body));
       return new Response(JSON.stringify({ revoked_count: 3 }), { status: 200 });
     });
 
     expect(requestBody).toEqual({
+      audience: "attention-mcp",
       client_name: "Codex",
       connection_ids: [
         "10000000-0000-4000-8000-000000000001",
@@ -194,13 +235,13 @@ describe("ConnectionManager", () => {
       connectionManagerModule,
       "requestOAuthGroupSnapshotRevoke",
     ) as ((
-      group: (typeof mcpGroups)[number],
+      group: (typeof agentGroups)[number],
       request: typeof fetch,
     ) => Promise<string>) | undefined;
     expect(candidate).toBeTypeOf("function");
     if (!candidate) return;
 
-    await expect(candidate(mcpGroups[0]!, async () => new Response(
+    await expect(candidate(agentGroups[0]!, async () => new Response(
       JSON.stringify({ error: { code: "oauth_connection_snapshot_stale" } }),
       { status: 409 },
     ))).resolves.toBe("stale");
@@ -212,11 +253,87 @@ describe("ConnectionManager", () => {
     expect(feedbackCandidate).toBeTypeOf("function");
     if (!feedbackCandidate) return;
     expect(feedbackCandidate("stale")).toBe("连接列表已变化，请刷新后重试。");
-    await expect(candidate(mcpGroups[0]!, async () => {
+    await expect(candidate(agentGroups[0]!, async () => {
       throw new Error("connection_lost");
     })).resolves.toBe("unknown");
     expect(feedbackCandidate("unknown")).toBe(
       "网络连接中断，撤销结果无法确认。请刷新连接列表后再操作。",
     );
+  });
+
+  it("renders a labeled inline rename editor with save and cancel actions", () => {
+    const candidate = Reflect.get(
+      connectionManagerModule,
+      "OAuthConnectionRenameEditor",
+    ) as ComponentType<Record<string, unknown>> | undefined;
+    expect(candidate).toBeTypeOf("function");
+    if (!candidate) return;
+
+    const markup = renderToStaticMarkup(createElement(candidate, {
+      busy: false,
+      error: null,
+      label: "工作 MacBook",
+      onCancel: () => undefined,
+      onChange: () => undefined,
+      onSubmit: () => undefined,
+    }));
+
+    expect(markup).toContain("连接名称");
+    expect(markup).toContain('value="工作 MacBook"');
+    expect(markup).toContain(">保存</button>");
+    expect(markup).toContain(">取消</button>");
+  });
+
+  it("maps rename responses and preserves a conflicting typed label", async () => {
+    const requestRename = Reflect.get(
+      connectionManagerModule,
+      "requestOAuthConnectionRename",
+    ) as ((
+      connectionId: string,
+      label: string,
+      request: typeof fetch,
+    ) => Promise<string>) | undefined;
+    expect(requestRename).toBeTypeOf("function");
+    if (!requestRename) return;
+
+    const request = vi.fn(async (
+      _input: RequestInfo | URL,
+      _init?: RequestInit,
+    ) => new Response(JSON.stringify({
+      error: { code: "oauth_connection_name_conflict" },
+    }), { status: 409 }));
+    await expect(requestRename(
+      "10000000-0000-4000-8000-000000000001",
+      "已有名称",
+      request,
+    )).resolves.toBe("conflict");
+    expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({
+      label: "已有名称",
+    });
+  });
+
+  it("updates only the renamed connection in the visible groups", () => {
+    const applyRename = Reflect.get(
+      connectionManagerModule,
+      "applyOAuthConnectionRename",
+    ) as ((
+      groups: typeof agentGroups,
+      connectionId: string,
+      label: string,
+    ) => typeof agentGroups) | undefined;
+    expect(applyRename).toBeTypeOf("function");
+    if (!applyRename) return;
+
+    const renamed = applyRename(
+      agentGroups,
+      "10000000-0000-4000-8000-000000000002",
+      "家中电脑",
+    );
+    expect(renamed[0]?.connections.map(({ label }) => label)).toEqual([
+      "工作 MacBook",
+      "家中电脑",
+      "测试容器",
+    ]);
+    expect(agentGroups[0]?.connections[1]?.label).toBe("家里 Mac mini");
   });
 });

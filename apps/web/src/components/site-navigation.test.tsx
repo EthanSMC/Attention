@@ -1,4 +1,3 @@
-import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -19,17 +18,15 @@ describe("SiteHeader", () => {
     pathname = "/ai";
   });
 
-  it("uses focused brand-only chrome for every OAuth route", () => {
-    pathname = "/oauth/authorize";
-    const header = renderToStaticMarkup(createElement(SiteHeader, { identity: null }));
-    const mobile = renderToStaticMarkup(createElement(MobileNavigation));
+  it.each(["/oauth/authorize", "/oauth/authorize/cancel"])(
+    "hides all product navigation on %s",
+    (oauthPath) => {
+      pathname = oauthPath;
 
-    expect(header).toContain("Attention");
-    expect(header).toContain("返回 Attention");
-    expect(header).not.toContain('aria-label="主导航"');
-    expect(header).not.toContain("收藏链接");
-    expect(mobile).toBe("");
-  });
+      expect(renderToStaticMarkup(<SiteHeader identity={null} />)).toBe("");
+      expect(renderToStaticMarkup(<MobileNavigation />)).toBe("");
+    },
+  );
 
   it("keeps collection actions on collection-oriented pages only", () => {
     expect(shouldShowCollectAction("/ai")).toBe(true);
@@ -39,5 +36,14 @@ describe("SiteHeader", () => {
     expect(shouldShowCollectAction("/auth")).toBe(false);
     expect(shouldShowCollectAction("/login")).toBe(false);
     expect(shouldShowCollectAction("/oauth/authorize")).toBe(false);
+  });
+
+  it("keeps the header, collection action, and mobile navigation on product pages", () => {
+    const header = renderToStaticMarkup(<SiteHeader identity={null} />);
+    const mobile = renderToStaticMarkup(<MobileNavigation />);
+
+    expect(header).toContain('class="site-header');
+    expect(header).toContain('class="collect-fab"');
+    expect(mobile).toContain('class="mobile-nav"');
   });
 });

@@ -4,9 +4,44 @@ import type { AttentionDatabase } from "@attention/db";
 import {
   checkOAuthConnectionName,
   normalizeOAuthConnectionLabel,
+  OAuthConnectionNameConflictError,
+  OAuthConnectionNotFoundError,
+  oauthConnectionLabelCandidate,
+  renameOAuthConnection,
 } from "./oauth-connection";
 
 describe("OAuth connection labels", () => {
+  it("adds a numeric suffix while preserving the eighty-code-point limit", () => {
+    expect(oauthConnectionLabelCandidate("Codex", 1)).toEqual({
+      label: "Codex",
+      normalizedLabel: "codex",
+    });
+    expect(oauthConnectionLabelCandidate("Codex", 2)).toEqual({
+      label: "Codex 2",
+      normalizedLabel: "codex 2",
+    });
+
+    const candidate = oauthConnectionLabelCandidate("x".repeat(80), 12);
+    expect([...candidate.label]).toHaveLength(80);
+    expect(candidate.label.endsWith(" 12")).toBe(true);
+  });
+
+  it("normalizes a client name before adding a suffix", () => {
+    expect(oauthConnectionLabelCandidate("  Ｃｏｄｅｘ   Desktop  ", 3)).toEqual({
+      label: "Codex Desktop 3",
+      normalizedLabel: "codex desktop 3",
+    });
+  });
+
+  it("rejects invalid ordinal values", () => {
+    expect(() => oauthConnectionLabelCandidate("Codex", 0)).toThrowError(
+      "invalid_connection_label_ordinal",
+    );
+    expect(() => oauthConnectionLabelCandidate("Codex", 1.5)).toThrowError(
+      "invalid_connection_label_ordinal",
+    );
+  });
+
   it("normalizes compatibility forms, JS whitespace, and comparison case", () => {
     expect(normalizeOAuthConnectionLabel("  Office   MacBook  ")).toEqual({
       label: "Office MacBook",
@@ -101,6 +136,70 @@ describe("OAuth connection name availability", () => {
   });
 });
 
+describe("OAuth connection rename", () => {
+  const accountId = "10000000-0000-4000-8000-000000000001";
+  const connectionId = "20000000-0000-4000-8000-000000000002";
+
+  it("normalizes and updates only the user label fields", async () => {
+    const { database, updates } = renameDatabase({
+      label: "Codex",
+      normalizedLabel: "codex",
+    });
+    const now = new Date("2026-08-17T10:00:00.000Z");
+
+    await expect(renameOAuthConnection(database, {
+      accountId,
+      connectionId,
+      label: "  工作   电脑  ",
+    }, now)).resolves.toEqual({ label: "工作 电脑", renamed: true });
+
+    expect(updates).toEqual([
+      {
+        label: "工作 电脑",
+        normalizedLabel: "工作 电脑",
+        updatedAt: now,
+      },
+    ]);
+  });
+
+  it("returns unchanged success without writing for the same normalized label", async () => {
+    const { database, updates } = renameDatabase({
+      label: "工作电脑",
+      normalizedLabel: "工作电脑",
+    });
+
+    await expect(renameOAuthConnection(database, {
+      accountId,
+      connectionId,
+      label: " 工作电脑 ",
+    })).resolves.toEqual({ label: "工作电脑", renamed: false });
+    expect(updates).toEqual([]);
+  });
+
+  it("maps the active-name unique constraint to a recoverable conflict", async () => {
+    const { database } = renameDatabase(
+      { label: "Codex", normalizedLabel: "codex" },
+      { conflict: true },
+    );
+
+    await expect(renameOAuthConnection(database, {
+      accountId,
+      connectionId,
+      label: "Claude",
+    })).rejects.toBeInstanceOf(OAuthConnectionNameConflictError);
+  });
+
+  it("does not disclose missing, revoked, or cross-account connections", async () => {
+    const { database } = renameDatabase(null);
+
+    await expect(renameOAuthConnection(database, {
+      accountId,
+      connectionId,
+      label: "Claude",
+    })).rejects.toBeInstanceOf(OAuthConnectionNotFoundError);
+  });
+});
+
 function connectionLookupDatabase(rows: Array<Record<string, unknown>>): AttentionDatabase {
   const query = {
     from: () => query,
@@ -111,4 +210,41 @@ function connectionLookupDatabase(rows: Array<Record<string, unknown>>): Attenti
   return {
     select: () => query,
   } as unknown as AttentionDatabase;
+}
+
+function renameDatabase(
+  row: { label: string; normalizedLabel: string } | null,
+  options: { conflict?: boolean } = {},
+): { database: AttentionDatabase; updates: Array<Record<string, unknown>> } {
+  const updates: Array<Record<string, unknown>> = [];
+  const selectQuery = {
+    for: () => selectQuery,
+    from: () => selectQuery,
+    limit: async () => row ? [row] : [],
+    where: () => selectQuery,
+  };
+  return {
+    database: {
+      transaction: async (callback) => callback({
+        select: () => selectQuery,
+        update: () => ({
+          set: (value: Record<string, unknown>) => ({
+            where: () => ({
+              returning: async () => {
+                if (options.conflict) {
+                  throw {
+                    code: "23505",
+                    constraint: "oauth_connections_active_name_unique",
+                  };
+                }
+                updates.push(value);
+                return [{ label: value.label }];
+              },
+            }),
+          }),
+        }),
+      } as never),
+    } as AttentionDatabase,
+    updates,
+  };
 }

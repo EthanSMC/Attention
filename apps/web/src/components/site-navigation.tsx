@@ -28,12 +28,8 @@ function isSettingsPath(pathname: string): boolean {
   );
 }
 
-function isStandaloneDocumentationPath(pathname: string): boolean {
-  return pathname.startsWith("/doc");
-}
-
-function isFocusedSecurityPath(pathname: string): boolean {
-  return pathname.startsWith("/oauth/");
+function isStandalonePath(pathname: string): boolean {
+  return pathname.startsWith("/doc") || pathname.startsWith("/oauth/");
 }
 
 export function shouldShowCollectAction(pathname: string): boolean {
@@ -112,27 +108,10 @@ export function SiteHeader({ identity }: { identity: NavigationIdentity | null }
   const pathname = usePathname();
   const [collectOpen, setCollectOpen] = useState(false);
   const settingsActive = isSettingsPath(pathname);
-  const focusedSecurityPath = isFocusedSecurityPath(pathname);
   const showCollectAction = shouldShowCollectAction(pathname);
   const closeCollect = useCallback(() => setCollectOpen(false), []);
 
-  if (isStandaloneDocumentationPath(pathname)) return null;
-
-  if (focusedSecurityPath) {
-    return (
-      <header className="site-header site-header--focused">
-        <div className="site-header__inner">
-          <Link className="brand" href="/ai" aria-label="Attention 首页">
-            <SignalLogo />
-            <span>Attention</span>
-          </Link>
-          <Link className="site-header__focused-back" href="/ai">
-            返回 Attention
-          </Link>
-        </div>
-      </header>
-    );
-  }
+  if (isStandalonePath(pathname)) return null;
 
   return (
     <>
@@ -187,9 +166,7 @@ export function SiteHeader({ identity }: { identity: NavigationIdentity | null }
 
 export function MobileNavigation() {
   const pathname = usePathname();
-  if (isStandaloneDocumentationPath(pathname) || isFocusedSecurityPath(pathname)) {
-    return null;
-  }
+  if (isStandalonePath(pathname)) return null;
 
   return (
     <nav aria-label="移动端主导航" className="mobile-nav">

@@ -30,6 +30,7 @@ import {
   isOAuthConnectionNameConflict,
   normalizeOAuthConnectionLabel,
   OAuthConnectionNameConflictError,
+  oauthConnectionLabelCandidate,
   resolveRuntimeOAuthConnectionIntent,
   type OAuthConnectionIntent,
 } from "./oauth-connection";
@@ -319,22 +320,31 @@ export async function createAuthorizationCode(
   intent: OAuthConnectionIntent,
   now = new Date(),
 ): Promise<string> {
-  const normalized = normalizeOAuthConnectionLabel(intent.label);
+  const normalized = intent.mode === "auto"
+    ? null
+    : normalizeOAuthConnectionLabel(intent.label);
   const connectionId = intent.mode === "rotate" ? intent.connectionId : null;
   const replacementConnectionId =
     intent.mode === "replace" ? intent.replacementConnectionId : null;
   const code = createOpaqueToken();
+  const codeHash = await hashOpaqueToken(code);
+  const automaticConnectionMarker = intent.mode === "auto"
+    ? `attention:auto:${codeHash.slice(0, 48)}`
+    : null;
   await db.insert(oauthAuthorizationCodes).values({
     accountId,
     audience: request.audience,
     clientId: request.clientId,
     codeChallenge: request.codeChallenge,
-    codeHash: await hashOpaqueToken(code),
+    codeHash,
     connectionId,
-    connectionLabel: normalized.label,
+    connectionLabel: intent.mode === "auto"
+      ? "__attention_automatic_connection__"
+      : normalized?.label ?? null,
     createdAt: now,
     expiresAt: new Date(now.getTime() + codeTtlMs),
-    normalizedConnectionLabel: normalized.normalizedLabel,
+    normalizedConnectionLabel:
+      automaticConnectionMarker ?? normalized?.normalizedLabel ?? null,
     redirectUri: request.redirectUri,
     replacementConnectionId,
     scopes: request.scopes,
@@ -462,6 +472,7 @@ async function materializeLegacyOAuthConnection(
     audience: OAuthAudience;
     authorizedAt: Date;
     clientId: string;
+    genericClientName: string | null;
     now: Date;
     reauthorize: boolean;
     trustedRuntimeClient: TrustedRuntimeClientMetadata | null;
@@ -488,7 +499,7 @@ async function materializeLegacyOAuthConnection(
       if (error instanceof OAuthConnectionNameConflictError) throw error;
       throw new OAuthError("invalid_grant");
     }
-    const normalized = normalizeOAuthConnectionLabel(intent.label);
+    if (intent.mode === "auto") throw new OAuthError("invalid_grant");
     if (intent.mode === "rotate") {
       const [existing] = await tx
         .select()
@@ -520,9 +531,7 @@ async function materializeLegacyOAuthConnection(
           clientId: input.clientId,
           deviceName: trusted.deviceName,
           installationKeyHash: trusted.installationKeyHash,
-          label: normalized.label,
           ...(input.reauthorize ? { lastAuthorizedAt: input.now } : {}),
-          normalizedLabel: normalized.normalizedLabel,
           updatedAt: input.now,
         })
         .where(eq(oauthConnections.id, existing.id));
@@ -531,6 +540,7 @@ async function materializeLegacyOAuthConnection(
     if (intent.mode === "replace") {
       throw new OAuthConnectionNameConflictError();
     }
+    const normalized = normalizeOAuthConnectionLabel(trusted.deviceName);
     const connectionId = randomUUID();
     const [created] = await tx
       .insert(oauthConnections)
@@ -550,6 +560,31 @@ async function materializeLegacyOAuthConnection(
       .returning({ id: oauthConnections.id });
     if (!created) throw new OAuthError("invalid_grant");
     return created.id;
+  }
+
+  if (input.genericClientName) {
+    for (let ordinal = 1; ordinal <= 1_000; ordinal += 1) {
+      const candidate = oauthConnectionLabelCandidate(
+        input.genericClientName,
+        ordinal,
+      );
+      const [created] = await tx
+        .insert(oauthConnections)
+        .values({
+          accountId: input.accountId,
+          audience: input.audience,
+          clientId: input.clientId,
+          kind: "mcp",
+          label: candidate.label,
+          lastAuthorizedAt: input.authorizedAt,
+          normalizedLabel: candidate.normalizedLabel,
+          updatedAt: input.now,
+        })
+        .onConflictDoNothing()
+        .returning({ id: oauthConnections.id });
+      if (created) return created.id;
+    }
+    throw new OAuthError("invalid_grant");
   }
 
   const imported = importedOAuthConnectionIdentity();
@@ -610,22 +645,29 @@ export async function exchangeAuthorizationCode(
         throw new OAuthError("invalid_target");
       }
       runtimeExchange = code.audience === CHANNEL_RUNTIME_RESOURCE;
-      const trustedRuntimeClient = runtimeExchange
-        ? (await tx
-            .select({
-              deviceName: oauthClients.deviceName,
-              installationKeyHash: oauthClients.installationKeyHash,
-            })
-            .from(oauthClients)
-            .where(
-              and(
-                eq(oauthClients.clientId, code.clientId),
-                eq(oauthClients.active, true),
-                eq(oauthClients.connectionKind, "runtime"),
-              ),
-            )
-            .limit(1))[0]
-        : null;
+      const activeClient = (await tx
+        .select({
+          connectionKind: oauthClients.connectionKind,
+          deviceName: oauthClients.deviceName,
+          installationKeyHash: oauthClients.installationKeyHash,
+          name: oauthClients.name,
+        })
+        .from(oauthClients)
+        .where(
+          and(
+            eq(oauthClients.clientId, code.clientId),
+            eq(oauthClients.active, true),
+          ),
+        )
+        .limit(1))[0];
+      if (!activeClient?.name) throw new OAuthError("invalid_grant");
+      const trustedRuntimeClient =
+        runtimeExchange && activeClient.connectionKind === "runtime"
+          ? {
+              deviceName: activeClient.deviceName,
+              installationKeyHash: activeClient.installationKeyHash,
+            }
+          : null;
       if (
         runtimeExchange &&
         (
@@ -637,8 +679,27 @@ export async function exchangeAuthorizationCode(
         throw new OAuthError("invalid_grant");
       }
       let connectionId: string;
-      let legacyMaterialized = false;
-      if (code.connectionId) {
+      let codeConnectionNeedsLink = false;
+      const automaticConnectionMarker =
+        `attention:auto:${code.codeHash.slice(0, 48)}`;
+      const automaticIntent =
+        !code.connectionId &&
+        !code.replacementConnectionId &&
+        code.connectionLabel === "__attention_automatic_connection__" &&
+        code.normalizedConnectionLabel === automaticConnectionMarker;
+      if (automaticIntent) {
+        connectionId = await materializeLegacyOAuthConnection(tx, {
+          accountId: code.accountId,
+          audience: requestedResource.audience,
+          authorizedAt: now,
+          clientId: code.clientId,
+          genericClientName: runtimeExchange ? null : activeClient.name,
+          now,
+          reauthorize: true,
+          trustedRuntimeClient: trustedRuntimeClient ?? null,
+        });
+        codeConnectionNeedsLink = true;
+      } else if (code.connectionId) {
         const [existing] = await tx
           .select()
           .from(oauthConnections)
@@ -703,11 +764,12 @@ export async function exchangeAuthorizationCode(
           audience: requestedResource.audience,
           authorizedAt: now,
           clientId: code.clientId,
+          genericClientName: null,
           now,
           reauthorize: true,
           trustedRuntimeClient: trustedRuntimeClient ?? null,
         });
-        legacyMaterialized = true;
+        codeConnectionNeedsLink = true;
       } else {
         if (!code.connectionLabel || !code.normalizedConnectionLabel) {
           throw new OAuthError("invalid_grant");
@@ -764,7 +826,13 @@ export async function exchangeAuthorizationCode(
       await tx
         .update(oauthAuthorizationCodes)
         .set({
-          ...(legacyMaterialized ? { connectionId } : {}),
+          ...(codeConnectionNeedsLink
+            ? {
+                connectionId,
+                connectionLabel: null,
+                normalizedConnectionLabel: null,
+              }
+            : {}),
           consumedAt: now,
         })
         .where(eq(oauthAuthorizationCodes.id, code.id));
@@ -891,6 +959,7 @@ export async function rotateRefreshToken(
           audience: requestedResource.audience,
           authorizedAt: candidate.createdAt,
           clientId: candidate.clientId,
+          genericClientName: null,
           now,
           reauthorize: false,
           trustedRuntimeClient: trustedRuntimeClient ?? null,
@@ -1104,10 +1173,11 @@ async function revokeLockedOAuthConnections(
   await revokeConnectionCredentials(tx, accountId, connectionIds, now);
 }
 
-export async function revokeMcpOAuthConnectionSnapshot(
+export async function revokeOAuthConnectionSnapshot(
   db: AttentionDatabase,
   input: {
     accountId: string;
+    audience: OAuthAudience;
     clientName: string;
     connectionIds: readonly string[];
   },
@@ -1115,6 +1185,7 @@ export async function revokeMcpOAuthConnectionSnapshot(
 ): Promise<number> {
   const normalizedClientName = normalizeOAuthClientGroupKey(input.clientName);
   const requestedIds = validateOAuthConnectionIdSnapshot(input.connectionIds);
+  const expectedKind = input.audience === CHANNEL_RUNTIME_RESOURCE ? "runtime" : "mcp";
   return db.transaction(async (tx) => {
     const requestedRows = await tx
       .select({
@@ -1134,8 +1205,8 @@ export async function revokeMcpOAuthConnectionSnapshot(
       requestedRows.some((row) =>
         !requestedIds.has(row.id) ||
         row.accountId !== input.accountId ||
-        row.audience !== "attention-mcp" ||
-        row.kind !== "mcp" ||
+        row.audience !== input.audience ||
+        row.kind !== expectedKind ||
         row.revokedAt !== null ||
         normalizeOAuthClientGroupKey(row.clientName) !== normalizedClientName
       )
@@ -1156,8 +1227,8 @@ export async function revokeMcpOAuthConnectionSnapshot(
       .where(
         and(
           eq(oauthConnections.accountId, input.accountId),
-          eq(oauthConnections.audience, "attention-mcp"),
-          eq(oauthConnections.kind, "mcp"),
+          eq(oauthConnections.audience, input.audience),
+          eq(oauthConnections.kind, expectedKind),
           isNull(oauthConnections.revokedAt),
         ),
       )
@@ -1166,8 +1237,8 @@ export async function revokeMcpOAuthConnectionSnapshot(
       activeGroupRows
         .filter((row) =>
           row.accountId === input.accountId &&
-          row.audience === "attention-mcp" &&
-          row.kind === "mcp" &&
+          row.audience === input.audience &&
+          row.kind === expectedKind &&
           row.revokedAt === null &&
           normalizeOAuthClientGroupKey(row.clientName) === normalizedClientName
         )

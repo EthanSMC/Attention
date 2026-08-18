@@ -5,13 +5,13 @@ const mocks = vi.hoisted(() => ({
   OAuthConnectionSnapshotConflictError: class extends Error {},
   getRequestSession: vi.fn(),
   getWebDatabase: vi.fn(() => ({ database: "web" })),
-  revokeMcpOAuthConnectionSnapshot: vi.fn(),
+  revokeOAuthConnectionSnapshot: vi.fn(),
 }));
 
 vi.mock("@attention/auth", () => ({
   OAuthConnectionSnapshotConflictError:
     mocks.OAuthConnectionSnapshotConflictError,
-  revokeMcpOAuthConnectionSnapshot: mocks.revokeMcpOAuthConnectionSnapshot,
+  revokeOAuthConnectionSnapshot: mocks.revokeOAuthConnectionSnapshot,
 }));
 vi.mock("../../../../../server/db", () => ({
   getWebDatabase: mocks.getWebDatabase,
@@ -32,17 +32,17 @@ function request(body: unknown): NextRequest {
   }) as NextRequest;
 }
 
-describe("MCP OAuth connection group revoke", () => {
+describe("Agent OAuth connection group revoke", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getRequestSession.mockResolvedValue({
       principal: { accountId: "account-1" },
       shouldClearCookie: false,
     });
-    mocks.revokeMcpOAuthConnectionSnapshot.mockResolvedValue(3);
+    mocks.revokeOAuthConnectionSnapshot.mockResolvedValue(3);
   });
 
-  it("server-fixes account and MCP audience while revoking the exact confirmed snapshot", async () => {
+  it("server-fixes account while revoking the exact audience snapshot", async () => {
     const route = await import("./route").catch(() => null);
     expect(route).not.toBeNull();
     if (!route) return;
@@ -53,15 +53,17 @@ describe("MCP OAuth connection group revoke", () => {
       "10000000-0000-4000-8000-000000000003",
     ];
     const response = await route.DELETE(request({
+      audience: "attention-sync",
       client_name: "  Codex  ",
       connection_ids: connectionIds,
     }));
 
     expect(response.status).toBe(200);
-    expect(mocks.revokeMcpOAuthConnectionSnapshot).toHaveBeenCalledWith(
+    expect(mocks.revokeOAuthConnectionSnapshot).toHaveBeenCalledWith(
       { database: "web" },
       {
         accountId: "account-1",
+        audience: "attention-sync",
         clientName: "  Codex  ",
         connectionIds,
       },
@@ -70,12 +72,13 @@ describe("MCP OAuth connection group revoke", () => {
   });
 
   it("returns a recoverable conflict when the confirmed connection snapshot is stale", async () => {
-    mocks.revokeMcpOAuthConnectionSnapshot.mockRejectedValueOnce(
+    mocks.revokeOAuthConnectionSnapshot.mockRejectedValueOnce(
       new mocks.OAuthConnectionSnapshotConflictError(),
     );
     const route = await import("./route");
 
     const response = await route.DELETE(request({
+      audience: "attention-mcp",
       client_name: "Codex",
       connection_ids: ["10000000-0000-4000-8000-000000000001"],
     }));
@@ -96,7 +99,7 @@ describe("MCP OAuth connection group revoke", () => {
       connection_ids: ["10000000-0000-4000-8000-000000000001"],
     },
     {
-      audience: "attention-channel-runtime",
+      audience: "unknown-audience",
       client_name: "Codex",
       connection_ids: ["10000000-0000-4000-8000-000000000001"],
     },
@@ -108,7 +111,7 @@ describe("MCP OAuth connection group revoke", () => {
     const response = await route.DELETE(request(body));
 
     expect(response.status).toBe(400);
-    expect(mocks.revokeMcpOAuthConnectionSnapshot).not.toHaveBeenCalled();
+    expect(mocks.revokeOAuthConnectionSnapshot).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -131,11 +134,12 @@ describe("MCP OAuth connection group revoke", () => {
     const route = await import("./route");
 
     const response = await route.DELETE(request({
+      audience: "attention-mcp",
       client_name: "Codex",
       connection_ids: connectionIds,
     }));
 
     expect(response.status).toBe(400);
-    expect(mocks.revokeMcpOAuthConnectionSnapshot).not.toHaveBeenCalled();
+    expect(mocks.revokeOAuthConnectionSnapshot).not.toHaveBeenCalled();
   });
 });

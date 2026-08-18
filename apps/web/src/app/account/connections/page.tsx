@@ -48,7 +48,7 @@ export default async function ConnectionsPage() {
             minimumVersion: publishedBridgeUpdate.minimumVersion,
           }),
         }))}
-        mcpOAuthConnections={connections.mcpOAuthConnections.map((group) => ({
+        agentOAuthConnections={connections.agentOAuthConnections.map((group) => ({
           ...group,
           connections: group.connections.map((connection) => ({
             ...connection,
