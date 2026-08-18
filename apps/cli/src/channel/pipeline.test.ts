@@ -47,6 +47,18 @@ const controlledOutcome = (
     },
   }) as BrainOutcome;
 
+const recoveryOutcome = (
+  reply: string,
+  input: {
+    readonly enrichmentAction: "generate_summary" | "reuse_summary" | "none";
+    readonly enrichmentCompleted: boolean;
+    readonly summaryStatus: "hidden" | "pending" | "ready" | "unavailable";
+  },
+): BrainOutcome => ({
+  ...okOutcome(reply),
+  collectionReplyControl: { kind: "recovery", ...input },
+});
+
 const fakeBrain = (
   hostId: BrainAdapter["hostId"],
   reply = "ok",
@@ -130,6 +142,34 @@ describe("handleInboundMessage", () => {
       expect(output.replies.join(" ")).not.toMatch(
         /RAW TITLE|https?:\/\/|BODY|SUMMARY|PRIVATE_TAG/u,
       );
+    },
+  );
+
+  it.each(["codex", "claude-code"] as const)(
+    "replaces adversarial recovered-summary output with a fixed reply for %s",
+    async (hostId) => {
+      const state = defaultChannelState();
+      const output = await handleInboundMessage({
+        brain: fakeBrain(hostId),
+        cwd: "/tmp",
+        invokeBrain: async () =>
+          recoveryOutcome(
+            "RAW TITLE https://example.com BODY SUMMARY #PRIVATE_TAG",
+            {
+              enrichmentAction: "generate_summary",
+              enrichmentCompleted: true,
+              summaryStatus: "pending",
+            },
+          ),
+        message: textMessage("处理一下摘要"),
+        state,
+      });
+
+      expect(output.replies).toEqual(["摘要已补全。"]);
+      expect(output.replies.join(" ")).not.toMatch(
+        /RAW TITLE|https?:\/\/|BODY|SUMMARY|PRIVATE_TAG/u,
+      );
+      expect(state.history.at(-1)?.content).toBe("摘要已补全。");
     },
   );
 

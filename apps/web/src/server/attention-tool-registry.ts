@@ -40,7 +40,7 @@ import { reportPublicContent } from "./moderation-service";
 import { publicFeedPreviewLimit } from "./public-access";
 import type { AttentionToolAuditInput } from "./attention-tool-audit";
 
-export const ATTENTION_TOOL_CONTRACT_VERSION = "1.5.0";
+export const ATTENTION_TOOL_CONTRACT_VERSION = "1.6.0";
 
 export const ATTENTION_TOOL_NAMES = [
   "attention_get_my_account",
@@ -171,7 +171,7 @@ const attentionClientContextSchema = z
       .literal("attention")
       .optional(),
     skill_version: z
-      .enum(["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0"])
+      .enum(["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"])
       .optional(),
     workflow_run_id: z
       .string()

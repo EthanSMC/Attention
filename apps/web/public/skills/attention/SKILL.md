@@ -9,9 +9,9 @@ Use the configured `attention` MCP server for cloud data. Never ask the user to 
 
 Skill ID: `attention`
 
-Skill version: `1.7.0`
+Skill version: `1.8.0`
 
-Tool contract version: `1.5.0`
+Tool contract version: `1.6.0`
 
 Installation manifest: `/skills/attention/installations/v1/index.json`
 
@@ -21,7 +21,7 @@ Machine-readable capability manifest: `/skills/attention/capabilities/v1/index.j
 
 ## Call context
 
-For every tool call, include `client_context` with `skill_id: "attention"`, `skill_version: "1.7.0"`, and one opaque `workflow_run_id` reused across that user workflow. Use only letters, numbers, `.`, `_`, `:`, or `-`; never put user text, a URL, a query, or a credential in these fields.
+For every tool call, include `client_context` with `skill_id: "attention"`, `skill_version: "1.8.0"`, and one opaque `workflow_run_id` reused across that user workflow. Use only letters, numbers, `.`, `_`, `:`, or `-`; never put user text, a URL, a query, or a credential in these fields.
 
 ## Collect
 
@@ -40,6 +40,15 @@ For every tool call, include `client_context` with `skill_id: "attention"`, `ski
    - Treat `enriched` as a successful submission. Treat `already_enriched` as successful reuse: another collector won the first-valid-write race, so do not retry or overwrite it.
    - If `public_read_url` is null or the source cannot be read publicly, leave the summary pending, still confirm that the link was saved, and never fabricate a summary or tags.
 5. The enrichment call uploads only the grounded title, final public URL, summary, and tags. Do not submit copied page text, extracted full content, cookies, authorization headers, or browser state. Never put any of those values in logs or replies.
+
+## Recover a missing summary
+
+1. When the user asks whether a known collection has a summary, asks to process a pending summary, or follows up with wording such as “处理一下”, call `attention_get_collection_status` for the exact owned `collection_id` or `attempt_id` already established in the workflow. Do not guess an ID from another collection.
+2. Treat the returned `content.enrichment_action` as authoritative:
+   - For `generate_summary`, do not ask for another confirmation. Immediately read only the exact absolute `content.public_read_url` returned by that same status result, follow the same bounded public-read rules from Collect, and call `attention_submit_content_enrichment` with that content's `content_id`.
+   - For `reuse_summary` with `ready`, do not read or submit; tell the user the existing shared summary is ready.
+   - For `none` with `unavailable` or `hidden`, do not read or submit; explain the stable state briefly.
+3. Never substitute the original chat URL, a URL from history, or an authenticated Attention redirect for `content.public_read_url`. If the exact handoff is missing or unreadable, leave the summary pending and never fabricate output.
 
 ## Designated collection channels
 

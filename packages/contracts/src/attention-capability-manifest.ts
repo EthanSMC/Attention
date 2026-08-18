@@ -3,7 +3,7 @@ import { z } from "zod";
 import { CHANNEL_RUNTIME_RESOURCE, CHANNEL_RUNTIME_SCOPES } from "./channel-runtime";
 
 export const ATTENTION_CAPABILITY_MANIFEST_SCHEMA_VERSION = "1.0.0";
-export const ATTENTION_MCP_TOOL_CONTRACT_VERSION = "1.5.0";
+export const ATTENTION_MCP_TOOL_CONTRACT_VERSION = "1.6.0";
 export const ATTENTION_MCP_OAUTH_AUDIENCE = "attention-mcp";
 
 export const ATTENTION_MCP_OAUTH_SCOPES = [

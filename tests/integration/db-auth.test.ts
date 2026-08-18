@@ -1901,7 +1901,9 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       },
       content: {
         content_id: collected.content_id,
+        enrichment_action: "generate_summary",
         enrichment_status: "pending",
+        public_read_url: "https://example.org/status-owner",
         summary_status: "pending",
       },
     });
@@ -1918,7 +1920,26 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       attempt: null,
       collection: { effectively_public: true },
       content: {
+        enrichment_action: "none",
         enrichment_status: "partial",
+        public_read_url: null,
+        summary_status: "unavailable",
+      },
+    });
+
+    await handle.db
+      .update(contents)
+      .set({ enrichmentStatus: "failed", summaryStatus: "failed" })
+      .where(eq(contents.id, collected.content_id));
+    await expect(
+      getCollectionStatus(handle.db, owner, {
+        collection_id: collected.collection_id,
+      }),
+    ).resolves.toMatchObject({
+      content: {
+        enrichment_action: "none",
+        enrichment_status: "failed",
+        public_read_url: null,
         summary_status: "unavailable",
       },
     });

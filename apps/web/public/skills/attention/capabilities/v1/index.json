@@ -57,7 +57,7 @@
   ],
   "mcp": {
     "audience": "attention-mcp",
-    "contract_version": "1.5.0",
+    "contract_version": "1.6.0",
     "scopes": [
       "profile:read",
       "collection:read",
@@ -74,7 +74,7 @@
     ],
     "tools": [
       {
-        "contract_version": "1.5.0",
+        "contract_version": "1.6.0",
         "entitlement": {
           "conditional": null,
           "required": "authenticated_account"
@@ -95,7 +95,7 @@
         }
       },
       {
-        "contract_version": "1.5.0",
+        "contract_version": "1.6.0",
         "entitlement": {
           "conditional": null,
           "required": "authenticated_account"
@@ -116,7 +116,7 @@
         }
       },
       {
-        "contract_version": "1.5.0",
+        "contract_version": "1.6.0",
         "entitlement": {
           "conditional": null,
           "required": "authenticated_account"
@@ -137,7 +137,7 @@
         }
       },
       {
-        "contract_version": "1.5.0",
+        "contract_version": "1.6.0",
         "entitlement": {
           "conditional": "filter_for_public_visibility",
           "required": "authenticated_account"
@@ -158,7 +158,7 @@
         }
       },
       {
-        "contract_version": "1.5.0",
+        "contract_version": "1.6.0",
         "entitlement": {
           "conditional": null,
           "required": "authenticated_account"
@@ -179,7 +179,7 @@
         }
       },
       {
-        "contract_version": "1.5.0",
+        "contract_version": "1.6.0",
         "entitlement": {
           "conditional": "filter_for_public_visibility",
           "required": "authenticated_account"
@@ -200,7 +200,7 @@
         }
       },
       {
-        "contract_version": "1.5.0",
+        "contract_version": "1.6.0",
         "entitlement": {
           "conditional": null,
           "required": "authenticated_account"
@@ -221,7 +221,7 @@
         }
       },
       {
-        "contract_version": "1.5.0",
+        "contract_version": "1.6.0",
         "entitlement": {
           "conditional": "filter_for_public_visibility",
           "required": "authenticated_account"
@@ -242,7 +242,7 @@
         }
       },
       {
-        "contract_version": "1.5.0",
+        "contract_version": "1.6.0",
         "entitlement": {
           "conditional": "member_for_full_public_feed",
           "required": "authenticated_account"
@@ -264,7 +264,7 @@
         }
       },
       {
-        "contract_version": "1.5.0",
+        "contract_version": "1.6.0",
         "entitlement": {
           "conditional": null,
           "required": "member"
@@ -285,7 +285,7 @@
         }
       },
       {
-        "contract_version": "1.5.0",
+        "contract_version": "1.6.0",
         "entitlement": {
           "conditional": null,
           "required": "authenticated_account"
@@ -306,7 +306,7 @@
         }
       },
       {
-        "contract_version": "1.5.0",
+        "contract_version": "1.6.0",
         "entitlement": {
           "conditional": null,
           "required": "filter"
@@ -327,7 +327,7 @@
         }
       },
       {
-        "contract_version": "1.5.0",
+        "contract_version": "1.6.0",
         "entitlement": {
           "conditional": null,
           "required": "filter"
@@ -348,7 +348,7 @@
         }
       },
       {
-        "contract_version": "1.5.0",
+        "contract_version": "1.6.0",
         "entitlement": {
           "conditional": null,
           "required": "authenticated_account"
@@ -369,7 +369,7 @@
         }
       },
       {
-        "contract_version": "1.5.0",
+        "contract_version": "1.6.0",
         "entitlement": {
           "conditional": null,
           "required": "member_or_filter"

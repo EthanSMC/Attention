@@ -239,7 +239,7 @@
     "bundle_skill_path": null,
     "delivery": "host_user_directory",
     "docs_url": "https://learn.chatgpt.com/docs/build-skills",
-    "document_sha256": "7412970a7d0041b27bf7537fb8bafcc49fe428ee968407d7dc1fee93a8e351e2",
+    "document_sha256": "9988f0d4f2b3b3686cabe49b8eb72850e9d5261d065e6bb9d7f1db78f381dcad",
     "format": "skill_md",
     "id": "attention",
     "install": "filesystem_directory",
@@ -253,7 +253,7 @@
     "package_ref": null,
     "source_kind": "local_directory",
     "source_path": "/skills/attention/SKILL.md",
-    "tool_contract_version": "1.5.0",
-    "version": "1.7.0"
+    "tool_contract_version": "1.6.0",
+    "version": "1.8.0"
   }
 }

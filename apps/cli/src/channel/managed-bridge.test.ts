@@ -93,11 +93,11 @@ fs.writeFileSync(path, JSON.stringify(state));
     );
     await saveManagedBridgeUpdateState(
       {
-        current: { artifactPath: newArtifact, permissionProfileSha256: permissionHash, version: "0.3.6" },
+        current: { artifactPath: newArtifact, permissionProfileSha256: permissionHash, version: "0.3.7" },
         lastCheckAt: "2026-08-14T00:00:00.000Z",
         lastErrorCode: null,
-        latestVersion: "0.3.6",
-        pending: { startedAt: "2026-08-14T00:00:00.000Z", version: "0.3.6" },
+        latestVersion: "0.3.7",
+        pending: { startedAt: "2026-08-14T00:00:00.000Z", version: "0.3.7" },
         previous: { artifactPath: oldArtifact, permissionProfileSha256: permissionHash, version: "0.3.5" },
         schemaVersion: 1,
         status: "restarting",
@@ -121,7 +121,7 @@ fs.writeFileSync(path, JSON.stringify(state));
 
     expect(await readFile(logPath, "utf8")).toBe("new\n");
     expect((await loadManagedBridgeUpdateState(home)).current.version).toBe(
-      "0.3.6",
+      "0.3.7",
     );
   });
 
@@ -138,11 +138,11 @@ fs.writeFileSync(path, JSON.stringify(state));
     );
     await saveManagedBridgeUpdateState(
       {
-        current: { artifactPath: newArtifact, permissionProfileSha256: permissionHash, version: "0.3.6" },
+        current: { artifactPath: newArtifact, permissionProfileSha256: permissionHash, version: "0.3.7" },
         lastCheckAt: "2026-08-14T00:00:00.000Z",
         lastErrorCode: null,
-        latestVersion: "0.3.6",
-        pending: { startedAt: "2026-08-14T00:00:00.000Z", version: "0.3.6" },
+        latestVersion: "0.3.7",
+        pending: { startedAt: "2026-08-14T00:00:00.000Z", version: "0.3.7" },
         previous: { artifactPath: oldArtifact, permissionProfileSha256: permissionHash, version: "0.3.5" },
         schemaVersion: 1,
         status: "restarting",
@@ -189,11 +189,11 @@ fs.writeFileSync(path, JSON.stringify(state));
     );
     await saveManagedBridgeUpdateState(
       {
-        current: { artifactPath: newArtifact, permissionProfileSha256: permissionHash, version: "0.3.6" },
+        current: { artifactPath: newArtifact, permissionProfileSha256: permissionHash, version: "0.3.7" },
         lastCheckAt: "2026-08-14T00:00:00.000Z",
         lastErrorCode: null,
-        latestVersion: "0.3.6",
-        pending: { startedAt: "2026-08-14T00:00:00.000Z", version: "0.3.6" },
+        latestVersion: "0.3.7",
+        pending: { startedAt: "2026-08-14T00:00:00.000Z", version: "0.3.7" },
         previous: { artifactPath: oldArtifact, permissionProfileSha256: permissionHash, version: "0.3.5" },
         schemaVersion: 1,
         status: "restarting",

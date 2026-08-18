@@ -43,9 +43,9 @@ describe("public Attention Skill contract", () => {
     const skill = await readPublicSkill();
     const registryNames = [...ATTENTION_PUBLIC_TOOL_NAMES].sort();
 
-    expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe("1.5.0");
+    expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe("1.6.0");
     expect(skill).toContain("Skill ID: `attention`");
-    expect(skill).toContain("Skill version: `1.7.0`");
+    expect(skill).toContain("Skill version: `1.8.0`");
     expect(skill).toContain(
       `Tool contract version: \`${ATTENTION_TOOL_CONTRACT_VERSION}\``,
     );
@@ -87,6 +87,21 @@ describe("public Attention Skill contract", () => {
       /selected result is `generate_summary`[^\n]*`attention_get_collection_status`/u,
     );
     expect(skill).toMatch(/Never guess from the original multi-link share text/u);
+  });
+
+  it("automatically recovers an eligible missing summary from owner-scoped status", async () => {
+    const skill = await readPublicSkill();
+
+    expect(skill).toMatch(
+      /attention_get_collection_status[\s\S]*generate_summary[\s\S]*do not ask for another confirmation/u,
+    );
+    expect(skill).toMatch(
+      /exact absolute `content\.public_read_url`[\s\S]*attention_submit_content_enrichment/u,
+    );
+    expect(skill).toMatch(
+      /reuse_summary[\s\S]*do not read or submit[\s\S]*none[\s\S]*unavailable[\s\S]*hidden/u,
+    );
+    expect(skill).toMatch(/Never substitute the original chat URL/u);
   });
 
   it("pins safe collection, recovery, and permission workflows", async () => {

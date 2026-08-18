@@ -15,6 +15,8 @@ import {
 import { isEffectivelyPublic } from "@attention/domain";
 import { z } from "zod";
 
+import { enrichmentResponseFields } from "./content-enrichment-decision";
+
 export const collectionStatusRequestSchema = z
   .object({
     attempt_id: z.string().uuid().optional(),
@@ -93,10 +95,12 @@ export interface OwnedContentStatusResult {
   content_id: string;
   content_status: "active" | "merged";
   content_type: string;
+  enrichment_action: "reuse_summary" | "generate_summary" | "none";
   enrichment_status: "complete" | "failed" | "partial" | "pending" | "processing";
+  public_read_url: string | null;
   public_safety_status: "allowed" | "blocked";
   source: string;
-  summary_status: "failed" | "hidden" | "pending" | "ready" | "unavailable";
+  summary_status: "hidden" | "pending" | "ready" | "unavailable";
   takedown_status: "none" | "removed";
   title: string | null;
   updated_at: string;
@@ -181,6 +185,7 @@ async function loadOwnedCollectionStatus(
     const [row] = await tx
       .select({
         collectedAt: collections.collectedAt,
+        aiSummary: contents.aiSummary,
         collectionId: collections.id,
         collectionStatus: collections.collectionStatus,
         collectionUpdatedAt: collections.updatedAt,
@@ -194,6 +199,7 @@ async function loadOwnedCollectionStatus(
         filterProfileRevokedAt: filterProfiles.revokedAt,
         filterRevokedAt: collections.filterRevokedAt,
         moderationStatus: collections.moderationStatus,
+        outboundUrl: contents.outboundUrl,
         publicSafetyStatus: contents.publicSafetyStatus,
         publicSince: collections.publicSince,
         source: contents.source,
@@ -260,10 +266,20 @@ async function loadOwnedCollectionStatus(
         content_id: row.contentId,
         content_status: row.contentStatus,
         content_type: row.contentType,
+        ...enrichmentResponseFields(
+          {
+            aiSummary: row.aiSummary,
+            communityModerationStatus: row.communityModerationStatus,
+            contentStatus: row.contentStatus,
+            publicSafetyStatus: row.publicSafetyStatus,
+            summaryStatus: row.summaryStatus,
+            takedownStatus: row.takedownStatus,
+          },
+          row.outboundUrl,
+        ),
         enrichment_status: row.enrichmentStatus,
         public_safety_status: row.publicSafetyStatus,
         source: row.source,
-        summary_status: row.summaryStatus,
         takedown_status: row.takedownStatus,
         title: row.title,
         updated_at: row.contentUpdatedAt.toISOString(),

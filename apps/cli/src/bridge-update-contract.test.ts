@@ -119,7 +119,7 @@ describe("Bridge update contract", () => {
         manifest: {
           ...manifest,
           minimum_supported_version: "0.3.5",
-          version: "0.3.6",
+          version: "0.3.7",
         },
       }),
     ).toBe("update_required");

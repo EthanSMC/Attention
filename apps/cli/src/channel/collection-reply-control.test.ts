@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { applyAttentionToolResult } from "./collection-reply-control";
+import {
+  applyAttentionToolResult,
+  safeCollectionReply,
+} from "./collection-reply-control";
 
 describe("collection reply control", () => {
   it.each([
@@ -41,4 +44,66 @@ describe("collection reply control", () => {
       }),
     ).toBeNull();
   });
+
+  it("turns an eligible pending status into automatic enrichment recovery", () => {
+    const pending = applyAttentionToolResult(
+      null,
+      "attention_get_collection_status",
+      {
+        attempt: null,
+        collection: { collection_id: "collection-1" },
+        content: {
+          content_id: "content-1",
+          enrichment_action: "generate_summary",
+          public_read_url: "https://example.org/article",
+          summary_status: "pending",
+        },
+      },
+    );
+
+    expect(pending).toEqual({
+      enrichmentAction: "generate_summary",
+      enrichmentCompleted: false,
+      kind: "recovery",
+      summaryStatus: "pending",
+    });
+    const completed = applyAttentionToolResult(
+      pending,
+      "attention_submit_content_enrichment",
+      { status: "enriched", summary_status: "ready" },
+    );
+    expect(completed).toEqual({
+      enrichmentAction: "generate_summary",
+      enrichmentCompleted: true,
+      kind: "recovery",
+      summaryStatus: "pending",
+    });
+    expect(safeCollectionReply(completed!)).toBe("摘要已补全。");
+  });
+
+  it.each([
+    ["reuse_summary", "ready", "摘要已经就绪。"],
+    ["none", "unavailable", "摘要当前无法补全。"],
+    ["none", "hidden", "摘要不可用。"],
+  ] as const)(
+    "returns a fixed content-free recovery reply for %s/%s",
+    (enrichmentAction, summaryStatus, expected) => {
+      const control = applyAttentionToolResult(
+        null,
+        "attention_get_collection_status",
+        {
+          attempt: null,
+          collection: { collection_id: "collection-1" },
+          content: {
+            content_id: "content-1",
+            enrichment_action: enrichmentAction,
+            public_read_url: null,
+            summary_status: summaryStatus,
+          },
+        },
+      );
+      expect(control).not.toBeNull();
+      expect(safeCollectionReply(control!)).toBe(expected);
+    },
+  );
 });
