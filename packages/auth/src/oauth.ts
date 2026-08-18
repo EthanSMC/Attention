@@ -327,17 +327,24 @@ export async function createAuthorizationCode(
   const replacementConnectionId =
     intent.mode === "replace" ? intent.replacementConnectionId : null;
   const code = createOpaqueToken();
+  const codeHash = await hashOpaqueToken(code);
+  const automaticConnectionMarker = intent.mode === "auto"
+    ? `attention:auto:${codeHash.slice(0, 48)}`
+    : null;
   await db.insert(oauthAuthorizationCodes).values({
     accountId,
     audience: request.audience,
     clientId: request.clientId,
     codeChallenge: request.codeChallenge,
-    codeHash: await hashOpaqueToken(code),
+    codeHash,
     connectionId,
-    connectionLabel: normalized?.label ?? null,
+    connectionLabel: intent.mode === "auto"
+      ? "__attention_automatic_connection__"
+      : normalized?.label ?? null,
     createdAt: now,
     expiresAt: new Date(now.getTime() + codeTtlMs),
-    normalizedConnectionLabel: normalized?.normalizedLabel ?? null,
+    normalizedConnectionLabel:
+      automaticConnectionMarker ?? normalized?.normalizedLabel ?? null,
     redirectUri: request.redirectUri,
     replacementConnectionId,
     scopes: request.scopes,
@@ -672,8 +679,27 @@ export async function exchangeAuthorizationCode(
         throw new OAuthError("invalid_grant");
       }
       let connectionId: string;
-      let legacyMaterialized = false;
-      if (code.connectionId) {
+      let codeConnectionNeedsLink = false;
+      const automaticConnectionMarker =
+        `attention:auto:${code.codeHash.slice(0, 48)}`;
+      const automaticIntent =
+        !code.connectionId &&
+        !code.replacementConnectionId &&
+        code.connectionLabel === "__attention_automatic_connection__" &&
+        code.normalizedConnectionLabel === automaticConnectionMarker;
+      if (automaticIntent) {
+        connectionId = await materializeLegacyOAuthConnection(tx, {
+          accountId: code.accountId,
+          audience: requestedResource.audience,
+          authorizedAt: now,
+          clientId: code.clientId,
+          genericClientName: runtimeExchange ? null : activeClient.name,
+          now,
+          reauthorize: true,
+          trustedRuntimeClient: trustedRuntimeClient ?? null,
+        });
+        codeConnectionNeedsLink = true;
+      } else if (code.connectionId) {
         const [existing] = await tx
           .select()
           .from(oauthConnections)
@@ -738,12 +764,12 @@ export async function exchangeAuthorizationCode(
           audience: requestedResource.audience,
           authorizedAt: now,
           clientId: code.clientId,
-          genericClientName: runtimeExchange ? null : activeClient.name,
+          genericClientName: null,
           now,
           reauthorize: true,
           trustedRuntimeClient: trustedRuntimeClient ?? null,
         });
-        legacyMaterialized = true;
+        codeConnectionNeedsLink = true;
       } else {
         if (!code.connectionLabel || !code.normalizedConnectionLabel) {
           throw new OAuthError("invalid_grant");
@@ -800,7 +826,7 @@ export async function exchangeAuthorizationCode(
       await tx
         .update(oauthAuthorizationCodes)
         .set({
-          ...(legacyMaterialized ? { connectionId } : {}),
+          ...(codeConnectionNeedsLink ? { connectionId } : {}),
           consumedAt: now,
         })
         .where(eq(oauthAuthorizationCodes.id, code.id));

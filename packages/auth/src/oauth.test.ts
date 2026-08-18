@@ -395,7 +395,7 @@ describe("OAuth connection-aware authorization", () => {
     });
   });
 
-  it("stores no connection identity for an automatic authorization intent", async () => {
+  it("stores a code-bound marker without a user label for an automatic authorization intent", async () => {
     const inserted: Array<Record<string, unknown>> = [];
     const db = {
       insert: () => ({
@@ -416,10 +416,32 @@ describe("OAuth connection-aware authorization", () => {
     expect(inserted).toHaveLength(1);
     expect(inserted[0]).toMatchObject({
       connectionId: null,
-      connectionLabel: null,
-      normalizedConnectionLabel: null,
+      connectionLabel: "__attention_automatic_connection__",
+      normalizedConnectionLabel: expect.stringMatching(
+        /^attention:auto:[0-9a-f]{48}$/u,
+      ),
       replacementConnectionId: null,
     });
+  });
+
+  it("keeps a legacy all-null authorization code independent from the client display name", async () => {
+    const code = opaqueToken("legacy-null-identity-code");
+    const db = new OAuthStateDatabase({
+      authorizationCodes: [await authorizationCode(code)],
+      clients: [oauthClient({
+        name: "Legacy writer display name must not become identity",
+      })],
+    });
+
+    const pair = await exchangeAuthorizationCode(db.database, exchangeInput(code));
+
+    expect(db.state.connections).toEqual([
+      expect.objectContaining({
+        id: pair.connectionId,
+        label: `Imported connection ${pair.connectionId}`,
+        normalizedLabel: `imported connection ${pair.connectionId}`,
+      }),
+    ]);
   });
 
   it("creates one logical connection and binds both issued tokens to it", async () => {
@@ -446,8 +468,8 @@ describe("OAuth connection-aware authorization", () => {
     const secondCode = opaqueToken("automatic-label-two");
     const db = new OAuthStateDatabase({
       authorizationCodes: [
-        await authorizationCode(firstCode),
-        await authorizationCode(secondCode),
+        await automaticAuthorizationCode(firstCode),
+        await automaticAuthorizationCode(secondCode),
       ],
       clients: [oauthClient({ name: "Codex" })],
     });
@@ -476,7 +498,7 @@ describe("OAuth connection-aware authorization", () => {
   it("retries the next label after a concurrent insertion collision", async () => {
     const code = opaqueToken("automatic-label-race");
     const db = new OAuthStateDatabase({
-      authorizationCodes: [await authorizationCode(code)],
+      authorizationCodes: [await automaticAuthorizationCode(code)],
       clients: [oauthClient({ name: "Codex" })],
       connectionInsertConflicts: 1,
     });
@@ -495,7 +517,7 @@ describe("OAuth connection-aware authorization", () => {
   it("materializes a client-named connection for an automatic authorization code", async () => {
     const code = opaqueToken("legacy-create-code");
     const db = new OAuthStateDatabase({
-      authorizationCodes: [await authorizationCode(code)],
+      authorizationCodes: [await automaticAuthorizationCode(code)],
       clients: [oauthClient({ name: "Codex" })],
     });
 
@@ -622,7 +644,7 @@ describe("OAuth connection-aware authorization", () => {
         clientId: "previous-runtime-client",
         connectionId: runtimeConnectionId,
       })],
-      authorizationCodes: [await authorizationCode(code, {
+      authorizationCodes: [await automaticAuthorizationCode(code, {
         audience: "attention-channel-runtime",
         clientId: runtimeClientId,
         scopes: ["runtime:register", "runtime:heartbeat"],
@@ -1102,6 +1124,20 @@ async function authorizationCode(
     replacementConnectionId: null,
     scopes: ["profile:read"],
     ...overrides,
+  };
+}
+
+async function automaticAuthorizationCode(
+  rawCode: string,
+  overrides: Partial<AuthorizationCodeRow> = {},
+): Promise<AuthorizationCodeRow> {
+  const row = await authorizationCode(rawCode, overrides);
+  return {
+    ...row,
+    connectionId: null,
+    connectionLabel: "__attention_automatic_connection__",
+    normalizedConnectionLabel: `attention:auto:${row.codeHash.slice(0, 48)}`,
+    replacementConnectionId: null,
   };
 }
 

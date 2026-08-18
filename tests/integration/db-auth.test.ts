@@ -1205,7 +1205,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       handle.db,
       verified.accountId,
       request,
-      { mode: "create", label: "Integration test agent" },
+      { mode: "auto" },
     );
     await expect(exchangeAuthorizationCode(handle.db, {
       clientId: client.clientId,
@@ -1233,6 +1233,14 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     })).rejects.toMatchObject({ code: "invalid_grant" });
     const oauthPrincipal = await resolveOAuthAccessToken(handle.db, pair.accessToken, { audience: "attention-mcp" });
     expect(oauthPrincipal).toMatchObject({ accountId: verified.accountId, isMember: true });
+    const [automaticConnection] = await handle.db
+      .select()
+      .from(oauthConnections)
+      .where(eq(oauthConnections.id, pair.connectionId));
+    expect(automaticConnection).toMatchObject({
+      label: "Attention Test Agent",
+      normalizedLabel: "attention test agent",
+    });
     await revokeOAuthConnection(handle.db, verified.accountId, pair.connectionId);
     expect(await resolveOAuthAccessToken(handle.db, pair.accessToken, { audience: "attention-mcp" })).toBeNull();
     expect(await resolveSession(handle.db, verified.session.token, { touch: false })).not.toBeNull();
