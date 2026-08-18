@@ -536,7 +536,9 @@ describe("OAuth connection-aware authorization", () => {
     });
     expect(db.state.authorizationCodes[0]).toMatchObject({
       connectionId: pair.connectionId,
+      connectionLabel: null,
       consumedAt: now,
+      normalizedConnectionLabel: null,
     });
     expect(db.state.accessTokens[0]?.connectionId).toBe(pair.connectionId);
     expect(db.state.refreshTokens[0]?.connectionId).toBe(pair.connectionId);

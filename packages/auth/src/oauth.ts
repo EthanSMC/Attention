@@ -826,7 +826,13 @@ export async function exchangeAuthorizationCode(
       await tx
         .update(oauthAuthorizationCodes)
         .set({
-          ...(codeConnectionNeedsLink ? { connectionId } : {}),
+          ...(codeConnectionNeedsLink
+            ? {
+                connectionId,
+                connectionLabel: null,
+                normalizedConnectionLabel: null,
+              }
+            : {}),
           consumedAt: now,
         })
         .where(eq(oauthAuthorizationCodes.id, code.id));
