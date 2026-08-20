@@ -267,6 +267,7 @@ describe("loadConnectionOverview Agent OAuth projection", () => {
       deviceName: "Ethan MacBook Pro",
       status: "online",
     });
+    expect(result.wechatBindingStatus).toBe("bound");
     expect(JSON.stringify(result.agentOAuthConnections)).not.toMatch(
       /installation|clientId|token|hash/u,
     );
@@ -316,6 +317,7 @@ describe("loadConnectionOverview local Channel runtime projection", () => {
         status: "online",
       },
     ]);
+    expect(result.wechatBindingStatus).toBe("bound");
     expect(JSON.stringify(result.localChannelRuntimes)).not.toMatch(
       /57015b93|thread|message_ref|fingerprint|token/u,
     );

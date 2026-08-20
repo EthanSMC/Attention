@@ -307,14 +307,10 @@ export function OAuthGroupRevokeModal({
 }
 
 export function ConnectionManager({
-  agentConnectionPrompt,
-  agentDocumentationUrl,
   agentOAuthConnections,
   localChannelRuntimes,
   pats,
 }: {
-  agentConnectionPrompt: string;
-  agentDocumentationUrl: string;
   agentOAuthConnections: AgentOAuthConnectionGroup[];
   localChannelRuntimes: LocalChannelRuntime[];
   pats: PatConnection[];
@@ -343,14 +339,6 @@ export function ConnectionManager({
   const renameButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const activePats = apiKeys.rows.filter((item) => item.status === "active");
 
-  async function copy(value: string, label = "内容") {
-    try {
-      await navigator.clipboard.writeText(value);
-      showFeedback(`${label}已复制。`);
-    } catch {
-      showFeedback("复制失败，请重试。", "error");
-    }
-  }
   const closeApiKeyModal = useCallback(() => {
     if (createRequestInFlight.current) return;
     dispatchApiKey({ type: "close" });
@@ -527,33 +515,6 @@ export function ConnectionManager({
 
   return (
     <div className="connection-stack">
-      <section className="connection-card connection-card--agent-entry">
-        <div>
-          <p className="settings-card__eyebrow">本地 Agent</p>
-          <h2>让你的 AI 完成接入</h2>
-          <p>
-            复制一段提示词给你正在使用的 AI。它会识别宿主，打开对应文档，并完成 Skill、MCP
-            和 OAuth 配置。
-          </p>
-        </div>
-        <div className="agent-entry-actions">
-          <button
-            className="button button--primary"
-            onClick={() => copy(agentConnectionPrompt, "接入提示词")}
-            type="button"
-          >
-            复制给 AI
-          </button>
-          <a
-            className="button button--secondary"
-            href={agentDocumentationUrl}
-            rel="noreferrer"
-            target="_blank"
-          >
-            查看接入文档 <span aria-hidden="true">↗</span>
-          </a>
-        </div>
-      </section>
       {localChannelRuntimes.length ? (
         <section className="connection-card connection-card--runtime">
           <div className="connection-card__intro">

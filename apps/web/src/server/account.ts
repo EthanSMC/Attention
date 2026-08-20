@@ -316,6 +316,8 @@ export interface LocalChannelRuntimeOverview {
   status: LocalChannelRuntimeStatus;
 }
 
+export type WechatBindingStatus = "bound" | "not_bound" | "pending";
+
 interface LocalChannelRuntimeRow {
   adapterVersion: string;
   agentIntegrationId: Parameters<typeof getAgentIntegration>[0];
@@ -414,6 +416,19 @@ function projectLocalChannelRuntimes(
   return runtimes;
 }
 
+function projectWechatBindingStatus(
+  rows: LocalChannelRuntimeRow[],
+): WechatBindingStatus {
+  const bindingStatuses = new Set(rows.map((row) => row.bindingStatus));
+  const confirmedStatuses: Array<
+    Exclude<LocalChannelRuntimeRow["bindingStatus"], null>
+  > = ["healthy", "stale", "verified"];
+  if (confirmedStatuses.some((status) => bindingStatuses.has(status))) {
+    return "bound";
+  }
+  if (bindingStatuses.has("reported")) return "pending";
+  return "not_bound";
+}
 
 interface AgentOAuthConnectionRow {
   audience: string;
@@ -553,5 +568,6 @@ export async function loadConnectionOverview(db: AttentionDatabase, accountId: s
       ...pat,
       needsRotation: apiKeyScopes.some((scope) => !pat.scopes.includes(scope)),
     })),
+    wechatBindingStatus: projectWechatBindingStatus(localChannelRuntimeRows),
   };
 }

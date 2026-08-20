@@ -6,7 +6,6 @@ import { LoginModuleFallback } from "../../../components/login-module";
 import { loadConnectionOverview } from "../../../server/account";
 import { getWebDatabase } from "../../../server/db";
 import { getPagePrincipal } from "../../../server/session";
-import { buildAgentConnectionPrompt } from "../../../server/agent-connection-prompt";
 import {
   bridgeDeviceVersionView,
   publishedBridgeUpdate,
@@ -15,18 +14,12 @@ import {
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "连接与授权" };
 
-function publicOrigin(): string {
-  return process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/u, "") ?? "http://127.0.0.1:3000";
-}
-
 export default async function ConnectionsPage() {
   const principal = await getPagePrincipal();
   if (!principal) {
     return <LoginModuleFallback returnTo="/account/connections" />;
   }
   const connections = await loadConnectionOverview(getWebDatabase(), principal.accountId);
-  const origin = publicOrigin();
-  const agentDocumentationUrl = `${origin}/doc`;
   return (
     <AccountSettingsShell
       active="connections"
@@ -35,8 +28,6 @@ export default async function ConnectionsPage() {
       title="连接与授权"
     >
       <ConnectionManager
-        agentConnectionPrompt={buildAgentConnectionPrompt(agentDocumentationUrl)}
-        agentDocumentationUrl={agentDocumentationUrl}
         localChannelRuntimes={connections.localChannelRuntimes.map((item) => ({
           ...item,
           lastSeenAt: item.lastSeenAt?.toISOString() ?? null,

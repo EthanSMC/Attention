@@ -72,10 +72,7 @@ function renderManager(): string {
   return renderToStaticMarkup(createElement(
     ConnectionManager as ComponentType<Record<string, unknown>>,
     {
-      agentConnectionPrompt: "Connect Attention",
-      agentDocumentationUrl: "https://attention.example/doc",
       localChannelRuntimes: [],
-      oauthConnections: [],
       agentOAuthConnections: agentGroups,
       pats: [],
     },
@@ -83,17 +80,16 @@ function renderManager(): string {
 }
 
 describe("ConnectionManager", () => {
-  it("keeps Agent setup concise and hands detailed work to the public guide", () => {
+  it("keeps Agent setup on its standalone page", () => {
     const componentSource = readFileSync(
       new URL("./connection-manager.tsx", import.meta.url),
       "utf8",
     );
 
-    expect(componentSource).toContain("agentConnectionPrompt");
-    expect(componentSource).toContain("agentDocumentationUrl");
-    expect(componentSource).toContain("复制给 AI");
-    expect(componentSource).toContain("查看接入文档");
-    expect(componentSource).toContain('target="_blank"');
+    expect(componentSource).not.toContain("agentConnectionPrompt");
+    expect(componentSource).not.toContain("agentDocumentationUrl");
+    expect(componentSource).not.toContain("复制给 AI");
+    expect(componentSource).not.toContain("查看接入文档");
     expect(componentSource).toContain("TransientFeedback");
     expect(componentSource).not.toContain("connection-toast");
     expect(componentSource).not.toContain("selectedAgent.commands");

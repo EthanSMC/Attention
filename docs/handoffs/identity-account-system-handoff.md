@@ -36,7 +36,8 @@
 | 我的账号 | `/account` | 显示 handle、Member/Filter 状态和设置入口 |
 | 安全设置 | `/account/settings` | 修改显示名、设置密码、继续保留验证码登录 |
 | Agent 接入文档 | `/doc`、`/doc/:agent` | 公开、无需登录；每个 Agent 使用独立文档展示 Skill、MCP、OAuth 与验收步骤 |
-| 连接管理 | `/account/connections` | 一键复制给 AI 的接入提示词、OAuth 与 API Key 状态；不铺安装命令，不展示 Channel 连接状态 |
+| Agent 接入 | `/agent` | 一键复制给 AI 的本地接入提示词与配置流程；云端 Agent 以“开发中”展示 |
+| 连接管理 | `/account/connections` | OAuth 与 API Key 状态；不铺安装命令，不展示 Channel 连接状态 |
 | 会员 | `/membership`、`/membership/checkout` | 展示 Member 订阅和历史兼容权益，并在创建订阅前明确确认扣费信息 |
 | 增长权益 | `/account/rewards`、`/join/:token` | 创建新用户邀请、签发/兑换 Filter 年卡、查看积分；邀请注册页不泄露 inviter |
 | Agent 接入 | `/doc`、`/doc/:agent` | 无需登录的宿主文档；用户自己的 Agent 通过 Skill/MCP 使用能力 |

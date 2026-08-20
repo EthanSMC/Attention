@@ -100,8 +100,8 @@ Member 与 Filter 可在 `/account/digests` 订阅 Domain 并设置 IANA 时区�
 ## Agent、MCP 与同步
 
 公开接入文档位于 `/doc`，并为 OpenClaw、Hermes、Codex、Claude Code 和
-WorkBuddy 提供独立 URL。登录后的 `/account/connections` 只提供一键复制给 AI
-的接入提示词、OAuth 授权状态和 API Key 管理，不再铺开安装命令。支持浏览器
+WorkBuddy 提供独立 URL。`/agent` 提供本地 Agent 的一键接入提示词和配置流程；登录后的
+`/account/connections` 只管理 OAuth 授权状态和 API Key，不再铺开安装命令。支持浏览器
 OAuth 的客户端应直接连接 Hosted MCP：
 
 ```bash
