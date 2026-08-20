@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -14,6 +14,17 @@ interface CliManifest {
 }
 
 describe("public Attention CLI artifact", () => {
+  it("retains only the current public bundle and its manifest", () => {
+    const publicCliFiles = readdirSync(
+      new URL("../../public/cli", import.meta.url),
+    ).sort();
+
+    expect(publicCliFiles).toEqual([
+      "attention-0.3.8.mjs",
+      "manifest.json",
+    ]);
+  });
+
   it("ships a checksum-pinned executable bundle from the public documentation origin", () => {
     const cliPackage = JSON.parse(
       readFileSync(new URL("../../../cli/package.json", import.meta.url), "utf8"),

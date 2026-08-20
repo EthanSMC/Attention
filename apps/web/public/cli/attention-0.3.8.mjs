@@ -15705,7 +15705,8 @@ var init_channel_runtime = __esm({
       api_version: ChannelRuntimeApiVersionSchema,
       installation_id: InstallationIdSchema,
       provider: LocalChannelProviderSchema,
-      channel_account_fingerprint: OpaqueSha256FingerprintSchema
+      channel_account_fingerprint: OpaqueSha256FingerprintSchema,
+      channel_session_fingerprint: OpaqueSha256FingerprintSchema.optional()
     }).strict();
     ChannelBindingChallengeSchema = external_exports.object({
       binding_id: ChannelBindingIdSchema,
@@ -18054,7 +18055,7 @@ init_src();
 
 // src/channel/channel-command.ts
 init_src();
-import { createHash as createHash7, randomUUID as randomUUID8 } from "node:crypto";
+import { createHash as createHash8, randomUUID as randomUUID8 } from "node:crypto";
 import { mkdir as mkdir8 } from "node:fs/promises";
 import { homedir as homedir6, hostname as hostname3 } from "node:os";
 import { resolve as resolve2 } from "node:path";
@@ -18312,7 +18313,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 // src/version.ts
-var ATTENTION_CLI_VERSION = "0.3.7";
+var ATTENTION_CLI_VERSION = "0.3.8";
 
 // src/runtime-oauth.ts
 var RUNTIME_CREDENTIAL_VERSION = 1;
@@ -21608,6 +21609,7 @@ var LocalRuntimeReporter = class {
       const binding = CreateChannelBindingRequestSchema.parse({
         api_version: CHANNEL_RUNTIME_API_VERSION,
         channel_account_fingerprint: this.#identity.channelAccountFingerprint,
+        channel_session_fingerprint: this.#identity.channelSessionFingerprint,
         installation_id: this.#identity.installationId,
         provider: this.#identity.provider
       });
@@ -21686,11 +21688,16 @@ var LocalRuntimeReporter = class {
           };
         }
         if (!retryableStatus(response.status)) {
+          const responsePayload = await safeResponseBody(response);
           this.#setStatus(
             "degraded",
-            response.status === 401 ? "runtime_auth_required" : "runtime_report_rejected"
+            response.status === 401 ? "runtime_auth_required" : runtimeBindingErrorCode(responsePayload) ?? "runtime_report_rejected"
           );
-          return { body: null, ok: false, status: response.status };
+          return {
+            body: null,
+            ok: false,
+            status: response.status
+          };
         }
       } catch {
       }
@@ -21779,6 +21786,25 @@ function responseMember(body, key) {
 async function responseBody(response) {
   const text = await response.text();
   return text ? JSON.parse(text) : null;
+}
+async function safeResponseBody(response) {
+  try {
+    return await responseBody(response);
+  } catch {
+    return null;
+  }
+}
+function runtimeBindingErrorCode(body) {
+  const errorBody = responseMember(body, "error");
+  const code = responseMember(errorBody, "code");
+  switch (code) {
+    case "channel_session_proof_required":
+      return "runtime_channel_session_proof_required";
+    case "channel_session_superseded":
+      return "runtime_channel_session_superseded";
+    default:
+      return null;
+  }
 }
 async function defaultSleep(milliseconds) {
   await new Promise((resolve4) => {
@@ -22759,6 +22785,16 @@ async function displayQrCode(payload, options = {}) {
   return { renderedTerminalQr };
 }
 
+// src/channel/runtime-identity.ts
+import { createHash as createHash7 } from "node:crypto";
+function opaqueRuntimeFingerprint(namespace, value) {
+  return createHash7("sha256").update(`attention:${namespace}:`, "utf8").update(value, "utf8").digest("hex");
+}
+function channelSessionFingerprint(token) {
+  if (!token) throw new Error("ilink_session_missing");
+  return opaqueRuntimeFingerprint("wechat_ilink_session", token);
+}
+
 // src/channel/service.ts
 import { randomUUID as randomUUID7 } from "node:crypto";
 import { access as access2, chmod as chmod6, mkdir as mkdir7, rename as rename5, rm as rm6, writeFile as writeFile5 } from "node:fs/promises";
@@ -23061,6 +23097,16 @@ init_state();
 var CHANNEL_BRIDGE_HOSTS = ["codex", "claude-code"];
 var ACCOUNT_VERIFICATION_CACHE_MS = 24 * 60 * 60 * 1e3;
 var SUMMARY_NOTIFICATION_POLL_INTERVAL_MS = 3e4;
+function runtimeReporterDegradedMessage(lastErrorCode) {
+  switch (lastErrorCode) {
+    case "runtime_channel_session_superseded":
+      return "\u5F53\u524D\u5FAE\u4FE1\u767B\u5F55\u4F1A\u8BDD\u5DF2\u88AB\u65B0\u7684\u626B\u7801\u767B\u5F55\u66FF\u6362\uFF1B\u8BF7\u5728\u672C\u673A\u91CD\u65B0\u626B\u7801\u540E\u518D\u542F\u52A8 Bridge\u3002";
+    case "runtime_channel_session_proof_required":
+      return "\u5F53\u524D\u5BA2\u6237\u7AEF\u65E0\u6CD5\u8BC1\u660E\u5FAE\u4FE1\u767B\u5F55\u4F1A\u8BDD\uFF1B\u8BF7\u66F4\u65B0 Attention CLI \u540E\u91CD\u65B0\u542F\u52A8 Bridge\u3002";
+    default:
+      return "Runtime \u72B6\u6001\u4E0A\u62A5\u6682\u65F6\u4E2D\u65AD\uFF1B\u672C\u5730\u5FAE\u4FE1\u6865\u4E0D\u53D7\u5F71\u54CD\u3002";
+  }
+}
 var HOST_EXECUTABLES = {
   "claude-code": "claude",
   codex: "codex"
@@ -23069,7 +23115,7 @@ var RUNTIME_REPORTER_CREDENTIAL_RETRY_MS = 6e4;
 var BRIDGE_UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1e3;
 var BRIDGE_UPDATE_MAXIMUM_JITTER_MS = 60 * 60 * 1e3;
 function deterministicBridgeUpdateJitter(seed) {
-  const prefix = createHash7("sha256").update(seed, "utf8").digest().readUInt32BE(0);
+  const prefix = createHash8("sha256").update(seed, "utf8").digest().readUInt32BE(0);
   return prefix % BRIDGE_UPDATE_MAXIMUM_JITTER_MS;
 }
 function runtimeRegistrationDeviceName(source = hostname3()) {
@@ -23361,7 +23407,7 @@ async function channelStart(hostId, options = {}) {
           const loaded = await options.runtimeCredentialLoader();
           credentialAvailable = loaded !== false;
           if (typeof loaded === "object") {
-            runtimeClientFingerprint = opaqueFingerprint(
+            runtimeClientFingerprint = opaqueRuntimeFingerprint(
               "runtime_oauth_client",
               loaded.clientId
             );
@@ -23370,7 +23416,7 @@ async function channelStart(hostId, options = {}) {
           const loaded = await loadRuntimeCredential();
           credentialAvailable = loaded !== null;
           if (loaded) {
-            runtimeClientFingerprint = opaqueFingerprint(
+            runtimeClientFingerprint = opaqueRuntimeFingerprint(
               "runtime_oauth_client",
               loaded.client_id
             );
@@ -23437,10 +23483,11 @@ async function channelStart(hostId, options = {}) {
             adapterVersion: ATTENTION_CLI_VERSION,
             agentIntegrationId: hostId,
             bindingId: runtime.state.runtimeReporter.bindingId,
-            channelAccountFingerprint: opaqueFingerprint(
+            channelAccountFingerprint: opaqueRuntimeFingerprint(
               "wechat_ilink",
               runtime.state.accountId
             ),
+            channelSessionFingerprint: channelSessionFingerprint(client.token),
             deviceName: runtimeRegistrationDeviceName(),
             installationId,
             provider: "wechat_ilink",
@@ -23536,9 +23583,9 @@ async function channelStart(hostId, options = {}) {
           onStatusChange: (status) => {
             if (reporterRuntime?.terminal) return;
             if (status === "degraded") {
-              runtime.log(
-                "Runtime \u72B6\u6001\u4E0A\u62A5\u6682\u65F6\u4E2D\u65AD\uFF1B\u672C\u5730\u5FAE\u4FE1\u6865\u4E0D\u53D7\u5F71\u54CD\u3002"
-              );
+              runtime.log(runtimeReporterDegradedMessage(
+                reporterRuntime?.reporter.snapshot().lastErrorCode ?? null
+              ));
             }
           },
           runtimeBaseUrl: resolveAttentionPublicUrl(
@@ -23816,7 +23863,7 @@ async function processPendingInbound(runtime, brain, cwd, persist, reporterRunti
         reporterRuntime.reporter.verifyPairing({
           bindingId: challenge.binding_id,
           challengeId: challenge.challenge_id,
-          pairedPeerFingerprint: opaqueFingerprint(
+          pairedPeerFingerprint: opaqueRuntimeFingerprint(
             "wechat_ilink_peer",
             message.fromUserId
           ),
@@ -23938,9 +23985,6 @@ var defaultRuntimeTokenProvider = {
     }
   }
 };
-function opaqueFingerprint(namespace, value) {
-  return createHash7("sha256").update(`attention:${namespace}:`, "utf8").update(value, "utf8").digest("hex");
-}
 function buildReporterSnapshot(runtime, brain) {
   syncRuntimeCheckpoint(runtime.state, brain);
   return {
@@ -24265,7 +24309,7 @@ function isTimeoutError(error51) {
 
 // src/configure.ts
 init_src();
-import { createHash as createHash8 } from "node:crypto";
+import { createHash as createHash9 } from "node:crypto";
 import { mkdir as mkdir9, lstat as lstat3, readFile as readFile6, rename as rename6, rm as rm7, writeFile as writeFile6 } from "node:fs/promises";
 import { homedir as homedir7 } from "node:os";
 import { basename, dirname as dirname7, join as join7, resolve as resolve3 } from "node:path";
@@ -24407,7 +24451,7 @@ function buildConfigurePlan(input) {
   };
 }
 function sha256(value) {
-  return createHash8("sha256").update(value).digest("hex");
+  return createHash9("sha256").update(value).digest("hex");
 }
 function safeBundleFilename(sourceUrl) {
   const filename = basename(new URL(sourceUrl).pathname);

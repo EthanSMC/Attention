@@ -274,6 +274,7 @@ export const CreateChannelBindingRequestSchema = z
     installation_id: InstallationIdSchema,
     provider: LocalChannelProviderSchema,
     channel_account_fingerprint: OpaqueSha256FingerprintSchema,
+    channel_session_fingerprint: OpaqueSha256FingerprintSchema.optional(),
   })
   .strict();
 export type CreateChannelBindingRequest = z.infer<

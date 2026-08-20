@@ -13,6 +13,7 @@ const bindingId = "22222222-2222-4222-8222-222222222222";
 const challengeId = "33333333-3333-4333-8333-333333333333";
 const observedAt = "2026-08-10T10:00:00.000Z";
 const fingerprint = "a".repeat(64);
+const sessionFingerprint = "b".repeat(64);
 
 const checkpoint: RuntimeCheckpoint = {
   activeTurnMessageRef:
@@ -82,6 +83,7 @@ function identity(binding: string | null = bindingId) {
     agentIntegrationId: "codex" as const,
     bindingId: binding,
     channelAccountFingerprint: fingerprint,
+    channelSessionFingerprint: sessionFingerprint,
     deviceName: "Ethan Mac",
     installationId,
     provider: "wechat_ilink" as const,
@@ -179,9 +181,11 @@ describe("RuntimeReporter bootstrap", () => {
     expect(requests[1]?.body).toEqual({
       api_version: "1",
       channel_account_fingerprint: fingerprint,
+      channel_session_fingerprint: sessionFingerprint,
       installation_id: installationId,
       provider: "wechat_ilink",
     });
+    expect(JSON.stringify(requests[1]?.body)).not.toContain("local-bot-token");
     expect(seenChallenges).toEqual([challenge]);
     expect(reporter.snapshot().bindingId).toBe(bindingId);
     expect(tokenRequests.every((request) =>
@@ -439,6 +443,44 @@ describe("RuntimeReporter bootstrap", () => {
       lastErrorCode: "runtime_installation_conflict",
       status: "degraded",
     });
+    await reporter.stop();
+  });
+
+  it.each([
+    [
+      "channel_session_superseded",
+      "runtime_channel_session_superseded",
+    ],
+    [
+      "channel_session_proof_required",
+      "runtime_channel_session_proof_required",
+    ],
+  ])("preserves the stable %s binding error", async (serverCode, localCode) => {
+    const paths: string[] = [];
+    const installationInvalidations: number[] = [];
+    const reporter = createRuntimeReporter(reporterOptions({
+      fetchImpl: async (url) => {
+        const path = new URL(String(url)).pathname;
+        paths.push(path);
+        return path.endsWith("/installations")
+          ? jsonResponse({ installation }, 201)
+          : jsonResponse({ error: { code: serverCode } }, 409);
+      },
+      identity: identity(null),
+      onInstallationInvalidated: () => installationInvalidations.push(1),
+    }));
+
+    reporter.start();
+    await vi.waitFor(() => expect(reporter.snapshot()).toMatchObject({
+      bindingId: null,
+      lastErrorCode: localCode,
+      status: "degraded",
+    }));
+    expect(paths).toEqual([
+      "/api/runtime/installations",
+      "/api/runtime/channel-bindings",
+    ]);
+    expect(installationInvalidations).toEqual([]);
     await reporter.stop();
   });
 });

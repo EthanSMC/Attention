@@ -1265,6 +1265,7 @@ export const externalChannelBindings = pgTable(
     installationId: uuid("installation_id").notNull(),
     provider: localChannelProviderEnum("provider").notNull(),
     channelAccountFingerprint: char("channel_account_fingerprint", { length: 64 }).notNull(),
+    channelSessionFingerprint: char("channel_session_fingerprint", { length: 64 }),
     pairedPeerFingerprint: char("paired_peer_fingerprint", { length: 64 }),
     status: externalChannelBindingStatusEnum("status").default("reported").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -1286,6 +1287,11 @@ export const externalChannelBindings = pgTable(
       uniqueIndex("external_channel_bindings_active_owner_unique")
         .on(table.provider, table.channelAccountFingerprint)
         .where(sql`${table.status} IN ('reported', 'verified', 'healthy', 'stale')`),
+      index("external_channel_bindings_session_lookup_idx").on(
+        table.provider,
+        table.channelAccountFingerprint,
+        table.channelSessionFingerprint
+      ),
       index("external_channel_bindings_account_status_idx").on(table.accountId, table.status),
       index("external_channel_bindings_installation_status_idx").on(
         table.installationId,
@@ -1298,6 +1304,10 @@ export const externalChannelBindings = pgTable(
       check(
         "external_channel_bindings_channel_fingerprint_format",
         sql`${table.channelAccountFingerprint} ~ '^[0-9a-f]{64}$'`
+      ),
+      check(
+        "external_channel_bindings_session_fingerprint_format",
+        sql`${table.channelSessionFingerprint} IS NULL OR ${table.channelSessionFingerprint} ~ '^[0-9a-f]{64}$'`
       ),
       check(
         "external_channel_bindings_peer_fingerprint_format",
@@ -2183,13 +2193,13 @@ export const eventLedger = pgTable(
       as: "permissive",
       for: "insert",
       to: "attention_web_runtime",
-      withCheck: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid AND ${table.eventType} IN ('agent.installation.registered.v1', 'agent.installation.heartbeat.v1', 'agent.installation.revoked.v1', 'channel.binding.reported.v1', 'channel.binding.verified.v1', 'channel.binding.activity.v1', 'channel.binding.disconnected.v1') AND ${table.scope} = 'private' AND ${table.contentId} IS NULL AND ${table.anonymousSessionId} IS NULL AND ${table.requestId} IS NOT NULL`
+      withCheck: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid AND ${table.eventType} IN ('agent.installation.registered.v1', 'agent.installation.heartbeat.v1', 'agent.installation.revoked.v1', 'channel.binding.reported.v1', 'channel.binding.replaced.v1', 'channel.binding.verified.v1', 'channel.binding.activity.v1', 'channel.binding.disconnected.v1') AND ${table.scope} = 'private' AND ${table.contentId} IS NULL AND ${table.anonymousSessionId} IS NULL AND ${table.requestId} IS NOT NULL`
     }),
     pgPolicy("event_ledger_web_runtime_lifecycle_replay_read", {
       as: "permissive",
       for: "select",
       to: "attention_web_runtime",
-      using: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid AND ${table.eventType} IN ('agent.installation.registered.v1', 'agent.installation.heartbeat.v1', 'agent.installation.revoked.v1', 'channel.binding.reported.v1', 'channel.binding.verified.v1', 'channel.binding.activity.v1', 'channel.binding.disconnected.v1') AND ${table.scope} = 'private' AND ${table.contentId} IS NULL AND ${table.anonymousSessionId} IS NULL AND ${table.requestId} IS NOT NULL AND ${table.dedupeKey} IS NOT NULL`
+      using: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid AND ${table.eventType} IN ('agent.installation.registered.v1', 'agent.installation.heartbeat.v1', 'agent.installation.revoked.v1', 'channel.binding.reported.v1', 'channel.binding.replaced.v1', 'channel.binding.verified.v1', 'channel.binding.activity.v1', 'channel.binding.disconnected.v1') AND ${table.scope} = 'private' AND ${table.contentId} IS NULL AND ${table.anonymousSessionId} IS NULL AND ${table.requestId} IS NOT NULL AND ${table.dedupeKey} IS NOT NULL`
     }),
     pgPolicy("event_ledger_web_summary_ready_read", {
       as: "permissive",

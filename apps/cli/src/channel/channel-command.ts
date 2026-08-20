@@ -79,6 +79,10 @@ import {
   type RuntimeReporterSnapshot,
 } from "./runtime-reporter";
 import {
+  channelSessionFingerprint,
+  opaqueRuntimeFingerprint,
+} from "./runtime-identity";
+import {
   buildChannelServiceRemovalPlan,
   installManagedChannelService,
   isChannelServiceConfigured,
@@ -96,6 +100,19 @@ export const CHANNEL_BRIDGE_HOSTS = ["codex", "claude-code"] as const;
 export type ChannelBridgeHost = (typeof CHANNEL_BRIDGE_HOSTS)[number];
 const ACCOUNT_VERIFICATION_CACHE_MS = 24 * 60 * 60 * 1_000;
 const SUMMARY_NOTIFICATION_POLL_INTERVAL_MS = 30_000;
+
+export function runtimeReporterDegradedMessage(
+  lastErrorCode: string | null,
+): string {
+  switch (lastErrorCode) {
+    case "runtime_channel_session_superseded":
+      return "当前微信登录会话已被新的扫码登录替换；请在本机重新扫码后再启动 Bridge。";
+    case "runtime_channel_session_proof_required":
+      return "当前客户端无法证明微信登录会话；请更新 Attention CLI 后重新启动 Bridge。";
+    default:
+      return "Runtime 状态上报暂时中断；本地微信桥不受影响。";
+  }
+}
 
 export interface ChannelCommandOptions {
   readonly accountVerifier?: (
@@ -543,7 +560,7 @@ export async function channelStart(
           const loaded = await options.runtimeCredentialLoader();
           credentialAvailable = loaded !== false;
           if (typeof loaded === "object") {
-            runtimeClientFingerprint = opaqueFingerprint(
+            runtimeClientFingerprint = opaqueRuntimeFingerprint(
               "runtime_oauth_client",
               loaded.clientId,
             );
@@ -552,7 +569,7 @@ export async function channelStart(
           const loaded = await loadRuntimeCredential();
           credentialAvailable = loaded !== null;
           if (loaded) {
-            runtimeClientFingerprint = opaqueFingerprint(
+            runtimeClientFingerprint = opaqueRuntimeFingerprint(
               "runtime_oauth_client",
               loaded.client_id,
             );
@@ -641,10 +658,11 @@ export async function channelStart(
             adapterVersion: ATTENTION_CLI_VERSION,
             agentIntegrationId: hostId,
             bindingId: runtime.state.runtimeReporter.bindingId,
-            channelAccountFingerprint: opaqueFingerprint(
+            channelAccountFingerprint: opaqueRuntimeFingerprint(
               "wechat_ilink",
               runtime.state.accountId,
             ),
+            channelSessionFingerprint: channelSessionFingerprint(client.token),
             deviceName: runtimeRegistrationDeviceName(),
             installationId,
             provider: "wechat_ilink",
@@ -744,9 +762,9 @@ export async function channelStart(
           onStatusChange: (status) => {
             if (reporterRuntime?.terminal) return;
             if (status === "degraded") {
-              runtime.log(
-                "Runtime 状态上报暂时中断；本地微信桥不受影响。",
-              );
+              runtime.log(runtimeReporterDegradedMessage(
+                reporterRuntime?.reporter.snapshot().lastErrorCode ?? null,
+              ));
             }
           },
           runtimeBaseUrl: resolveAttentionPublicUrl(
@@ -1094,7 +1112,7 @@ async function processPendingInbound(
         reporterRuntime.reporter.verifyPairing({
           bindingId: challenge.binding_id,
           challengeId: challenge.challenge_id,
-          pairedPeerFingerprint: opaqueFingerprint(
+          pairedPeerFingerprint: opaqueRuntimeFingerprint(
             "wechat_ilink_peer",
             message.fromUserId,
           ),
@@ -1250,13 +1268,6 @@ const defaultRuntimeTokenProvider: RuntimeAccessTokenProvider = {
     }
   },
 };
-
-function opaqueFingerprint(namespace: string, value: string): string {
-  return createHash("sha256")
-    .update(`attention:${namespace}:`, "utf8")
-    .update(value, "utf8")
-    .digest("hex");
-}
 
 function buildReporterSnapshot(
   runtime: Runtime,

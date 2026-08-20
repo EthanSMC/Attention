@@ -32,6 +32,7 @@ const challengeId = "33333333-3333-4333-8333-333333333333";
 const eventId = "44444444-4444-4444-8444-444444444444";
 const channelFingerprint = "a".repeat(64);
 const peerFingerprint = "b".repeat(64);
+const sessionFingerprint = "c".repeat(64);
 
 const runtimeCheckpoint = {
   bridge_status: "online",
@@ -234,6 +235,17 @@ describe("local channel runtime v1 contract", () => {
     expect(CreateChannelBindingRequestSchema.parse(createBinding)).toEqual(
       createBinding,
     );
+    expect(CreateChannelBindingRequestSchema.parse({
+      ...createBinding,
+      channel_session_fingerprint: sessionFingerprint,
+    })).toEqual({
+      ...createBinding,
+      channel_session_fingerprint: sessionFingerprint,
+    });
+    expect(CreateChannelBindingRequestSchema.safeParse({
+      ...createBinding,
+      channel_session_fingerprint: "not-a-fingerprint",
+    }).success).toBe(false);
     expect(ChannelBindingChallengeSchema.parse(challenge)).toEqual(challenge);
 
     expect(

@@ -37,6 +37,7 @@ export interface RuntimeReporterIdentity {
   readonly agentIntegrationId: AgentIntegrationId;
   readonly bindingId: string | null;
   readonly channelAccountFingerprint: string;
+  readonly channelSessionFingerprint: string;
   readonly deviceName: string;
   readonly installationId: string;
   readonly provider: LocalChannelProvider;
@@ -406,6 +407,8 @@ class LocalRuntimeReporter implements RuntimeReporter {
         api_version: CHANNEL_RUNTIME_API_VERSION,
         channel_account_fingerprint:
           this.#identity.channelAccountFingerprint,
+        channel_session_fingerprint:
+          this.#identity.channelSessionFingerprint,
         installation_id: this.#identity.installationId,
         provider: this.#identity.provider,
       });
@@ -497,13 +500,19 @@ class LocalRuntimeReporter implements RuntimeReporter {
           };
         }
         if (!retryableStatus(response.status)) {
+          const responsePayload = await safeResponseBody(response);
           this.#setStatus(
             "degraded",
             response.status === 401
               ? "runtime_auth_required"
-              : "runtime_report_rejected",
+              : runtimeBindingErrorCode(responsePayload) ??
+                "runtime_report_rejected",
           );
-          return { body: null, ok: false, status: response.status };
+          return {
+            body: null,
+            ok: false,
+            status: response.status,
+          };
         }
       } catch {
         // Network and token-provider failures share the bounded retry policy.
@@ -637,6 +646,27 @@ function responseMember(body: unknown, key: string): unknown {
 async function responseBody(response: Response): Promise<unknown> {
   const text = await response.text();
   return text ? JSON.parse(text) : null;
+}
+
+async function safeResponseBody(response: Response): Promise<unknown> {
+  try {
+    return await responseBody(response);
+  } catch {
+    return null;
+  }
+}
+
+function runtimeBindingErrorCode(body: unknown): string | null {
+  const errorBody = responseMember(body, "error");
+  const code = responseMember(errorBody, "code");
+  switch (code) {
+    case "channel_session_proof_required":
+      return "runtime_channel_session_proof_required";
+    case "channel_session_superseded":
+      return "runtime_channel_session_superseded";
+    default:
+      return null;
+  }
 }
 
 async function defaultSleep(milliseconds: number): Promise<void> {
