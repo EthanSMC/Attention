@@ -243,7 +243,8 @@ flowchart LR
 统一邮箱入口位于 `/login` 和站外 continuation 使用的 `/auth`。新邮箱在验证码验证成功后创建 Free 账号；验证码成功前不创建账号、不接收收藏 URL。站内导航使用 intercepted modal 保留原页面，OAuth、CLI 和 Local Runtime 授权使用完整 `/auth` 页面；第一期没有 Hosted Channel 绑定流程。
 
 Agent 详细接入文档位于公开的 `/doc`，并按宿主拆分为独立 `/doc/:agent` 页面；
-`/account/connections` 只保留一键复制接入提示词、OAuth 授权状态与 API Key 管理。
+`/agent` 提供本地 Agent 的一键接入提示词与配置流程；`/account/connections` 只保留 OAuth
+授权状态与 API Key 管理。
 公开 Skill 不携带 token；OAuth 为默认路径，API Key 是备用。Hosted MCP 暴露在
 `/mcp`，Sync API 暴露在 `/api/sync`，两者都只接受 OAuth/API Key Bearer
 credential，不接受 Browser Session 代替。

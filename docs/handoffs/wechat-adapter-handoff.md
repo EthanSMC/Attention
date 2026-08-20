@@ -72,7 +72,7 @@ flowchart LR
 - 已实现统一邮箱注册/登录、opaque Browser Session 和 Free/Member 实时权益；Channel 绑定页面已移除。
 - 已实现 `channel_identities`、加密 `channel_pending_requests` 和一次性 `bind_intents`；subject ID 只以 keyed HMAC 保存，pending 原消息和处理结果使用 AES-GCM 保存。
 - 历史 `POST /api/channels/messages`、`POST /api/channels/bind`、`GET /api/channels/pending/:id` 和账号 Channel 撤销接口现在统一返回 `410 Gone`，不认证、不写库，也不生成 `/channel/bind`。
-- `/channel/bind` 页面已删除；`/account/connections` 只展示一键 Agent 接入提示词、OAuth 和 API Key 管理，详细宿主说明迁到公开的 `/doc/:agent`。
+- `/channel/bind` 页面已删除；`/agent` 展示一键 Agent 接入提示词和配置入口，`/account/connections` 只管理 OAuth 和 API Key，详细宿主说明迁到公开的 `/doc/:agent`。
 - 已实现 Web 收藏/发现、Hosted MCP、收藏 Service、隔离 Fetcher、URL 安全策略和确定性去重。Web Agent 页面不属于第一期主入口；AI 检索由用户自己的 Agent 通过 Skill/MCP 使用。
 - 已实现微信官方服务器回调层的代码合同：官方签名/解密、安全 XML 映射、微信 access token 管理、被动回复和客服文字消息 provider。模板消息不在第一期范围内；真实平台验证仍需要认证公众号、官方凭据和实际接口权限。
 

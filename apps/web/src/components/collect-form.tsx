@@ -177,7 +177,7 @@ function CollectReceipt({
         <ContentIdentity content={result.content} />
         <ProcessingTrack />
         <p className="receipt__note">
-          链接已经保存。标题或摘要若能生成，会在“我的收藏”更新；没有摘要也不影响收藏记录。
+          链接已经保存。标题或摘要若能生成，会在“我的收藏”更新；微信桥接在线时也会自动补发摘要。没有摘要也不影响收藏记录。
         </p>
         <div className="receipt__actions">
           {isPublic || allowPublic ? (

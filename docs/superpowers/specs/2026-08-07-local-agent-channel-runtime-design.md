@@ -162,7 +162,7 @@ not_installed
 
 ## 6. 用户端到端流程
 
-Web `/account/connections` 只给一个“复制给 AI”的提示词。Agent 阅读公开 `/doc`
+Web `/agent` 只给一个“复制给 AI”的提示词。Agent 阅读公开 `/doc`
 对应宿主文档后：
 
 1. 从公开 manifest 下载并校验 Attention CLI、Skill/Bundle，不依赖源码仓库。

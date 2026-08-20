@@ -26,7 +26,8 @@
 - Filter：公开供给资格；新收藏默认公开，历史本地收藏首次同步仍强制私密。
 - 公开收藏默认展示作者、来源和“查看原文”；摘要失败时保留链接并显示“暂时无法生成摘要”。
 - `/doc`：无需登录的独立 Agent 接入文档站；每个 Agent 有独立 URL 和左侧目录。
-- `/account/connections`：只保留“复制给 AI”、OAuth 授权状态和 API Key 管理，不展示托管 Channel 面板或复杂安装命令。
+- `/agent`：独立展示本地 Agent 接入提示词与配置流程，并保留云端 Agent 的“开发中”卡片。
+- `/account/connections`：管理 OAuth 授权状态和 API Key，不展示托管 Channel 面板或复杂安装命令。
 
 ### Agent、MCP 与授权
 

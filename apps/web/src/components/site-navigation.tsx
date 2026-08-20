@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useState } from "react";
 
 import {
+  BotIcon,
   CompassIcon,
   PlusIcon,
   SettingsIcon,
@@ -14,6 +15,7 @@ import { CollectModal } from "./collect-modal";
 
 const navigationItems = [
   { href: "/ai", label: "发现", icon: CompassIcon },
+  { href: "/agent", label: "Agent", icon: BotIcon },
   { href: "/account", label: "我的", icon: UserIcon },
 ] as const;
 
