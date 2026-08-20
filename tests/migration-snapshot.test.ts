@@ -60,9 +60,9 @@ describe("Drizzle migration snapshot", () => {
       readFileSync(resolve(root, "packages/db/drizzle/meta/_journal.json"), "utf8"),
     ) as { entries: { tag: string }[] };
 
-    expect(journal.entries.at(-1)?.tag).toBe(
-      "0034_summary_ready_notifications",
-    );
+    expect(journal.entries.some((entry) =>
+      entry.tag === "0034_summary_ready_notifications"
+    )).toBe(true);
     const migration = readFileSync(migrationPath, "utf8");
     expect(migration).toContain("event_ledger_web_summary_ready_read");
     expect(migration).toContain("event_ledger_web_summary_ready_insert");

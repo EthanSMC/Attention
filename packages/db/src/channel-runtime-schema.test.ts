@@ -107,6 +107,15 @@ describe("local channel runtime database schema", () => {
         .find((index) => index.config.name === "external_channel_bindings_active_owner_unique")
         ?.config.columns.map((column) => "name" in column ? column.name : undefined)
     ).toEqual(["provider", "channel_account_fingerprint"]);
+    expect(
+      bindingIndexes
+        .find((index) => index.config.name === "external_channel_bindings_session_lookup_idx")
+        ?.config.columns.map((column) => "name" in column ? column.name : undefined)
+    ).toEqual([
+      "provider",
+      "channel_account_fingerprint",
+      "channel_session_fingerprint"
+    ]);
   });
 
   it("defines status, fingerprint, and short-lived challenge constraints", () => {
@@ -121,6 +130,7 @@ describe("local channel runtime database schema", () => {
     expect(configFor(externalChannelBindings).checks.map((constraint) => constraint.name)).toEqual(
       expect.arrayContaining([
         "external_channel_bindings_channel_fingerprint_format",
+        "external_channel_bindings_session_fingerprint_format",
         "external_channel_bindings_peer_fingerprint_format",
         "external_channel_bindings_verification_shape",
         "external_channel_bindings_terminal_status_shape",
@@ -142,6 +152,8 @@ describe("local channel runtime database schema", () => {
 
   it("stores only fixed-length opaque digests for channel and pairing identifiers", () => {
     expect(externalChannelBindings.channelAccountFingerprint.getSQLType()).toBe("char(64)");
+    expect(externalChannelBindings.channelSessionFingerprint.getSQLType()).toBe("char(64)");
+    expect(externalChannelBindings.channelSessionFingerprint.notNull).toBe(false);
     expect(externalChannelBindings.pairedPeerFingerprint.getSQLType()).toBe("char(64)");
     expect(externalChannelBindingChallenges.pairingCodeHash.getSQLType()).toBe("char(64)");
 
@@ -211,6 +223,7 @@ describe("local channel runtime database schema", () => {
       "agent.installation.heartbeat.v1",
       "agent.installation.revoked.v1",
       "channel.binding.reported.v1",
+      "channel.binding.replaced.v1",
       "channel.binding.verified.v1",
       "channel.binding.activity.v1",
       "channel.binding.disconnected.v1"
@@ -240,6 +253,7 @@ describe("local channel runtime database schema", () => {
       "agent.installation.heartbeat.v1",
       "agent.installation.revoked.v1",
       "channel.binding.reported.v1",
+      "channel.binding.replaced.v1",
       "channel.binding.verified.v1",
       "channel.binding.activity.v1",
       "channel.binding.disconnected.v1"

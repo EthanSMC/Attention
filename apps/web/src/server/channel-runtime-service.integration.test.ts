@@ -33,6 +33,9 @@ const installationId = "11111111-1111-4111-8111-111111111111";
 const challengeId = "33333333-3333-4333-8333-333333333333";
 const bindingId = "22222222-2222-4222-8222-222222222222";
 const clientId = "runtime-integration-client";
+const replacementAccountId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const replacementClientId = "runtime-replacement-client";
+const replacementInstallationId = "44444444-4444-4444-8444-444444444444";
 const pairingSecret =
   "runtime-pairing-secret-that-is-longer-than-32-characters";
 
@@ -193,6 +196,103 @@ describe.skipIf(!databaseUrl)("local channel runtime service with PostgreSQL", (
       toolContractVersion: "2026-08-08",
       updatedAt: now,
     });
+  });
+
+  it("atomically retires a cross-account owner and tombstones its WeChat session", async () => {
+    const channelFingerprint = "a".repeat(64);
+    const oldSessionFingerprint = "b".repeat(64);
+    const newSessionFingerprint = "c".repeat(64);
+    const service = new ChannelRuntimeService(handle.db, {
+      now: () => now,
+      pairingSecret,
+    });
+    await service.registerInstallation(principal, registration);
+    await handle.db.insert(externalChannelBindings).values({
+      accountId,
+      channelAccountFingerprint: channelFingerprint,
+      channelSessionFingerprint: oldSessionFingerprint,
+      createdAt: now,
+      id: bindingId,
+      installationId,
+      pairedPeerFingerprint: "d".repeat(64),
+      provider: "wechat_ilink",
+      status: "healthy",
+      updatedAt: now,
+      verifiedAt: now,
+    });
+    await handle.db.insert(externalChannelBindingChallenges).values({
+      accountId,
+      bindingId,
+      expiresAt: new Date("2026-08-07T08:10:00.000Z"),
+      id: challengeId,
+      issuedAt: now,
+      pairingCodeHash: "e".repeat(64),
+    });
+    await handle.db.insert(accounts).values({
+      id: replacementAccountId,
+      stableHandle: "runtime-replacement-account",
+    });
+    await handle.db.insert(oauthClients).values({
+      allowedScopes: [
+        "runtime:register",
+        "runtime:heartbeat",
+        "channel:bind:report",
+        "channel:disconnect:report",
+      ],
+      clientId: replacementClientId,
+      name: "Replacement Runtime client",
+      redirectUris: ["http://127.0.0.1/replacement-callback"],
+    });
+    const replacementPrincipal = {
+      accountId: replacementAccountId,
+      clientId: replacementClientId,
+    };
+    await service.registerInstallation(replacementPrincipal, {
+      ...registration,
+      installation_id: replacementInstallationId,
+    });
+
+    async function replaceOwner(sessionFingerprint: string | null) {
+      return asWebRuntime((runtime) => runtime.sql.begin(async (tx) => {
+        await tx`select set_config('app.account_id', ${replacementAccountId}, true)`;
+        const [row] = await tx<{ outcome: string }[]>`
+          select public.replace_active_channel_binding_owner(
+            ${replacementAccountId}::uuid,
+            ${replacementInstallationId}::uuid,
+            'wechat_ilink'::public.local_channel_provider,
+            ${channelFingerprint}::char(64),
+            ${sessionFingerprint}::char(64),
+            ${now.toISOString()}::timestamptz
+          ) as outcome
+        `;
+        return row?.outcome;
+      }));
+    }
+
+    await expect(replaceOwner(newSessionFingerprint)).resolves.toBe(
+      "replaced",
+    );
+    const [retiredBinding] = await handle.db
+      .select()
+      .from(externalChannelBindings)
+      .where(eq(externalChannelBindings.id, bindingId));
+    const [retiredChallenge] = await handle.db
+      .select()
+      .from(externalChannelBindingChallenges)
+      .where(eq(externalChannelBindingChallenges.id, challengeId));
+    expect(retiredBinding).toMatchObject({
+      accountId,
+      channelSessionFingerprint: oldSessionFingerprint,
+      status: "revoked",
+    });
+    expect(retiredBinding?.revokedAt).toEqual(now);
+    expect(retiredChallenge?.revokedAt).toEqual(now);
+    await expect(replaceOwner(oldSessionFingerprint)).resolves.toBe(
+      "channel_session_superseded",
+    );
+    await expect(replaceOwner(null)).resolves.toBe(
+      "channel_session_proof_required",
+    );
   });
 
   it("returns a summary only to a verified device for a prior WeChat collection", async () => {
