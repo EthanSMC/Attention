@@ -398,7 +398,7 @@ Privacy boundary for the bridge:
 - The iLink bot identifier is not an Attention identity and is never used
   for login, entitlements, or global identity.
 - Bridge logs omit tokens and full message bodies.
-- CLI `0.3.7` can optionally authorize a separate Runtime OAuth client. Its
+- CLI `0.3.8` can optionally authorize a separate Runtime OAuth client. Its
   reporter sends privacy-safe runtime status, timestamps, bounded queue counts,
   checkpoints, and device-pairing results. The same client can also read a
   minimal, account-private queue of completed summaries so the local Bridge can
@@ -408,6 +408,10 @@ Privacy boundary for the bridge:
   identifiers. Summary delivery is a separate pull: only completed summaries
   for content that this account had already collected through WeChat are
   returned to the bound device.
+- CLI `0.3.8` derives a one-way session fingerprint locally from the iLink
+  token. Attention receives that digest—not the token—and uses it only to make
+  a fresh authenticated QR login replace the prior active binding atomically.
+  A retired session cannot reclaim ownership.
 - This exclusion applies to the Runtime reporter, not to normal authenticated
   Attention MCP operations. When a user asks to save something,
   `attention_collect_content` necessarily sends the saved URL and associated
@@ -472,7 +476,7 @@ but Web status and delayed summary replies remain disabled.
 ## Runtime OAuth boundary
 
 The backend exposes a separate Local Channel Runtime resource. Attention CLI
-`0.3.7` may authorize it for privacy-safe runtime reporting, device-pairing
+`0.3.8` may authorize it for privacy-safe runtime reporting, device-pairing
 results, and account-private summary completion delivery:
 
 ```text
@@ -504,7 +508,7 @@ receive a reply and Web can show only the last heartbeat and checkpoint.
 
 - iLink token, context token, sync cursor, contact data, and media keys remain
   local to the Channel Owner.
-- Attention receives normal authenticated MCP calls. The optional CLI `0.3.7`
+- Attention receives normal authenticated MCP calls. The optional CLI `0.3.8`
   Runtime reporter may submit installation metadata, opaque fingerprints,
   pairing results, health timestamps, bounded queue counts, and checkpoints—but
   never the channel credential, Codex thread, message, URL, or reply. Normal MCP
