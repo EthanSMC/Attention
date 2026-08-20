@@ -1,7 +1,7 @@
 # Channel Session Takeover Design
 
-**Date:** 2026-08-20  
-**Status:** Approved for implementation  
+**Date:** 2026-08-20
+**Status:** Approved for implementation
 **Scope:** Local WeChat Channel Runtime binding ownership, CLI release `0.3.8`, and public CLI artifact retention
 
 ## Problem
