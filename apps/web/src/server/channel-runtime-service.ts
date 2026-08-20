@@ -95,6 +95,8 @@ export type ChannelRuntimeServiceErrorCode =
   | "challenge_revoked"
   | "challenge_unavailable"
   | "channel_owner_conflict"
+  | "channel_session_proof_required"
+  | "channel_session_superseded"
   | "event_replay_conflict"
   | "heartbeat_not_supported"
   | "installation_conflict"
@@ -521,6 +523,7 @@ type RuntimeEventType =
   | "channel.binding.activity.v1"
   | "channel.binding.disconnected.v1"
   | "channel.binding.reported.v1"
+  | "channel.binding.replaced.v1"
   | "channel.binding.verified.v1";
 
 interface RuntimeEventInput {
@@ -829,20 +832,69 @@ export class ChannelRuntimeService {
           ))
           .for("update")
           .limit(1);
-        if (existing && existing.status !== "reported") {
-          error("binding_already_bound", 409);
+        const sameSession = existing &&
+          (existing.channelSessionFingerprint ?? null) ===
+            (input.channel_session_fingerprint ?? null);
+        let replacementOutcome: "none" | "replaced" = "none";
+        let binding = sameSession ? existing : undefined;
+
+        if (binding && binding.status !== "reported") {
+          const [recovered] = await tx
+            .update(externalChannelBindings)
+            .set({
+              disconnectedAt: null,
+              lastSeenAt: null,
+              pairedPeerFingerprint: null,
+              revokedAt: null,
+              status: "reported",
+              updatedAt: now,
+              verifiedAt: null,
+            })
+            .where(bindingPredicate(
+              principal,
+              input.installation_id,
+              binding.id,
+            ))
+            .returning();
+          if (!recovered) throw new Error("binding_recovery_failed");
+          binding = recovered;
+        }
+
+        if (!binding) {
+          const replacementRows = await tx.execute(sql<{ outcome: string }>`
+            select public.replace_active_channel_binding_owner(
+              ${principal.accountId}::uuid,
+              ${input.installation_id}::uuid,
+              ${input.provider}::public.local_channel_provider,
+              ${input.channel_account_fingerprint}::char(64),
+              ${input.channel_session_fingerprint ?? null}::char(64),
+              ${now.toISOString()}::timestamptz
+            ) as outcome
+          `);
+          const outcome = replacementRows[0]?.outcome;
+          if (outcome === "channel_session_proof_required") {
+            error("channel_session_proof_required", 409);
+          }
+          if (outcome === "channel_session_superseded") {
+            error("channel_session_superseded", 409);
+          }
+          if (outcome !== "none" && outcome !== "replaced") {
+            throw new Error("binding_replacement_failed");
+          }
+          replacementOutcome = outcome;
         }
 
         const pairingCode = this.#generatePairingCode();
         assertGeneratedPairingCode(pairingCode);
         const challengeId = this.#generateId();
-        let binding = existing;
         if (!binding) {
           const [created] = await tx
             .insert(externalChannelBindings)
             .values({
               accountId: principal.accountId,
               channelAccountFingerprint: input.channel_account_fingerprint,
+              channelSessionFingerprint:
+                input.channel_session_fingerprint ?? null,
               createdAt: now,
               id: this.#generateId(),
               installationId: input.installation_id,
@@ -879,6 +931,20 @@ export class ChannelRuntimeService {
             pairingCode,
           ),
         });
+        if (replacementOutcome === "replaced") {
+          await appendRuntimeEvent(tx, {
+            accountId: principal.accountId,
+            dedupeKey: eventDedupeKey(principal, binding.id),
+            eventType: "channel.binding.replaced.v1",
+            metadata: {
+              binding_id: binding.id,
+              installation_id: input.installation_id,
+              provider: input.provider,
+            },
+            now,
+            requestId: binding.id,
+          });
+        }
         await appendRuntimeEvent(tx, {
           accountId: principal.accountId,
           dedupeKey: eventDedupeKey(principal, challengeId),

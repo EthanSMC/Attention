@@ -93,7 +93,7 @@ describe.skipIf(!databaseUrl)("local channel runtime service with PostgreSQL", (
 
   beforeEach(async () => {
     await handle.sql.unsafe(
-      "TRUNCATE TABLE external_channel_binding_challenges, external_channel_bindings, agent_installations, event_ledger, oauth_clients, accounts RESTART IDENTITY CASCADE",
+      "TRUNCATE TABLE external_channel_binding_challenges, external_channel_bindings, agent_installations, event_ledger, oauth_clients, accounts, domains RESTART IDENTITY CASCADE",
     );
     await handle.db.insert(accounts).values({
       id: accountId,
@@ -293,6 +293,195 @@ describe.skipIf(!databaseUrl)("local channel runtime service with PostgreSQL", (
     await expect(replaceOwner(null)).resolves.toBe(
       "channel_session_proof_required",
     );
+  });
+
+  it("replaces a healthy cross-account binding and rejects the retired session", async () => {
+    const channelFingerprint = "a".repeat(64);
+    const oldSessionFingerprint = "b".repeat(64);
+    const newSessionFingerprint = "c".repeat(64);
+    const replacementBindingId = "55555555-5555-4555-8555-555555555555";
+    const replacementChallengeId = "66666666-6666-4666-8666-666666666666";
+    const oldService = new ChannelRuntimeService(handle.db, {
+      now: () => now,
+      pairingSecret,
+    });
+    await oldService.registerInstallation(principal, registration);
+    await handle.db.insert(externalChannelBindings).values({
+      accountId,
+      channelAccountFingerprint: channelFingerprint,
+      channelSessionFingerprint: oldSessionFingerprint,
+      createdAt: now,
+      id: bindingId,
+      installationId,
+      pairedPeerFingerprint: "d".repeat(64),
+      provider: "wechat_ilink",
+      status: "healthy",
+      updatedAt: now,
+      verifiedAt: now,
+    });
+    await handle.db.insert(externalChannelBindingChallenges).values({
+      accountId,
+      bindingId,
+      expiresAt: new Date("2026-08-07T08:10:00.000Z"),
+      id: challengeId,
+      issuedAt: now,
+      pairingCodeHash: "e".repeat(64),
+    });
+    await handle.db.insert(accounts).values({
+      id: replacementAccountId,
+      stableHandle: "runtime-replacement-account",
+    });
+    await handle.db.insert(oauthClients).values({
+      allowedScopes: [
+        "runtime:register",
+        "runtime:heartbeat",
+        "channel:bind:report",
+        "channel:disconnect:report",
+      ],
+      clientId: replacementClientId,
+      name: "Replacement Runtime client",
+      redirectUris: ["http://127.0.0.1/replacement-callback"],
+    });
+    const replacementPrincipal = {
+      accountId: replacementAccountId,
+      clientId: replacementClientId,
+    };
+    await oldService.registerInstallation(replacementPrincipal, {
+      ...registration,
+      installation_id: replacementInstallationId,
+    });
+    const generatedIds = [replacementChallengeId, replacementBindingId];
+    const replacementService = new ChannelRuntimeService(handle.db, {
+      generateId: () => {
+        const id = generatedIds.shift();
+        if (!id) throw new Error("unexpected id request");
+        return id;
+      },
+      generatePairingCode: () => "N7W4K2Q9",
+      now: () => now,
+      pairingSecret,
+    });
+
+    await expect(replacementService.createChannelBinding(
+      replacementPrincipal,
+      {
+        api_version: "1",
+        channel_account_fingerprint: channelFingerprint,
+        installation_id: replacementInstallationId,
+        provider: "wechat_ilink",
+      },
+    )).rejects.toMatchObject({
+      code: "channel_session_proof_required",
+      status: 409,
+    });
+    const replacementChallenge = await replacementService.createChannelBinding(
+      replacementPrincipal,
+      {
+        api_version: "1",
+        channel_account_fingerprint: channelFingerprint,
+        channel_session_fingerprint: newSessionFingerprint,
+        installation_id: replacementInstallationId,
+        provider: "wechat_ilink",
+      },
+    );
+    expect(replacementChallenge).toMatchObject({
+      binding_id: replacementBindingId,
+      challenge_id: replacementChallengeId,
+      pairing_code: "N7W4K2Q9",
+    });
+
+    const bindings = await handle.db
+      .select()
+      .from(externalChannelBindings);
+    expect(bindings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: bindingId, status: "revoked" }),
+      expect.objectContaining({
+        accountId: replacementAccountId,
+        channelSessionFingerprint: newSessionFingerprint,
+        id: replacementBindingId,
+        installationId: replacementInstallationId,
+        status: "reported",
+      }),
+    ]));
+    expect(bindings.filter(({ status }) =>
+      ["reported", "verified", "healthy", "stale"].includes(status)
+    )).toHaveLength(1);
+    const replacementEvents = (await handle.db
+      .select()
+      .from(eventLedger))
+      .filter(({ eventType }) => eventType === "channel.binding.replaced.v1");
+    expect(replacementEvents).toEqual([
+      expect.objectContaining({
+        accountId: replacementAccountId,
+        metadata: {
+          binding_id: replacementBindingId,
+          installation_id: replacementInstallationId,
+          provider: "wechat_ilink",
+        },
+      }),
+    ]);
+    expect(JSON.stringify(replacementEvents)).not.toContain(accountId);
+    expect(JSON.stringify(replacementEvents)).not.toContain(bindingId);
+
+    await expect(oldService.createChannelBinding(principal, {
+      api_version: "1",
+      channel_account_fingerprint: channelFingerprint,
+      channel_session_fingerprint: oldSessionFingerprint,
+      installation_id: installationId,
+      provider: "wechat_ilink",
+    })).rejects.toMatchObject({
+      code: "channel_session_superseded",
+      status: 409,
+    });
+  });
+
+  it("renews pairing on the same installation after local binding state is lost", async () => {
+    const sessionFingerprint = "c".repeat(64);
+    const renewedChallengeId = "55555555-5555-4555-8555-555555555555";
+    const service = new ChannelRuntimeService(handle.db, {
+      generateId: () => renewedChallengeId,
+      generatePairingCode: () => "N7W4K2Q9",
+      now: () => now,
+      pairingSecret,
+    });
+    await service.registerInstallation(principal, registration);
+    await handle.db.insert(externalChannelBindings).values({
+      accountId,
+      channelAccountFingerprint: "a".repeat(64),
+      channelSessionFingerprint: sessionFingerprint,
+      createdAt: now,
+      id: bindingId,
+      installationId,
+      lastSeenAt: now,
+      pairedPeerFingerprint: "d".repeat(64),
+      provider: "wechat_ilink",
+      status: "healthy",
+      updatedAt: now,
+      verifiedAt: now,
+    });
+
+    await expect(service.createChannelBinding(principal, {
+      api_version: "1",
+      channel_account_fingerprint: "a".repeat(64),
+      channel_session_fingerprint: sessionFingerprint,
+      installation_id: installationId,
+      provider: "wechat_ilink",
+    })).resolves.toMatchObject({
+      binding_id: bindingId,
+      challenge_id: renewedChallengeId,
+      pairing_code: "N7W4K2Q9",
+    });
+    const [recovered] = await handle.db
+      .select()
+      .from(externalChannelBindings);
+    expect(recovered).toMatchObject({
+      channelSessionFingerprint: sessionFingerprint,
+      id: bindingId,
+      lastSeenAt: null,
+      pairedPeerFingerprint: null,
+      status: "reported",
+      verifiedAt: null,
+    });
   });
 
   it("returns a summary only to a verified device for a prior WeChat collection", async () => {
@@ -502,13 +691,6 @@ describe.skipIf(!databaseUrl)("local channel runtime service with PostgreSQL", (
       status: "verified",
       verified_at: "2026-08-07T08:02:00.000Z",
     });
-    await expect(service.createChannelBinding(principal, {
-      api_version: "1",
-      channel_account_fingerprint: "a".repeat(64),
-      installation_id: installationId,
-      provider: "wechat_ilink",
-    })).rejects.toMatchObject({ code: "binding_already_bound", status: 409 });
-
     now = new Date("2026-08-07T08:03:00.000Z");
     const healthy = await service.recordChannelActivity(principal, {
       activity: "message_processed",
