@@ -16,6 +16,7 @@ import {
   channelStatus,
   isBridgeHost,
   loadRuntimeRegistrationIdentity,
+  runtimeReporterDegradedMessage,
   verifyAttentionAccount,
 } from "./channel-command";
 import { defaultChannelState, loadChannelState, saveChannelState } from "./state";
@@ -42,6 +43,19 @@ describe("channel subcommands", () => {
     tempDirs.push(directory);
     return directory;
   };
+
+  it.each([
+    [
+      "runtime_channel_session_superseded",
+      "重新扫码",
+    ],
+    [
+      "runtime_channel_session_proof_required",
+      "更新 Attention CLI",
+    ],
+  ])("explains the %s Reporter failure", (errorCode, expectedCopy) => {
+    expect(runtimeReporterDegradedMessage(errorCode)).toContain(expectedCopy);
+  });
 
   afterEach(async () => {
     for (const directory of tempDirs.splice(0)) {
@@ -516,6 +530,7 @@ describe("channel subcommands", () => {
     const transitions: RuntimeReporterSnapshot[] = [];
     let update = 0;
     let reporterOptions: RuntimeReporterOptions | null = null;
+    let reporterSessionFingerprint: string | null = null;
 
     const reporter: RuntimeReporter = {
       activity: () => undefined,
@@ -619,6 +634,8 @@ describe("channel subcommands", () => {
         runtimeCredentialLoader: async () => true,
         runtimeReporterFactory: (options) => {
           reporterOptions = options;
+          reporterSessionFingerprint =
+            options.identity.channelSessionFingerprint;
           return reporter;
         },
         service: true,
@@ -636,6 +653,9 @@ describe("channel subcommands", () => {
     );
     expect(transitions.some((item) => item.ilinkStatus === "signed_out")).toBe(
       true,
+    );
+    expect(reporterSessionFingerprint).toBe(
+      "4364d9fabd3ec3b0301b43a45cb9b2d8cd73c4b492fe67778d1b66ba75621864",
     );
     expect((await loadChannelState(base)).ownerUserId).toBe("owner");
   });
