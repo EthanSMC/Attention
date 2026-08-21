@@ -23,6 +23,7 @@ import {
   isNull,
   oauthClients,
   oauthConnections,
+  sql,
   type AttentionDatabase,
 } from "@attention/db";
 
@@ -494,80 +495,83 @@ function projectAgentOAuthConnections(
 }
 
 export async function loadConnectionOverview(db: AttentionDatabase, accountId: string) {
-  const [oauthConnectionRows, pats, localChannelRuntimeRows] = await Promise.all([
-    db
-      .select({
-        audience: oauthConnections.audience,
-        clientName: oauthClients.name,
-        deviceName: oauthConnections.deviceName,
-        id: oauthConnections.id,
-        kind: oauthConnections.kind,
-        label: oauthConnections.label,
-        lastAuthorizedAt: oauthConnections.lastAuthorizedAt,
-        lastUsedAt: oauthConnections.lastUsedAt,
-        scopes: oauthClients.allowedScopes,
-      })
-      .from(oauthConnections)
-      .innerJoin(oauthClients, eq(oauthClients.clientId, oauthConnections.clientId))
-      .where(
-        and(
-          eq(oauthConnections.accountId, accountId),
-          inArray(oauthConnections.audience, [...oauthAudiences]),
-          isNull(oauthConnections.revokedAt),
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select set_config('app.account_id', ${accountId}, true)`);
+    const [oauthConnectionRows, pats, localChannelRuntimeRows] = await Promise.all([
+      tx
+        .select({
+          audience: oauthConnections.audience,
+          clientName: oauthClients.name,
+          deviceName: oauthConnections.deviceName,
+          id: oauthConnections.id,
+          kind: oauthConnections.kind,
+          label: oauthConnections.label,
+          lastAuthorizedAt: oauthConnections.lastAuthorizedAt,
+          lastUsedAt: oauthConnections.lastUsedAt,
+          scopes: oauthClients.allowedScopes,
+        })
+        .from(oauthConnections)
+        .innerJoin(oauthClients, eq(oauthClients.clientId, oauthConnections.clientId))
+        .where(
+          and(
+            eq(oauthConnections.accountId, accountId),
+            inArray(oauthConnections.audience, [...oauthAudiences]),
+            isNull(oauthConnections.revokedAt),
+          ),
+        )
+        .orderBy(desc(oauthConnections.lastAuthorizedAt)),
+      tx
+        .select({
+          createdAt: apiCredentials.createdAt,
+          expiresAt: apiCredentials.expiresAt,
+          id: apiCredentials.id,
+          keyPrefix: apiCredentials.keyPrefix,
+          lastUsedAt: apiCredentials.lastUsedAt,
+          name: apiCredentials.name,
+          scopes: apiCredentials.scopes,
+          status: apiCredentials.status,
+        })
+        .from(apiCredentials)
+        .where(eq(apiCredentials.accountId, accountId))
+        .orderBy(desc(apiCredentials.createdAt)),
+      tx
+        .select({
+          adapterVersion: agentInstallations.adapterVersion,
+          agentIntegrationId: agentInstallations.agentIntegrationId,
+          bindingLastSeenAt: externalChannelBindings.lastSeenAt,
+          bindingStatus: externalChannelBindings.status,
+          deviceName: agentInstallations.deviceName,
+          installationId: agentInstallations.id,
+          installationLastSeenAt: agentInstallations.lastSeenAt,
+          installationStatus: agentInstallations.status,
+          runtimeCheckpoint: agentInstallations.runtimeCheckpoint,
+        })
+        .from(agentInstallations)
+        .leftJoin(
+          externalChannelBindings,
+          and(
+            eq(externalChannelBindings.installationId, agentInstallations.id),
+            eq(externalChannelBindings.accountId, accountId),
+          ),
+        )
+        .where(eq(agentInstallations.accountId, accountId))
+        .orderBy(
+          desc(agentInstallations.registeredAt),
+          desc(externalChannelBindings.updatedAt),
         ),
-      )
-      .orderBy(desc(oauthConnections.lastAuthorizedAt)),
-    db
-      .select({
-        createdAt: apiCredentials.createdAt,
-        expiresAt: apiCredentials.expiresAt,
-        id: apiCredentials.id,
-        keyPrefix: apiCredentials.keyPrefix,
-        lastUsedAt: apiCredentials.lastUsedAt,
-        name: apiCredentials.name,
-        scopes: apiCredentials.scopes,
-        status: apiCredentials.status,
-      })
-      .from(apiCredentials)
-      .where(eq(apiCredentials.accountId, accountId))
-      .orderBy(desc(apiCredentials.createdAt)),
-    db
-      .select({
-        adapterVersion: agentInstallations.adapterVersion,
-        agentIntegrationId: agentInstallations.agentIntegrationId,
-        bindingLastSeenAt: externalChannelBindings.lastSeenAt,
-        bindingStatus: externalChannelBindings.status,
-        deviceName: agentInstallations.deviceName,
-        installationId: agentInstallations.id,
-        installationLastSeenAt: agentInstallations.lastSeenAt,
-        installationStatus: agentInstallations.status,
-        runtimeCheckpoint: agentInstallations.runtimeCheckpoint,
-      })
-      .from(agentInstallations)
-      .leftJoin(
-        externalChannelBindings,
-        and(
-          eq(externalChannelBindings.installationId, agentInstallations.id),
-          eq(externalChannelBindings.accountId, accountId),
-        ),
-      )
-      .where(eq(agentInstallations.accountId, accountId))
-      .orderBy(
-        desc(agentInstallations.registeredAt),
-        desc(externalChannelBindings.updatedAt),
+    ]);
+    const agentOAuthConnections = projectAgentOAuthConnections(oauthConnectionRows);
+    return {
+      agentOAuthConnections,
+      localChannelRuntimes: projectLocalChannelRuntimes(localChannelRuntimeRows),
+      mcpOAuthConnections: agentOAuthConnections.filter(
+        ({ audience }) => audience === "attention-mcp",
       ),
-  ]);
-  const agentOAuthConnections = projectAgentOAuthConnections(oauthConnectionRows);
-  return {
-    agentOAuthConnections,
-    localChannelRuntimes: projectLocalChannelRuntimes(localChannelRuntimeRows),
-    mcpOAuthConnections: agentOAuthConnections.filter(
-      ({ audience }) => audience === "attention-mcp",
-    ),
-    pats: pats.map((pat) => ({
-      ...pat,
-      needsRotation: apiKeyScopes.some((scope) => !pat.scopes.includes(scope)),
-    })),
-    wechatBindingStatus: projectWechatBindingStatus(localChannelRuntimeRows),
-  };
+      pats: pats.map((pat) => ({
+        ...pat,
+        needsRotation: apiKeyScopes.some((scope) => !pat.scopes.includes(scope)),
+      })),
+      wechatBindingStatus: projectWechatBindingStatus(localChannelRuntimeRows),
+    };
+  });
 }

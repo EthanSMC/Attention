@@ -20,6 +20,7 @@ import {
 } from "@attention/db";
 import { migrateDatabase } from "@attention/db/migrate";
 
+import { loadConnectionOverview } from "./account";
 import {
   ChannelRuntimeService,
   type RuntimePrincipal,
@@ -116,6 +117,66 @@ describe.skipIf(!databaseUrl)("local channel runtime service with PostgreSQL", (
   afterAll(async () => {
     vi.unstubAllEnvs();
     await handle.close();
+  });
+
+  it("loads the account-owned Runtime and verified WeChat binding through the Web RLS role", async () => {
+    await handle.db.insert(agentInstallations).values({
+      accountId,
+      adapterVersion: "0.3.8",
+      agentIntegrationId: "codex",
+      capabilities: {
+        heartbeat_mode: "runtime",
+        pairing_verification: true,
+        restricted_profile: true,
+      },
+      deviceName: "Integration Mac",
+      id: installationId,
+      lastSeenAt: now,
+      oauthClientId: clientId,
+      ownerKind: "bridge",
+      registeredAt: now,
+      runtimeCheckpoint: {
+        bridge_status: "online",
+        codex_phase: "healthy",
+        ilink_status: "connected",
+        last_error_code: null,
+        last_healthy_at: "2026-08-07T08:00:00.000Z",
+        last_successful_message_at: "2026-08-07T07:59:00.000Z",
+        pending_inbound: 0,
+        pending_outbound: 0,
+      },
+      skillVersion: "2.0.0",
+      status: "active",
+      toolContractVersion: "2026-08-07",
+      updatedAt: now,
+    });
+    await handle.db.insert(externalChannelBindings).values({
+      accountId,
+      channelAccountFingerprint: "a".repeat(64),
+      channelSessionFingerprint: "b".repeat(64),
+      createdAt: now,
+      id: bindingId,
+      installationId,
+      lastSeenAt: now,
+      pairedPeerFingerprint: "c".repeat(64),
+      provider: "wechat_ilink",
+      status: "healthy",
+      updatedAt: now,
+      verifiedAt: now,
+    });
+
+    const overview = await asWebRuntime((runtime) =>
+      loadConnectionOverview(runtime.db, accountId),
+    );
+
+    expect(overview.localChannelRuntimes).toEqual([
+      expect.objectContaining({
+        adapterVersion: "0.3.8",
+        deviceName: "Integration Mac",
+        status: "online",
+      }),
+    ]);
+    expect(overview.wechatBindingStatus).toBe("bound");
   });
 
   it("rebinds an installation only after its trusted logical connection rotates DCR clients", async () => {
