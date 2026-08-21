@@ -10,7 +10,8 @@ function connectionDatabase(input: {
   runtimes?: object[];
 }): AttentionDatabase {
   let queryIndex = 0;
-  return {
+  const database = {
+    async execute() {},
     select() {
       queryIndex += 1;
       if (queryIndex === 1) {
@@ -53,7 +54,11 @@ function connectionDatabase(input: {
         },
       };
     },
-  } as unknown as AttentionDatabase;
+    transaction<T>(callback: (tx: AttentionDatabase) => Promise<T>) {
+      return callback(database as unknown as AttentionDatabase);
+    },
+  };
+  return database as unknown as AttentionDatabase;
 }
 
 function apiKey(scopes: string[]) {
