@@ -36,11 +36,39 @@ export interface QrLoginRequest {
   readonly qrPayload: string;
 }
 
-export interface QrLoginStatus {
-  readonly status: "wait" | "scanned" | "confirmed" | "expired";
-  readonly botToken?: string;
-  readonly ilinkBotId?: string;
-  readonly baseUrl?: string;
+export type QrLoginStatus =
+  | { readonly status: "wait" }
+  | { readonly status: "scanned" }
+  | { readonly status: "need_verifycode" }
+  | { readonly status: "verify_code_blocked" }
+  | { readonly status: "binded_redirect" }
+  | {
+      readonly baseUrl: string;
+      readonly status: "scaned_but_redirect";
+    }
+  | {
+      readonly botToken: string;
+      readonly ilinkBotId: string;
+      readonly baseUrl?: string;
+      readonly status: "confirmed";
+    }
+  | { readonly status: "expired" };
+
+export class ILinkQrProtocolError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ILinkQrProtocolError";
+  }
+}
+
+export class ILinkUnknownQrStatusError extends ILinkQrProtocolError {
+  readonly status: string;
+
+  constructor(status: string) {
+    super(`Unsupported iLink QR status: ${status || "(missing)"}`);
+    this.name = "ILinkUnknownQrStatusError";
+    this.status = status || "(missing)";
+  }
 }
 
 export interface ILinkUpdates {
@@ -63,8 +91,10 @@ export class ILinkClient {
   }
 
   async requestQrCode(): Promise<QrLoginRequest> {
-    const data = await this.request("GET", "ilink/bot/get_bot_qrcode", {
+    const data = await this.request("POST", "ilink/bot/get_bot_qrcode", {
+      baseUrl: ILINK_BASE_URL,
       params: { bot_type: ILINK_BOT_TYPE },
+      payload: { local_token_list: [] },
       timeoutMs: QR_REQUEST_TIMEOUT_MS,
     });
     const qrcodeId = String(data.qrcode ?? "").trim();
@@ -75,30 +105,62 @@ export class ILinkClient {
     return { qrcodeId, qrPayload };
   }
 
-  async pollQrStatus(qrcodeId: string): Promise<QrLoginStatus> {
+  async pollQrStatus(
+    qrcodeId: string,
+    options: { readonly verifyCode?: string } = {},
+  ): Promise<QrLoginStatus> {
+    const params: Record<string, string> = { qrcode: qrcodeId };
+    const verifyCode = options.verifyCode?.trim();
+    if (verifyCode) params.verify_code = verifyCode;
     const data = await this.request("GET", "ilink/bot/get_qrcode_status", {
       extraHeaders: { [ILINK_APP_CLIENT_VERSION_HEADER]: "1" },
-      params: { qrcode: qrcodeId },
+      params,
       timeoutMs: this.timeoutMs,
     });
-    const status = String(data.status ?? "wait").trim();
+    const status = String(data.status ?? "").trim();
     if (status === "confirmed") {
       const botToken = String(data.bot_token ?? "").trim();
       if (!botToken) {
-        throw new Error("QR login confirmed but no bot_token returned");
+        throw new ILinkQrProtocolError(
+          "QR login confirmed but no bot_token returned",
+        );
+      }
+      const ilinkBotId = String(data.ilink_bot_id ?? "").trim();
+      if (!ilinkBotId) {
+        throw new ILinkQrProtocolError(
+          "QR login confirmed but no ilink_bot_id returned",
+        );
       }
       const rawBaseUrl = String(data.baseurl ?? "").trim();
-      const baseUrl = rawBaseUrl ? validateIlinkBaseUrl(rawBaseUrl) : "";
+      const baseUrl = rawBaseUrl ? validateQrBaseUrl(rawBaseUrl) : "";
       const confirmed: QrLoginStatus = {
         botToken,
-        ilinkBotId: String(data.ilink_bot_id ?? "").trim(),
+        ilinkBotId,
         status: "confirmed",
       };
       return baseUrl ? { ...confirmed, baseUrl } : confirmed;
     }
     if (status === "expired") return { status: "expired" };
-    if (status === "scanned") return { status: "scanned" };
-    return { status: "wait" };
+    if (status === "wait") return { status: "wait" };
+    if (status === "scaned" || status === "scanned") {
+      return { status: "scanned" };
+    }
+    if (status === "need_verifycode") return { status };
+    if (status === "verify_code_blocked") return { status };
+    if (status === "binded_redirect") return { status };
+    if (status === "scaned_but_redirect") {
+      const redirectHost = String(data.redirect_host ?? "").trim();
+      if (!/^[a-z0-9.-]+(?::443)?$/iu.test(redirectHost)) {
+        throw new ILinkQrProtocolError(
+          "iLink redirect host is not an official WeChat HTTPS endpoint",
+        );
+      }
+      return {
+        baseUrl: validateQrBaseUrl(`https://${redirectHost}`),
+        status,
+      };
+    }
+    throw new ILinkUnknownQrStatusError(status);
   }
 
   async getUpdates(syncBuf: string): Promise<ILinkUpdates> {
@@ -156,6 +218,7 @@ export class ILinkClient {
     method: "GET" | "POST",
     endpoint: string,
     options: {
+      readonly baseUrl?: string;
       readonly params?: Record<string, string>;
       readonly payload?: unknown;
       readonly tokenRequired?: boolean;
@@ -163,7 +226,9 @@ export class ILinkClient {
       readonly extraHeaders?: Record<string, string>;
     } = {},
   ): Promise<ILinkResponse> {
-    const url = new URL(`${this.baseUrl}/${endpoint.replace(/^\/+/u, "")}`);
+    const url = new URL(
+      `${options.baseUrl ?? this.baseUrl}/${endpoint.replace(/^\/+/u, "")}`,
+    );
     for (const [key, value] of Object.entries(options.params ?? {})) {
       url.searchParams.set(key, value);
     }
@@ -205,4 +270,14 @@ function summary(payload: ILinkResponse): string {
   return `ret=${payload.ret ?? "?"} errcode=${payload.errcode ?? "?"} errmsg=${
     String(payload.errmsg ?? "").slice(0, 120)
   }`;
+}
+
+function validateQrBaseUrl(value: string): string {
+  try {
+    return validateIlinkBaseUrl(value);
+  } catch (error) {
+    throw new ILinkQrProtocolError(
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 }

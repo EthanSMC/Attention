@@ -18059,6 +18059,7 @@ import { createHash as createHash8, randomUUID as randomUUID8 } from "node:crypt
 import { mkdir as mkdir8 } from "node:fs/promises";
 import { homedir as homedir6, hostname as hostname3 } from "node:os";
 import { resolve as resolve2 } from "node:path";
+import { createInterface } from "node:readline/promises";
 
 // src/command-runner.ts
 import { spawn } from "node:child_process";
@@ -18313,7 +18314,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 // src/version.ts
-var ATTENTION_CLI_VERSION = "0.3.8";
+var ATTENTION_CLI_VERSION = "0.3.9";
 
 // src/runtime-oauth.ts
 var RUNTIME_CREDENTIAL_VERSION = 1;
@@ -21114,6 +21115,20 @@ function parseInboundMessage(raw) {
 // src/channel/ilink-client.ts
 var MAXIMUM_RESPONSE_CHARS = 1048576;
 var QR_REQUEST_TIMEOUT_MS = 15e3;
+var ILinkQrProtocolError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ILinkQrProtocolError";
+  }
+};
+var ILinkUnknownQrStatusError = class extends ILinkQrProtocolError {
+  status;
+  constructor(status) {
+    super(`Unsupported iLink QR status: ${status || "(missing)"}`);
+    this.name = "ILinkUnknownQrStatusError";
+    this.status = status || "(missing)";
+  }
+};
 var ILinkClient = class {
   baseUrl;
   token = null;
@@ -21126,8 +21141,10 @@ var ILinkClient = class {
     this.fetchImpl = config2.fetchImpl ?? fetch;
   }
   async requestQrCode() {
-    const data = await this.request("GET", "ilink/bot/get_bot_qrcode", {
+    const data = await this.request("POST", "ilink/bot/get_bot_qrcode", {
+      baseUrl: ILINK_BASE_URL,
       params: { bot_type: ILINK_BOT_TYPE },
+      payload: { local_token_list: [] },
       timeoutMs: QR_REQUEST_TIMEOUT_MS
     });
     const qrcodeId = String(data.qrcode ?? "").trim();
@@ -21137,30 +21154,59 @@ var ILinkClient = class {
     }
     return { qrcodeId, qrPayload };
   }
-  async pollQrStatus(qrcodeId) {
+  async pollQrStatus(qrcodeId, options = {}) {
+    const params = { qrcode: qrcodeId };
+    const verifyCode = options.verifyCode?.trim();
+    if (verifyCode) params.verify_code = verifyCode;
     const data = await this.request("GET", "ilink/bot/get_qrcode_status", {
       extraHeaders: { [ILINK_APP_CLIENT_VERSION_HEADER]: "1" },
-      params: { qrcode: qrcodeId },
+      params,
       timeoutMs: this.timeoutMs
     });
-    const status = String(data.status ?? "wait").trim();
+    const status = String(data.status ?? "").trim();
     if (status === "confirmed") {
       const botToken = String(data.bot_token ?? "").trim();
       if (!botToken) {
-        throw new Error("QR login confirmed but no bot_token returned");
+        throw new ILinkQrProtocolError(
+          "QR login confirmed but no bot_token returned"
+        );
+      }
+      const ilinkBotId = String(data.ilink_bot_id ?? "").trim();
+      if (!ilinkBotId) {
+        throw new ILinkQrProtocolError(
+          "QR login confirmed but no ilink_bot_id returned"
+        );
       }
       const rawBaseUrl = String(data.baseurl ?? "").trim();
-      const baseUrl = rawBaseUrl ? validateIlinkBaseUrl(rawBaseUrl) : "";
+      const baseUrl = rawBaseUrl ? validateQrBaseUrl(rawBaseUrl) : "";
       const confirmed = {
         botToken,
-        ilinkBotId: String(data.ilink_bot_id ?? "").trim(),
+        ilinkBotId,
         status: "confirmed"
       };
       return baseUrl ? { ...confirmed, baseUrl } : confirmed;
     }
     if (status === "expired") return { status: "expired" };
-    if (status === "scanned") return { status: "scanned" };
-    return { status: "wait" };
+    if (status === "wait") return { status: "wait" };
+    if (status === "scaned" || status === "scanned") {
+      return { status: "scanned" };
+    }
+    if (status === "need_verifycode") return { status };
+    if (status === "verify_code_blocked") return { status };
+    if (status === "binded_redirect") return { status };
+    if (status === "scaned_but_redirect") {
+      const redirectHost = String(data.redirect_host ?? "").trim();
+      if (!/^[a-z0-9.-]+(?::443)?$/iu.test(redirectHost)) {
+        throw new ILinkQrProtocolError(
+          "iLink redirect host is not an official WeChat HTTPS endpoint"
+        );
+      }
+      return {
+        baseUrl: validateQrBaseUrl(`https://${redirectHost}`),
+        status
+      };
+    }
+    throw new ILinkUnknownQrStatusError(status);
   }
   async getUpdates(syncBuf) {
     const data = await this.request("POST", "ilink/bot/getupdates", {
@@ -21203,7 +21249,9 @@ var ILinkClient = class {
     return apiOk(data);
   }
   async request(method, endpoint, options = {}) {
-    const url2 = new URL(`${this.baseUrl}/${endpoint.replace(/^\/+/u, "")}`);
+    const url2 = new URL(
+      `${options.baseUrl ?? this.baseUrl}/${endpoint.replace(/^\/+/u, "")}`
+    );
     for (const [key, value] of Object.entries(options.params ?? {})) {
       url2.searchParams.set(key, value);
     }
@@ -21240,6 +21288,15 @@ var ILinkClient = class {
 };
 function summary(payload) {
   return `ret=${payload.ret ?? "?"} errcode=${payload.errcode ?? "?"} errmsg=${String(payload.errmsg ?? "").slice(0, 120)}`;
+}
+function validateQrBaseUrl(value) {
+  try {
+    return validateIlinkBaseUrl(value);
+  } catch (error51) {
+    throw new ILinkQrProtocolError(
+      error51 instanceof Error ? error51.message : String(error51)
+    );
+  }
 }
 
 // src/channel/channel-command.ts
@@ -23137,6 +23194,14 @@ async function loadRuntimeRegistrationIdentity(baseDirectory) {
 function defaultSleep2(ms) {
   return new Promise((resolve4) => setTimeout(resolve4, ms));
 }
+async function readTerminalLine() {
+  const terminal = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await terminal.question("");
+  } finally {
+    terminal.close();
+  }
+}
 function timestamp() {
   return (/* @__PURE__ */ new Date()).toISOString().slice(11, 19);
 }
@@ -23213,6 +23278,7 @@ async function channelStart(hostId, options = {}) {
       client,
       log: (message) => write(`[${timestamp()}] ${message}
 `),
+      readInput: options.readInput ?? readTerminalLine,
       sleep,
       state,
       write
@@ -23325,6 +23391,7 @@ async function channelStart(hostId, options = {}) {
       client,
       log: (message) => write(`[${timestamp()}] ${message}
 `),
+      readInput: options.readInput ?? readTerminalLine,
       sleep,
       state,
       write
@@ -24230,8 +24297,11 @@ async function checkHostCli(hostId) {
   return { ok: result.stdout.length > 0 || result.stderr.length > 0 };
 }
 async function doLogin(runtime) {
-  const { client, log, sleep, state } = runtime;
-  let expiredCount = 0;
+  const { client, log, readInput, sleep, state } = runtime;
+  client.baseUrl = ILINK_BASE_URL;
+  state.baseUrl = ILINK_BASE_URL;
+  let refreshCount = 0;
+  let observedUserProgress = false;
   for (; ; ) {
     let qr;
     try {
@@ -24241,14 +24311,31 @@ async function doLogin(runtime) {
       await sleep(5e3);
       continue;
     }
+    log(
+      "iLink \u4E8C\u7EF4\u7801\u5DF2\u751F\u6210\uFF0C\u8BF7\u7ACB\u5373\u5C55\u5F00\u5F53\u524D\u7EC8\u7AEF\u8F93\u51FA\u626B\u7801\uFF1B\u4E0D\u8981\u7B49\u5F85\u914D\u7F6E\u547D\u4EE4\u7ED3\u675F\u3002"
+    );
     await displayQrCode(qr.qrPayload, { writeOutput: runtime.write });
     log("\u8BF7\u4F7F\u7528\u624B\u673A\u5FAE\u4FE1\u626B\u7801\u767B\u5F55\uFF08\u4E8C\u7EF4\u7801\u6709\u6548\u671F\u7EA6 5 \u5206\u949F\uFF09\u2026");
+    let pendingVerifyCode;
+    let scannedReported = false;
     for (; ; ) {
       let status;
       try {
-        status = await client.pollQrStatus(qr.qrcodeId);
+        status = await client.pollQrStatus(qr.qrcodeId, {
+          ...pendingVerifyCode ? { verifyCode: pendingVerifyCode } : {}
+        });
       } catch (error51) {
         if (isTimeoutError(error51)) continue;
+        if (error51 instanceof ILinkUnknownQrStatusError) {
+          log(
+            `iLink \u534F\u8BAE\u72B6\u6001\u6682\u4E0D\u53D7\u652F\u6301\uFF08${error51.status}\uFF09\uFF1B\u8BF7\u5347\u7EA7 Attention CLI \u540E\u91CD\u8BD5\u3002`
+          );
+          return false;
+        }
+        if (error51 instanceof ILinkQrProtocolError) {
+          log(`iLink \u767B\u5F55\u54CD\u5E94\u4E0D\u5B8C\u6574\u6216\u4E0D\u5B89\u5168: ${describeError(error51)}`);
+          return false;
+        }
         log(`\u8F6E\u8BE2\u4E8C\u7EF4\u7801\u72B6\u6001\u5931\u8D25: ${describeError(error51)}`);
         await sleep(2e3);
         continue;
@@ -24267,13 +24354,77 @@ async function doLogin(runtime) {
         );
         return true;
       }
-      if (status.status === "expired") {
-        expiredCount += 1;
-        log(`\u4E8C\u7EF4\u7801\u8FC7\u671F\uFF08${expiredCount}/${ILINK_MAXIMUM_QR_REFRESH}\uFF09\uFF0C\u5237\u65B0\u4E2D\u2026`);
-        if (expiredCount > ILINK_MAXIMUM_QR_REFRESH) {
-          log("\u4E8C\u7EF4\u7801\u8FDE\u7EED\u8FC7\u671F\uFF0C\u7A0D\u540E\u91CD\u8BD5\u3002");
+      if (status.status === "scanned") {
+        observedUserProgress = true;
+        pendingVerifyCode = void 0;
+        if (!scannedReported) {
+          log("\u5FAE\u4FE1\u5DF2\u626B\u7801\uFF0C\u7B49\u5F85\u624B\u673A\u786E\u8BA4\u2026");
+          scannedReported = true;
+        }
+        continue;
+      }
+      if (status.status === "need_verifycode") {
+        observedUserProgress = true;
+        let prompt = pendingVerifyCode ? "\u624B\u673A\u6570\u5B57\u4E0D\u5339\u914D\uFF0C\u8BF7\u91CD\u65B0\u8F93\u5165\u624B\u673A\u5FAE\u4FE1\u663E\u793A\u7684\u6570\u5B57\uFF1A" : "\u8F93\u5165\u624B\u673A\u5FAE\u4FE1\u663E\u793A\u7684\u6570\u5B57\uFF0C\u4EE5\u7EE7\u7EED\u8FDE\u63A5\uFF1A";
+        for (; ; ) {
+          runtime.write(prompt);
+          let code;
+          try {
+            code = (await readInput()).trim();
+          } catch (error51) {
+            log(`\u65E0\u6CD5\u8BFB\u53D6\u624B\u673A\u9A8C\u8BC1\u7801: ${describeError(error51)}`);
+            log("\u8BF7\u5728\u53EF\u4EA4\u4E92\u7EC8\u7AEF\u91CD\u65B0\u8FD0\u884C channel start --background\u3002");
+            return false;
+          }
+          if (/^\d+$/u.test(code)) {
+            pendingVerifyCode = code;
+            break;
+          }
+          log("\u624B\u673A\u9A8C\u8BC1\u7801\u53EA\u80FD\u5305\u542B\u6570\u5B57\uFF0C\u8BF7\u91CD\u65B0\u8F93\u5165\u3002");
+          prompt = "\u8BF7\u91CD\u65B0\u8F93\u5165\u624B\u673A\u5FAE\u4FE1\u663E\u793A\u7684\u6570\u5B57\uFF1A";
+        }
+        continue;
+      }
+      if (status.status === "scaned_but_redirect") {
+        observedUserProgress = true;
+        client.baseUrl = status.baseUrl;
+        state.baseUrl = status.baseUrl;
+        log(`iLink \u5DF2\u5207\u6362\u5230\u5B98\u65B9\u5FAE\u4FE1\u9A8C\u8BC1\u8282\u70B9 ${status.baseUrl}\u3002`);
+        continue;
+      }
+      if (status.status === "binded_redirect") {
+        log(
+          "\u5FAE\u4FE1\u62A5\u544A\u8BE5 Bot \u5DF2\u7ED1\u5B9A\uFF0C\u4F46 Attention \u672C\u5730\u6CA1\u6709\u53EF\u590D\u7528\u7684 iLink \u51ED\u636E\u3002\u672C\u5730 logout \u65E0\u6CD5\u89E3\u9664\u5FAE\u4FE1/iLink \u670D\u52A1\u7AEF\u7ED1\u5B9A\uFF1B\u8BF7\u6062\u590D\u539F\u51ED\u636E\uFF0C\u6216\u7B49\u5F85\u4E0A\u6E38\u63D0\u4F9B\u89E3\u7ED1/\u91CD\u7ED1\u80FD\u529B\u3002"
+        );
+        return false;
+      }
+      if (status.status === "verify_code_blocked") {
+        observedUserProgress = true;
+        if (refreshCount >= ILINK_MAXIMUM_QR_REFRESH) {
+          log("\u624B\u673A\u9A8C\u8BC1\u7801\u591A\u6B21\u9519\u8BEF\u6216\u5DF2\u88AB\u963B\u65AD\uFF0C\u8FDE\u63A5\u6D41\u7A0B\u5DF2\u505C\u6B62\uFF1B\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002");
           return false;
         }
+        refreshCount += 1;
+        log(
+          `\u624B\u673A\u9A8C\u8BC1\u7801\u591A\u6B21\u9519\u8BEF\u6216\u5DF2\u88AB\u963B\u65AD\uFF0C\u5237\u65B0\u4E8C\u7EF4\u7801\uFF08${refreshCount}/${ILINK_MAXIMUM_QR_REFRESH}\uFF09\u2026`
+        );
+        break;
+      }
+      if (status.status === "expired") {
+        if (refreshCount >= ILINK_MAXIMUM_QR_REFRESH) {
+          if (observedUserProgress) {
+            log("\u4E8C\u7EF4\u7801\u5DF2\u626B\u7801\u4F46\u624B\u673A\u6388\u6743\u672A\u5B8C\u6210\uFF1B\u8BF7\u786E\u8BA4\u9A8C\u8BC1\u7801\u6216\u6388\u6743\u9875\u9762\u540E\u91CD\u8BD5\u3002");
+          } else {
+            log(
+              "\u4E8C\u7EF4\u7801\u672A\u88AB iLink \u786E\u8BA4\u626B\u7801\u3002\u82E5\u624B\u673A\u7ACB\u5373\u663E\u793A\u7F51\u7EDC\u9519\u8BEF\uFF0C\u8FD9\u5C5E\u4E8E\u5FAE\u4FE1/iLink \u4E0A\u6E38\u6388\u6743\u5F02\u5E38\uFF1BAttention \u4E0D\u4F1A\u4F2A\u88C5\u6210\u534F\u8BAE\u6210\u529F\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u5E76\u786E\u8BA4\u5FAE\u4FE1\u7248\u672C\u4E0E\u8D26\u53F7\u8D44\u683C\u3002"
+            );
+          }
+          return false;
+        }
+        refreshCount += 1;
+        log(
+          `\u4E8C\u7EF4\u7801\u8FC7\u671F\uFF08\u5237\u65B0 ${refreshCount}/${ILINK_MAXIMUM_QR_REFRESH}\uFF09\uFF0C\u5237\u65B0\u4E2D\u2026`
+        );
         break;
       }
     }

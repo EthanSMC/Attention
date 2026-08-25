@@ -15,6 +15,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 
 import {
   ATTENTION_SKILL_PACKAGE_VERSION,
@@ -36,7 +37,11 @@ import {
   checkAndStageBridgeUpdate,
 } from "./bridge-updater";
 import { prepareChannelCodexHome } from "./codex-home";
-import { ILinkClient } from "./ilink-client";
+import {
+  ILinkClient,
+  ILinkQrProtocolError,
+  ILinkUnknownQrStatusError,
+} from "./ilink-client";
 import { ILinkSessionExpiredError, ILINK_BASE_URL } from "./ilink-protocol";
 import { acquireChannelLock } from "./lock";
 import {
@@ -143,6 +148,7 @@ export interface ChannelCommandOptions {
   readonly fetchImpl?: typeof fetch;
   readonly hostCliCheck?: (hostId: ChannelBridgeHost) => Promise<boolean>;
   readonly origin?: string;
+  readonly readInput?: () => Promise<string>;
   readonly runtimeCredentialLoader?: () => Promise<
     boolean | { readonly clientId: string }
   >;
@@ -168,6 +174,7 @@ export interface VerifiedAttentionAccount {
 interface Runtime {
   readonly client: ILinkClient;
   readonly log: (message: string) => void;
+  readonly readInput: () => Promise<string>;
   readonly sleep: (ms: number) => Promise<void>;
   readonly state: ChannelState;
   readonly write: (text: string) => void;
@@ -243,6 +250,15 @@ export async function loadRuntimeRegistrationIdentity(
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function readTerminalLine(): Promise<string> {
+  const terminal = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await terminal.question("");
+  } finally {
+    terminal.close();
+  }
 }
 
 function timestamp(): string {
@@ -338,6 +354,7 @@ export async function channelStart(
     const runtime: Runtime = {
       client,
       log: (message) => write(`[${timestamp()}] ${message}\n`),
+      readInput: options.readInput ?? readTerminalLine,
       sleep,
       state,
       write,
@@ -468,6 +485,7 @@ export async function channelStart(
     const runtime: Runtime = {
       client,
       log: (message) => write(`[${timestamp()}] ${message}\n`),
+      readInput: options.readInput ?? readTerminalLine,
       sleep,
       state,
       write,
@@ -1569,8 +1587,11 @@ async function checkHostCli(
 }
 
 async function doLogin(runtime: Runtime): Promise<boolean> {
-  const { client, log, sleep, state } = runtime;
-  let expiredCount = 0;
+  const { client, log, readInput, sleep, state } = runtime;
+  client.baseUrl = ILINK_BASE_URL;
+  state.baseUrl = ILINK_BASE_URL;
+  let refreshCount = 0;
+  let observedUserProgress = false;
   for (;;) {
     let qr;
     try {
@@ -1580,15 +1601,32 @@ async function doLogin(runtime: Runtime): Promise<boolean> {
       await sleep(5_000);
       continue;
     }
+    log(
+      "iLink 二维码已生成，请立即展开当前终端输出扫码；不要等待配置命令结束。",
+    );
     await displayQrCode(qr.qrPayload, { writeOutput: runtime.write });
     log("请使用手机微信扫码登录（二维码有效期约 5 分钟）…");
 
+    let pendingVerifyCode: string | undefined;
+    let scannedReported = false;
     for (;;) {
       let status;
       try {
-        status = await client.pollQrStatus(qr.qrcodeId);
+        status = await client.pollQrStatus(qr.qrcodeId, {
+          ...(pendingVerifyCode ? { verifyCode: pendingVerifyCode } : {}),
+        });
       } catch (error) {
         if (isTimeoutError(error)) continue;
+        if (error instanceof ILinkUnknownQrStatusError) {
+          log(
+            `iLink 协议状态暂不受支持（${error.status}）；请升级 Attention CLI 后重试。`,
+          );
+          return false;
+        }
+        if (error instanceof ILinkQrProtocolError) {
+          log(`iLink 登录响应不完整或不安全: ${describeError(error)}`);
+          return false;
+        }
         log(`轮询二维码状态失败: ${describeError(error)}`);
         await sleep(2_000);
         continue;
@@ -1607,16 +1645,82 @@ async function doLogin(runtime: Runtime): Promise<boolean> {
         );
         return true;
       }
-      if (status.status === "expired") {
-        expiredCount += 1;
-        log(`二维码过期（${expiredCount}/${ILINK_MAXIMUM_QR_REFRESH}），刷新中…`);
-        if (expiredCount > ILINK_MAXIMUM_QR_REFRESH) {
-          log("二维码连续过期，稍后重试。");
+      if (status.status === "scanned") {
+        observedUserProgress = true;
+        pendingVerifyCode = undefined;
+        if (!scannedReported) {
+          log("微信已扫码，等待手机确认…");
+          scannedReported = true;
+        }
+        continue;
+      }
+      if (status.status === "need_verifycode") {
+        observedUserProgress = true;
+        let prompt = pendingVerifyCode
+          ? "手机数字不匹配，请重新输入手机微信显示的数字："
+          : "输入手机微信显示的数字，以继续连接：";
+        for (;;) {
+          runtime.write(prompt);
+          let code: string;
+          try {
+            code = (await readInput()).trim();
+          } catch (error) {
+            log(`无法读取手机验证码: ${describeError(error)}`);
+            log("请在可交互终端重新运行 channel start --background。");
+            return false;
+          }
+          if (/^\d+$/u.test(code)) {
+            pendingVerifyCode = code;
+            break;
+          }
+          log("手机验证码只能包含数字，请重新输入。");
+          prompt = "请重新输入手机微信显示的数字：";
+        }
+        continue;
+      }
+      if (status.status === "scaned_but_redirect") {
+        observedUserProgress = true;
+        client.baseUrl = status.baseUrl;
+        state.baseUrl = status.baseUrl;
+        log(`iLink 已切换到官方微信验证节点 ${status.baseUrl}。`);
+        continue;
+      }
+      if (status.status === "binded_redirect") {
+        log(
+          "微信报告该 Bot 已绑定，但 Attention 本地没有可复用的 iLink 凭据。本地 logout 无法解除微信/iLink 服务端绑定；请恢复原凭据，或等待上游提供解绑/重绑能力。",
+        );
+        return false;
+      }
+      if (status.status === "verify_code_blocked") {
+        observedUserProgress = true;
+        if (refreshCount >= ILINK_MAXIMUM_QR_REFRESH) {
+          log("手机验证码多次错误或已被阻断，连接流程已停止；请稍后重试。");
           return false;
         }
+        refreshCount += 1;
+        log(
+          `手机验证码多次错误或已被阻断，刷新二维码（${refreshCount}/${ILINK_MAXIMUM_QR_REFRESH}）…`,
+        );
         break;
       }
-      // wait / scanned: keep polling.
+      if (status.status === "expired") {
+        if (refreshCount >= ILINK_MAXIMUM_QR_REFRESH) {
+          if (observedUserProgress) {
+            log("二维码已扫码但手机授权未完成；请确认验证码或授权页面后重试。");
+          } else {
+            log(
+              "二维码未被 iLink 确认扫码。若手机立即显示网络错误，这属于微信/iLink 上游授权异常；Attention 不会伪装成协议成功，请稍后重试并确认微信版本与账号资格。",
+            );
+          }
+          return false;
+        }
+        refreshCount += 1;
+        log(
+          `二维码过期（刷新 ${refreshCount}/${ILINK_MAXIMUM_QR_REFRESH}），刷新中…`,
+        );
+        break;
+      }
+      // wait: keep polling.
     }
   }
 }

@@ -203,6 +203,430 @@ describe("channel subcommands", () => {
     expect(persisted.accountId).toBe("local-account");
   });
 
+  it("submits the phone verification code before completing iLink login", async () => {
+    const base = await makeTempBase();
+    const lines: string[] = [];
+    const statusUrls: string[] = [];
+    const verificationInputs = ["not-a-number", "123"];
+    let statusPoll = 0;
+
+    expect(
+      await channelStart("codex", {
+        background: true,
+        backgroundInstaller: async () => undefined,
+        baseDirectory: base,
+        fetchImpl: async (input) => {
+          const url = String(input);
+          if (url.includes("get_bot_qrcode")) {
+            return new Response(JSON.stringify({
+              qrcode: "qr-verify",
+              qrcode_img_content: "https://weixin.qq.com/x/qr-verify",
+              ret: 0,
+            }));
+          }
+          statusUrls.push(url);
+          statusPoll += 1;
+          return new Response(JSON.stringify(
+            statusPoll === 1
+              ? { ret: 0, status: "need_verifycode" }
+              : {
+                  bot_token: "verified-token",
+                  ilink_bot_id: "verified-account",
+                  ret: 0,
+                  status: "confirmed",
+                },
+          ));
+        },
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        readInput: async () => {
+          const input = verificationInputs.shift();
+          if (input === undefined) {
+            throw new Error("purely numeric input should have been submitted");
+          }
+          return input;
+        },
+        writeOutput: (text) => lines.push(text),
+      }),
+    ).toBe(0);
+
+    expect(lines.join("")).toContain("输入手机微信显示的数字");
+    expect(lines.join("")).toContain("手机验证码只能包含数字");
+    expect(statusUrls[1]).toContain("verify_code=123");
+    expect(statusUrls[1]).not.toContain("not-a-number");
+    expect((await loadChannelState(base)).token).toBe("verified-token");
+  });
+
+  it("reports a scanned QR before confirmation", async () => {
+    const base = await makeTempBase();
+    const lines: string[] = [];
+    let statusPoll = 0;
+
+    expect(
+      await channelStart("codex", {
+        background: true,
+        backgroundInstaller: async () => undefined,
+        baseDirectory: base,
+        fetchImpl: async (input) => {
+          const url = String(input);
+          if (url.includes("get_bot_qrcode")) {
+            return new Response(JSON.stringify({
+              qrcode: "qr-scanned",
+              qrcode_img_content: "https://weixin.qq.com/x/qr-scanned",
+              ret: 0,
+            }));
+          }
+          statusPoll += 1;
+          return new Response(JSON.stringify(
+            statusPoll === 1
+              ? { ret: 0, status: "scaned" }
+              : {
+                  bot_token: "scanned-token",
+                  ilink_bot_id: "scanned-account",
+                  ret: 0,
+                  status: "confirmed",
+                },
+          ));
+        },
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        writeOutput: (text) => lines.push(text),
+      }),
+    ).toBe(0);
+
+    expect(lines.join("")).toContain("微信已扫码，等待手机确认");
+  });
+
+  it("refreshes the QR after phone verification is blocked", async () => {
+    const base = await makeTempBase();
+    const lines: string[] = [];
+    let qrFetches = 0;
+    let firstQrPolls = 0;
+
+    expect(
+      await channelStart("codex", {
+        background: true,
+        backgroundInstaller: async () => undefined,
+        baseDirectory: base,
+        fetchImpl: async (input) => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith("/get_bot_qrcode")) {
+            qrFetches += 1;
+            return new Response(JSON.stringify({
+              qrcode: `qr-blocked-${qrFetches}`,
+              qrcode_img_content: `https://weixin.qq.com/x/qr-blocked-${qrFetches}`,
+              ret: 0,
+            }));
+          }
+          const qrcode = url.searchParams.get("qrcode");
+          if (qrcode === "qr-blocked-1") {
+            firstQrPolls += 1;
+            return new Response(JSON.stringify(
+              firstQrPolls === 1
+                ? { ret: 0, status: "need_verifycode" }
+                : firstQrPolls === 2
+                  ? { ret: 0, status: "verify_code_blocked" }
+                  : {
+                      bot_token: "stale-token",
+                      ilink_bot_id: "stale-account",
+                      ret: 0,
+                      status: "confirmed",
+                    },
+            ));
+          }
+          return new Response(JSON.stringify({
+            bot_token: "refreshed-token",
+            ilink_bot_id: "refreshed-account",
+            ret: 0,
+            status: "confirmed",
+          }));
+        },
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        readInput: async () => "000000",
+        writeOutput: (text) => lines.push(text),
+      }),
+    ).toBe(0);
+
+    expect(qrFetches).toBe(2);
+    expect(lines.join("")).toContain("手机验证码多次错误或已被阻断");
+    expect((await loadChannelState(base)).token).toBe("refreshed-token");
+  });
+
+  it("continues QR polling on the validated redirect host", async () => {
+    const base = await makeTempBase();
+    const statusHosts: string[] = [];
+
+    expect(
+      await channelStart("codex", {
+        background: true,
+        backgroundInstaller: async () => undefined,
+        baseDirectory: base,
+        fetchImpl: async (input) => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith("/get_bot_qrcode")) {
+            return new Response(JSON.stringify({
+              qrcode: "qr-redirect",
+              qrcode_img_content: "https://weixin.qq.com/x/qr-redirect",
+              ret: 0,
+            }));
+          }
+          statusHosts.push(url.hostname);
+          return new Response(JSON.stringify(
+            statusHosts.length === 1
+              ? {
+                  redirect_host: "edge.weixin.qq.com",
+                  ret: 0,
+                  status: "scaned_but_redirect",
+                }
+              : {
+                  bot_token: "redirect-token",
+                  ilink_bot_id: "redirect-account",
+                  ret: 0,
+                  status: "confirmed",
+                },
+          ));
+        },
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        writeOutput: () => undefined,
+      }),
+    ).toBe(0);
+
+    expect(statusHosts).toEqual([
+      "ilinkai.weixin.qq.com",
+      "edge.weixin.qq.com",
+    ]);
+  });
+
+  it("starts a fresh login on the fixed endpoint instead of a stale redirect", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    state.baseUrl = "https://edge.weixin.qq.com";
+    await saveChannelState(state, base);
+    const requestHosts: string[] = [];
+
+    expect(
+      await channelStart("codex", {
+        background: true,
+        backgroundInstaller: async () => undefined,
+        baseDirectory: base,
+        fetchImpl: async (input) => {
+          const url = new URL(String(input));
+          requestHosts.push(url.hostname);
+          return new Response(JSON.stringify(
+            url.pathname.endsWith("/get_bot_qrcode")
+              ? {
+                  qrcode: "qr-fixed-start",
+                  qrcode_img_content: "https://weixin.qq.com/x/qr-fixed-start",
+                  ret: 0,
+                }
+              : {
+                  bot_token: "fixed-token",
+                  ilink_bot_id: "fixed-account",
+                  ret: 0,
+                  status: "confirmed",
+                },
+          ));
+        },
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        writeOutput: () => undefined,
+      }),
+    ).toBe(0);
+
+    expect(requestHosts).toEqual([
+      "ilinkai.weixin.qq.com",
+      "ilinkai.weixin.qq.com",
+    ]);
+  });
+
+  it("announces QR freshness before rendering it for an Agent-driven setup", async () => {
+    const base = await makeTempBase();
+    const lines: string[] = [];
+
+    expect(
+      await channelStart("codex", {
+        background: true,
+        backgroundInstaller: async () => undefined,
+        baseDirectory: base,
+        fetchImpl: async (input) => {
+          const url = String(input);
+          return new Response(JSON.stringify(
+            url.includes("get_bot_qrcode")
+              ? {
+                  qrcode: "qr-fresh",
+                  qrcode_img_content: "https://weixin.qq.com/x/qr-fresh",
+                  ret: 0,
+                }
+              : {
+                  bot_token: "fresh-token",
+                  ilink_bot_id: "fresh-account",
+                  ret: 0,
+                  status: "confirmed",
+                },
+          ));
+        },
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        writeOutput: (text) => lines.push(text),
+      }),
+    ).toBe(0);
+
+    const output = lines.join("");
+    expect(output).toContain("二维码已生成，请立即展开当前终端输出扫码");
+    expect(output.indexOf("二维码已生成")).toBeLessThan(
+      output.indexOf("https://weixin.qq.com/x/qr-fresh"),
+    );
+  });
+
+  it("stops on an unsupported QR status instead of waiting until expiry", async () => {
+    const base = await makeTempBase();
+    const lines: string[] = [];
+    let statusPoll = 0;
+
+    expect(
+      await channelStart("codex", {
+        background: true,
+        backgroundInstaller: async () => {
+          throw new Error("an unsupported login state must not install the service");
+        },
+        baseDirectory: base,
+        fetchImpl: async (input) => {
+          const url = String(input);
+          if (!url.includes("get_bot_qrcode")) statusPoll += 1;
+          return new Response(JSON.stringify(
+            url.includes("get_bot_qrcode")
+              ? {
+                  qrcode: "qr-unknown",
+                  qrcode_img_content: "https://weixin.qq.com/x/qr-unknown",
+                  ret: 0,
+                }
+              : {
+                  ret: 0,
+                  status: statusPoll % 2 === 1 ? "future_state" : "expired",
+                },
+          ));
+        },
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        sleep: async () => undefined,
+        writeOutput: (text) => lines.push(text),
+      }),
+    ).toBe(1);
+
+    expect(lines.join("")).toContain("future_state");
+    expect(lines.join("")).toContain("协议状态暂不受支持");
+  });
+
+  it("stops on an unsafe QR redirect instead of retrying it as a network error", async () => {
+    const base = await makeTempBase();
+    const lines: string[] = [];
+
+    await expect(channelStart("codex", {
+      background: true,
+      backgroundInstaller: async () => {
+        throw new Error("an unsafe redirect must not install the service");
+      },
+      baseDirectory: base,
+      fetchImpl: async (input) => {
+        const url = String(input);
+        return new Response(JSON.stringify(
+          url.includes("get_bot_qrcode")
+            ? {
+                qrcode: "qr-unsafe-redirect",
+                qrcode_img_content: "https://weixin.qq.com/x/qr-unsafe-redirect",
+                ret: 0,
+              }
+            : {
+                redirect_host: "credential-stealer.example",
+                ret: 0,
+                status: "scaned_but_redirect",
+              },
+        ));
+      },
+      hostCliCheck: async () => true,
+      origin: "https://attention.example",
+      sleep: async () => {
+        throw new Error("a protocol error must not enter the retry delay");
+      },
+      writeOutput: (text) => lines.push(text),
+    })).resolves.toBe(1);
+
+    expect(lines.join("")).toContain("iLink 登录响应不完整或不安全");
+    expect(lines.join("")).toContain("official WeChat");
+  });
+
+  it("does not treat an already-bound response as a usable local credential", async () => {
+    const base = await makeTempBase();
+    const lines: string[] = [];
+    let statusPoll = 0;
+
+    expect(
+      await channelStart("codex", {
+        background: true,
+        backgroundInstaller: async () => {
+          throw new Error("missing local credentials must not install the service");
+        },
+        baseDirectory: base,
+        fetchImpl: async (input) => {
+          const url = String(input);
+          if (url.includes("get_bot_qrcode")) {
+            return new Response(JSON.stringify({
+              qrcode: "qr-bound",
+              qrcode_img_content: "https://weixin.qq.com/x/qr-bound",
+              ret: 0,
+            }));
+          }
+          statusPoll += 1;
+          return new Response(JSON.stringify({
+            ret: 0,
+            status: statusPoll % 2 === 1 ? "binded_redirect" : "expired",
+          }));
+        },
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        sleep: async () => undefined,
+        writeOutput: (text) => lines.push(text),
+      }),
+    ).toBe(1);
+
+    expect(lines.join("")).toContain("微信报告该 Bot 已绑定");
+    expect(lines.join("")).toContain("本地没有可复用的 iLink 凭据");
+    expect(lines.join("")).toContain("本地 logout 无法解除");
+  });
+
+  it("distinguishes an unacknowledged mobile scan from a local protocol failure", async () => {
+    const base = await makeTempBase();
+    const lines: string[] = [];
+
+    expect(
+      await channelStart("codex", {
+        background: true,
+        backgroundInstaller: async () => undefined,
+        baseDirectory: base,
+        fetchImpl: async (input) => {
+          const url = String(input);
+          return new Response(JSON.stringify(
+            url.includes("get_bot_qrcode")
+              ? {
+                  qrcode: "qr-upstream",
+                  qrcode_img_content: "https://weixin.qq.com/x/qr-upstream",
+                  ret: 0,
+                }
+              : { ret: 0, status: "expired" },
+          ));
+        },
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        writeOutput: (text) => lines.push(text),
+      }),
+    ).toBe(1);
+
+    expect(lines.join("")).toContain("微信/iLink 上游授权异常");
+    expect(lines.join("")).toContain("手机立即显示网络错误");
+  });
+
   it("restores a background bridge from a recent account verification without another LLM preflight", async () => {
     const base = await makeTempBase();
     const state = defaultChannelState();

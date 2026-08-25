@@ -52,6 +52,8 @@ describe("ILinkClient", () => {
     });
     expect(calls[0]?.url).toContain("ilink/bot/get_bot_qrcode");
     expect(calls[0]?.url).toContain("bot_type=3");
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.body).toEqual({ local_token_list: [] });
     expect(calls[0]?.headers.Authorization).toBeUndefined();
   });
 
@@ -59,6 +61,25 @@ describe("ILinkClient", () => {
     const { fetchImpl } = fakeFetch(() => ({ body: JSON.stringify({}) }));
     const client = new ILinkClient({ fetchImpl, timeoutMs: 1000 });
     await expect(client.requestQrCode()).rejects.toThrow(/QR response/u);
+  });
+
+  it("always requests a new QR code from the fixed iLink login endpoint", async () => {
+    const { calls, fetchImpl } = fakeFetch(() => ({
+      body: JSON.stringify({
+        qrcode: "qr-fixed",
+        qrcode_img_content: "https://weixin.qq.com/x/qr-fixed",
+        ret: 0,
+      }),
+    }));
+    const client = new ILinkClient({
+      baseUrl: "https://edge.weixin.qq.com",
+      fetchImpl,
+      timeoutMs: 1000,
+    });
+
+    await client.requestQrCode();
+
+    expect(new URL(calls[0]?.url ?? "").hostname).toBe("ilinkai.weixin.qq.com");
   });
 
   it("maps confirmed QR status including base url switch", async () => {
@@ -91,11 +112,26 @@ describe("ILinkClient", () => {
     await expect(client.pollQrStatus("qr-1")).rejects.toThrow(/bot_token/u);
   });
 
+  it("requires ilink_bot_id on confirmation", async () => {
+    const { fetchImpl } = fakeFetch(() => ({
+      body: JSON.stringify({
+        bot_token: "token-1",
+        errcode: 0,
+        ret: 0,
+        status: "confirmed",
+      }),
+    }));
+    const client = new ILinkClient({ fetchImpl, timeoutMs: 1000 });
+
+    await expect(client.pollQrStatus("qr-1")).rejects.toThrow(/ilink_bot_id/u);
+  });
+
   it("rejects an untrusted base URL returned with a QR confirmation", async () => {
     const { fetchImpl } = fakeFetch(() => ({
       body: JSON.stringify({
         baseurl: "https://credential-stealer.example",
         bot_token: "token-1",
+        ilink_bot_id: "bot-1",
         status: "confirmed",
       }),
     }));
@@ -115,6 +151,75 @@ describe("ILinkClient", () => {
     const client = new ILinkClient({ fetchImpl, timeoutMs: 1000 });
     expect((await client.pollQrStatus("qr")).status).toBe("wait");
     expect((await client.pollQrStatus("qr")).status).toBe("expired");
+  });
+
+  it.each([
+    ["scaned", { status: "scanned" }],
+    ["scanned", { status: "scanned" }],
+    ["need_verifycode", { status: "need_verifycode" }],
+    ["verify_code_blocked", { status: "verify_code_blocked" }],
+    ["binded_redirect", { status: "binded_redirect" }],
+  ] as const)("maps the current iLink QR status %s", async (rawStatus, expected) => {
+    const { fetchImpl } = fakeFetch(() => ({
+      body: JSON.stringify({ ret: 0, status: rawStatus }),
+    }));
+    const client = new ILinkClient({ fetchImpl, timeoutMs: 1000 });
+
+    await expect(client.pollQrStatus("qr-current")).resolves.toEqual(expected);
+  });
+
+  it("switches to a validated WeChat host after scan redirection", async () => {
+    const { fetchImpl } = fakeFetch(() => ({
+      body: JSON.stringify({
+        redirect_host: "edge.weixin.qq.com",
+        ret: 0,
+        status: "scaned_but_redirect",
+      }),
+    }));
+    const client = new ILinkClient({ fetchImpl, timeoutMs: 1000 });
+
+    await expect(client.pollQrStatus("qr-redirect")).resolves.toEqual({
+      baseUrl: "https://edge.weixin.qq.com",
+      status: "scaned_but_redirect",
+    });
+  });
+
+  it("rejects an untrusted QR status redirect host", async () => {
+    const { fetchImpl } = fakeFetch(() => ({
+      body: JSON.stringify({
+        redirect_host: "credential-stealer.example",
+        ret: 0,
+        status: "scaned_but_redirect",
+      }),
+    }));
+    const client = new ILinkClient({ fetchImpl, timeoutMs: 1000 });
+
+    await expect(client.pollQrStatus("qr-redirect")).rejects.toThrow(
+      /official WeChat/u,
+    );
+  });
+
+  it("returns the phone verification code on the next status poll", async () => {
+    const { calls, fetchImpl } = fakeFetch(() => ({
+      body: JSON.stringify({ ret: 0, status: "scaned" }),
+    }));
+    const client = new ILinkClient({ fetchImpl, timeoutMs: 1000 });
+
+    await client.pollQrStatus("qr-verify", { verifyCode: "482913" });
+
+    expect(calls[0]?.url).toContain("qrcode=qr-verify");
+    expect(calls[0]?.url).toContain("verify_code=482913");
+  });
+
+  it("rejects an unknown QR status instead of silently waiting", async () => {
+    const { fetchImpl } = fakeFetch(() => ({
+      body: JSON.stringify({ ret: 0, status: "future_state" }),
+    }));
+    const client = new ILinkClient({ fetchImpl, timeoutMs: 1000 });
+
+    await expect(client.pollQrStatus("qr-unknown")).rejects.toThrow(
+      /future_state/u,
+    );
   });
 
   it("parses getupdates messages and cursor", async () => {

@@ -20,7 +20,7 @@ describe("public Attention CLI artifact", () => {
     ).sort();
 
     expect(publicCliFiles).toEqual([
-      "attention-0.3.8.mjs",
+      "attention-0.3.9.mjs",
       "manifest.json",
     ]);
   });

@@ -77,6 +77,9 @@ describe("public Agent installation guide", () => {
     expect(prompt).toContain("attention channel start");
     expect(prompt).toContain("--background");
     expect(prompt).toContain("扫码");
+    expect(prompt).toContain("持续读取命令输出");
+    expect(prompt).toContain("二维码首次出现时立即");
+    expect(prompt).toContain("不要等待命令结束");
     expect(prompt).toContain("发送一条真实链接");
     expect(prompt).toContain("我的收藏");
     expect(prompt).not.toMatch(/API Key：|token：/u);
