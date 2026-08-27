@@ -3,6 +3,20 @@
 import { useEffect, useRef } from "react";
 
 import { CollectForm } from "./collect-form";
+import { LoginLink } from "./login-link";
+
+export function CollectLoginPrompt() {
+  return (
+    <section className="receipt receipt--neutral collect-modal__login">
+      <p className="receipt__eyebrow">需要 Attention 账号</p>
+      <h3>登录后才能收藏</h3>
+      <p>登录后，收藏链接会保存到你的个人收藏。</p>
+      <LoginLink className="button button--primary" returnTo="/collect">
+        登录后收藏
+      </LoginLink>
+    </section>
+  );
+}
 
 export function CollectModal({
   authenticated,
@@ -92,17 +106,7 @@ export function CollectModal({
             initialVisibility={allowPublic ? "public" : "private"}
           />
         ) : (
-          <section className="receipt receipt--neutral collect-modal__login">
-            <p className="receipt__eyebrow">需要 Attention 账号</p>
-            <h3>登录后才能收藏</h3>
-            <p>登录后，收藏链接会保存到你的个人收藏。</p>
-            <a
-              className="button button--primary"
-              href="/login?return_to=%2Fcollect"
-            >
-              登录后收藏
-            </a>
-          </section>
+          <CollectLoginPrompt />
         )}
       </section>
     </div>

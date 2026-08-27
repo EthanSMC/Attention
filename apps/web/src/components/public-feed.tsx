@@ -3,6 +3,7 @@ import Link from "next/link";
 import type { PublicContent } from "../lib/attention";
 import { PublicContentCard } from "./content-card";
 import { LockIcon } from "./icons";
+import { LoginLink } from "./login-link";
 import { MasonryFeed } from "./masonry-feed";
 import { ViewSwitcher, type ViewMode } from "./view-switcher";
 
@@ -67,16 +68,18 @@ export function PublicFeed({
           <p>
             Member 可以浏览完整的高质量公开收藏，并使用日报、筛选、订阅与高级 Agent 能力。
           </p>
-          <Link
-            className="button button--primary"
-            href={
-              isAuthenticated
-                ? "/membership?return_to=%2Fai"
-                : "/login?return_to=%2Fmembership%3Freturn_to%3D%252Fai"
-            }
-          >
-            {isAuthenticated ? "查看会员方案" : "登录并查看会员"}
-          </Link>
+          {isAuthenticated ? (
+            <Link className="button button--primary" href="/membership?return_to=%2Fai">
+              查看会员方案
+            </Link>
+          ) : (
+            <LoginLink
+              className="button button--primary"
+              returnTo="/membership?return_to=%2Fai"
+            >
+              登录并查看会员
+            </LoginLink>
+          )}
           <div aria-hidden="true" className="feed-paywall__silhouettes">
             <span />
             <span />

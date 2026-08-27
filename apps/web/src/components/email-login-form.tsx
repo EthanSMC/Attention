@@ -43,10 +43,6 @@ async function readApiError(response: Response): Promise<string> {
   return errorMessages[code] ?? "登录没有完成，请重试。";
 }
 
-export function forgotPasswordHref(returnTo: string): string {
-  return `/login?return_to=${encodeURIComponent(returnTo)}`;
-}
-
 export function EmailLoginForm({
   consumerInviteToken,
   defaultEmail,
@@ -184,9 +180,16 @@ export function EmailLoginForm({
         >
           使用邮箱验证码
         </button>
-        <a className="auth-form__secondary" href={forgotPasswordHref(returnTo)}>
+        <button
+          className="text-button auth-form__secondary"
+          onClick={() => {
+            setError(null);
+            setMethod("code");
+          }}
+          type="button"
+        >
           忘记密码？
-        </a>
+        </button>
       </form>
     );
   }

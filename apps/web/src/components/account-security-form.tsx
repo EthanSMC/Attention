@@ -2,6 +2,8 @@
 
 import { useState, type FormEvent } from "react";
 
+import { LoginLink } from "./login-link";
+
 export function AccountSecurityForm({
   email,
   hasPassword,
@@ -15,11 +17,6 @@ export function AccountSecurityForm({
   const [editing, setEditing] = useState(startEditing);
   const [passwordConfigured, setPasswordConfigured] = useState(hasPassword);
   const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
-
-  function requestPasswordChange() {
-    const returnTo = "/account/security?edit=1";
-    window.location.assign(`/login?reauth=1&return_to=${encodeURIComponent(returnTo)}`);
-  }
 
   async function savePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -71,9 +68,13 @@ export function AccountSecurityForm({
           </div>
           <div className="settings-card__actions">
             <p>修改密码前需要验证绑定邮箱。</p>
-            <button className="button button--secondary" onClick={requestPasswordChange} type="button">
+            <LoginLink
+              className="button button--secondary"
+              reauthenticate
+              returnTo="/account/security?edit=1"
+            >
               修改密码
-            </button>
+            </LoginLink>
           </div>
         </section>
       ) : (

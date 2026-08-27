@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 
 import { CollectForm } from "../../components/collect-form";
+import { LoginLink } from "../../components/login-link";
 import { PageIntro } from "../../components/page-intro";
 import { getPagePrincipal } from "../../server/session";
 
@@ -37,7 +37,9 @@ export default async function CollectPage() {
           <p className="receipt__eyebrow">需要 Attention 账号</p>
           <h2>登录后才能收藏</h2>
           <p>登录前不会接收或暂存你要收藏的链接。</p>
-          <Link className="button button--primary" href="/login?return_to=%2Fcollect">登录后收藏</Link>
+          <LoginLink className="button button--primary" returnTo="/collect">
+            登录后收藏
+          </LoginLink>
         </section>
       )}
     </div>

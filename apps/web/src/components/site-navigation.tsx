@@ -12,6 +12,7 @@ import {
   UserIcon,
 } from "./icons";
 import { CollectModal } from "./collect-modal";
+import { LoginLink } from "./login-link";
 
 const navigationItems = [
   { href: "/ai", label: "发现", icon: CompassIcon },
@@ -141,9 +142,9 @@ export function SiteHeader({ identity }: { identity: NavigationIdentity | null }
               </Link>
             ) : null}
             {!identity ? (
-              <Link className="account-nav__login" href="/login">
+              <LoginLink className="account-nav__login">
                 登录
-              </Link>
+              </LoginLink>
             ) : null}
           </div>
         </div>
