@@ -10,14 +10,22 @@ export const dynamic = "force-dynamic";
 export default async function InterceptedLoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ return_to?: string }>;
+  searchParams: Promise<{ reauth?: string; return_to?: string }>;
 }) {
-  const returnTo = safeReturnTo((await searchParams).return_to);
+  const params = await searchParams;
+  const returnTo = safeReturnTo(params.return_to);
+  const forceReauth = params.reauth === "1";
   const principal = await getPagePrincipal();
-  if (principal) redirect(returnTo);
+  if (principal && !forceReauth) redirect(returnTo);
   return (
     <AuthModal>
-      <LoginModule returnTo={returnTo} />
+      <LoginModule
+        {...(forceReauth && principal?.primaryEmail
+          ? { defaultEmail: principal.primaryEmail }
+          : {})}
+        forceCodeOnly={forceReauth && Boolean(principal?.primaryEmail)}
+        returnTo={returnTo}
+      />
     </AuthModal>
   );
 }
