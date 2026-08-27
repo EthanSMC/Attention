@@ -16,4 +16,12 @@ describe("account security login navigation", () => {
     );
     expect(markup).toContain(">修改密码</a>");
   });
+
+  it("keeps password modification unavailable until an email is bound", () => {
+    const markup = renderToStaticMarkup(<AccountSecurityForm email={null} hasPassword />);
+
+    expect(markup).not.toContain("reauth=1");
+    expect(markup).not.toContain(">修改密码</a>");
+    expect(markup).toContain("绑定邮箱后再修改密码");
+  });
 });

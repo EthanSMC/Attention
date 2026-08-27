@@ -67,14 +67,16 @@ export function AccountSecurityForm({
             <p>{email ? `登录邮箱：${email} · 可使用密码或验证码登录。` : "可使用密码登录。"}</p>
           </div>
           <div className="settings-card__actions">
-            <p>修改密码前需要验证绑定邮箱。</p>
-            <LoginLink
-              className="button button--secondary"
-              reauthenticate
-              returnTo="/account/security?edit=1"
-            >
-              修改密码
-            </LoginLink>
+            <p>{email ? "修改密码前需要验证绑定邮箱。" : "请绑定邮箱后再修改密码。"}</p>
+            {email ? (
+              <LoginLink
+                className="button button--secondary"
+                reauthenticate
+                returnTo="/account/security?edit=1"
+              >
+                修改密码
+              </LoginLink>
+            ) : null}
           </div>
         </section>
       ) : (

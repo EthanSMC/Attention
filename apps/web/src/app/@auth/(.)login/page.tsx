@@ -17,6 +17,17 @@ export default async function InterceptedLoginPage({
   const forceReauth = params.reauth === "1";
   const principal = await getPagePrincipal();
   if (principal && !forceReauth) redirect(returnTo);
+  if (forceReauth && principal && !principal.primaryEmail) {
+    return (
+      <AuthModal>
+        <section className="login-panel">
+          <p className="login-panel__step">Attention 账号</p>
+          <h2>暂时无法修改密码</h2>
+          <p>请绑定邮箱后再修改密码。</p>
+        </section>
+      </AuthModal>
+    );
+  }
   return (
     <AuthModal>
       <LoginModule
