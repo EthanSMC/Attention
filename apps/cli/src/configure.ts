@@ -156,6 +156,9 @@ function describeInboundBoundary(profile: AgentInstallationProfile): string {
   if (profile.channel.availability === "host_managed_unverifiable") {
     return `${profile.display_name} manages its channel and OAuth inside the host UI. Attention ${profile.claims.can_confirm_mcp ? "can observe authenticated MCP calls" : "cannot confirm MCP use"}, not the local WeChat binding or identity.`;
   }
+  if (profile.channel.availability === "unsupported") {
+    return `${profile.display_name} Skill/MCP is available for interactive use. This integration does not provide inbound WeChat, channel pairing, or Runtime reporting.`;
+  }
   return `The ${profile.channel.owner} host owns its local WeChat gateway. Attention does not receive the iLink credential and ${profile.claims.can_confirm_channel_pairing ? "can confirm a reported pairing" : "cannot confirm pairing until a shipped Runtime reporter provides evidence"}.`;
 }
 
@@ -693,6 +696,17 @@ export async function applyConfigurePlan(
   const mcp = await applyCommand("configure_mcp", plan.mcpAddCommand, runner);
   results.push(mcp);
   if (mcp.status === "failed") return results;
+
+  if (plan.profile.mcp.auth === "bearer_api_key") {
+    results.push({
+      command: null,
+      detail:
+        "Set ATTENTION_API_KEY and ATTENTION_MCP_URL in the environment inherited by DSH, then restart the selected profile.",
+      id: "authorize_mcp",
+      status: "manual",
+    });
+    return results;
+  }
 
   if (options.login) {
     const login = await applyCommand("authorize_mcp", plan.loginCommand, runner);

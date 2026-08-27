@@ -354,6 +354,69 @@ describe("Agent installation manifests", () => {
     });
     expect(getAgentInstallationProfile("hermes").skill.local_path).toBeNull();
     expect(getAgentInstallationProfile("workbuddy").skill.local_path).toBeNull();
+    expect(getAgentInstallationProfile("deepseek").skill.local_path).toEqual({
+      entrypoint: "SKILL.md",
+      posix_directory: "~/.dsh/skills/attention",
+      purpose: "install_target",
+      windows_directory: "%USERPROFILE%\\.dsh\\skills\\attention",
+    });
+  });
+
+  it("installs DeepSeek through the official bundle with a static API key", () => {
+    const profile = getAgentInstallationProfile("deepseek");
+
+    expect(profile).toMatchObject({
+      channel: {
+        availability: "unsupported",
+        docs_url: null,
+        setup: "none",
+        setup_command_templates: [],
+        status_evidence: "none",
+      },
+      inbound: {
+        availability: "unsupported",
+        docs_url: null,
+        engine: "none",
+      },
+      mcp: {
+        add_command_template: {
+          args: ["plugin", "--profile", "web", "add", "@attention/dsh"],
+          executable: "dsh",
+        },
+        auth: "bearer_api_key",
+        login_command_template: null,
+        oauth_client: "not_applicable",
+        probe_command_template: {
+          args: ["--profile", "web", "--dump-config"],
+          executable: "dsh",
+        },
+        probe_evidence: "config_only",
+        setup_mode: "plugin_bundle_static_bearer",
+      },
+      runtime_reporting: {
+        availability: "unsupported",
+        heartbeat: "unavailable",
+        mode: "none",
+      },
+    });
+    expect(profile.install_steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          credential_target: "mcp_api_key",
+          id: "authorize_mcp",
+          requires_browser: false,
+        }),
+      ]),
+    );
+    expect(profile.install_steps.map(({ id }) => id)).not.toEqual(
+      expect.arrayContaining([
+        "authorize_runtime",
+        "register_runtime",
+        "connect_channel",
+        "start_inbound",
+        "verify_pairing",
+      ]),
+    );
   });
 
   it("separates non-interactive MCP configuration from interactive host setup", () => {

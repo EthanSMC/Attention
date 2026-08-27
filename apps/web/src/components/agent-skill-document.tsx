@@ -41,7 +41,7 @@ export function AgentSkillDocument({
           <p className="agent-doc-section__eyebrow">统一能力</p>
           <h2>一份 Skill，多个宿主</h2>
           <p>
-            Skill 定义 Attention 的工作流、调用规则和失败处理。无论你使用 OpenClaw、Codex、Claude Code、Hermes 还是 WorkBuddy，加载的都是同一套版本。
+            Skill 定义 Attention 的工作流、调用规则和失败处理。无论你使用 OpenClaw、Codex、Claude Code、Hermes、WorkBuddy 还是 DeepSeek Harness，加载的都是同一套版本。
           </p>
           <div className="agent-resource-list">
             <div className="agent-resource-row">
@@ -61,7 +61,7 @@ export function AgentSkillDocument({
           <p>远程宿主直接读取统一 Skill 文件；需要上传 ZIP 的宿主使用同一份内容的 bundle。版本和校验值保持一致。</p>
           <div className="agent-resource-list">
             <div className="agent-resource-row">
-              <div><span>远程文件</span><code>OpenClaw · Hermes · Codex · Claude Code</code></div>
+              <div><span>远程文件</span><code>OpenClaw · Hermes · Codex · Claude Code · DeepSeek Harness</code></div>
               <a className="agent-doc-inline-link" href="/doc">查看宿主文档 <span aria-hidden="true">↗</span></a>
             </div>
             <div className="agent-resource-row">

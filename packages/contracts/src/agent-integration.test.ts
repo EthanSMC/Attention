@@ -15,6 +15,7 @@ describe("agent integration capability manifest", () => {
       "codex",
       "claude-code",
       "workbuddy",
+      "deepseek",
     ]);
     expect(new Set(AGENT_INTEGRATION_IDS).size).toBe(
       AGENT_INTEGRATION_IDS.length,
@@ -103,6 +104,37 @@ describe("agent integration capability manifest", () => {
         availability: "available",
         mcp: "available",
         skill: "available",
+      },
+    });
+  });
+
+  it("keeps DeepSeek Harness limited to its verified Skill and MCP bundle", () => {
+    expect(getAgentIntegration("deepseek")).toMatchObject({
+      channel: {
+        availability: "unsupported",
+        setup: "none",
+        status_evidence: "none",
+      },
+      desktop: {
+        inbound: "unsupported",
+        interactive: "available",
+        shared_skill_mcp: true,
+      },
+      inbound: {
+        availability: "unsupported",
+        engine: "none",
+        requires_running_cli: false,
+      },
+      interactive: {
+        availability: "available",
+        mcp: "available",
+        skill: "available",
+      },
+      runtime_reporting: {
+        availability: "unsupported",
+        heartbeat: "unavailable",
+        mode: "none",
+        pairing_reports: false,
       },
     });
   });

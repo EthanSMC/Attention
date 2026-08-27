@@ -56,6 +56,7 @@ export const AgentIntegrationSchema = z
           "host_cli_qr",
           "host_ui_qr",
           "attention_cli_qr",
+          "none",
         ]),
         status_evidence: z.enum([
           "host_cli_probe",
@@ -142,6 +143,18 @@ export const AgentIntegrationSchema = z
         code: "custom",
         message: "bridge agents must use the Attention channel owner",
         path: ["channel", "owner"],
+      });
+    }
+    const channelUnsupported = value.channel.availability === "unsupported";
+    if (
+      channelUnsupported !== (value.channel.setup === "none") ||
+      channelUnsupported !== (value.channel.status_evidence === "none")
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "unsupported channels require no setup or status evidence, and supported channels require both",
+        path: ["channel"],
       });
     }
 
@@ -522,11 +535,11 @@ const manifestInput = [
       can_confirm_wechat_identity: false,
     },
     channel: {
-      availability: "available",
+      availability: "unsupported",
       mode: "native",
       owner: "deepseek",
-      setup: "host_cli_qr",
-      status_evidence: "host_cli_probe",
+      setup: "none",
+      status_evidence: "none",
     },
     desktop: {
       inbound: "unsupported",
@@ -538,8 +551,8 @@ const manifestInput = [
     display_name: "DeepSeek Harness",
     id: "deepseek",
     inbound: {
-      availability: "available",
-      engine: "host_native",
+      availability: "unsupported",
+      engine: "none",
       minimum_version: null,
       requires_byo_api_key: false,
       requires_running_cli: false,
@@ -552,10 +565,10 @@ const manifestInput = [
     },
     platforms: ["macos", "linux", "windows"],
     runtime_reporting: {
-      availability: "available",
-      heartbeat: "runtime",
-      mode: "attention_runtime_oauth",
-      pairing_reports: true,
+      availability: "unsupported",
+      heartbeat: "unavailable",
+      mode: "none",
+      pairing_reports: false,
     },
     security: {
       channel_tokens_leave_device: false,

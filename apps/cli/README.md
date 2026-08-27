@@ -13,6 +13,8 @@ process remain on the user's device. In this release:
 - OpenClaw and Hermes own their local WeChat gateways through host plugins.
 - WorkBuddy owns its WeChat assistant and provides no public binding-status API
   to Attention.
+- DeepSeek Harness provides interactive Skill/MCP only; this integration does
+  not ship a WeChat channel or Runtime reporter.
 - Codex and Claude Code receive WeChat messages through the local
   `attention-channel` bridge shipped with this CLI (`attention channel start
   <host>`). The bridge polls the official iLink API after a one-time QR scan
@@ -74,6 +76,7 @@ For hosts with a real filesystem Skill root, `--apply` installs the validated
 
 - Codex: `~/.agents/skills/attention/SKILL.md`
 - Claude Code: `~/.claude/skills/attention/SKILL.md`
+- DeepSeek Harness: `~/.dsh/skills/attention/SKILL.md`
 
 OpenClaw `>= 2026.5.12` first stages the source under
 `./attention-skill/SKILL.md`, then passes that directory to its host install
@@ -93,6 +96,13 @@ Hermes MCP setup is interactive: `hermes mcp add ... --auth oauth` opens the
 browser and then asks which tools to enable. The Attention CLI prints that
 command but never runs it with detached stdin; the user completes it in their
 own terminal.
+
+DeepSeek Harness uses the official `@attention/dsh` Cordis bundle. Its built-in
+MCP client supports static headers rather than OAuth, so set
+`ATTENTION_MCP_URL` and `ATTENTION_API_KEY` in the environment inherited by
+DSH, then run `attention configure deepseek --apply`. The CLI installs the
+validated Skill and executes `dsh plugin --profile web add @attention/dsh`; it
+does not place the API Key in argv, logs, or the Skill file.
 
 ## WeChat inbound (channel bridge)
 

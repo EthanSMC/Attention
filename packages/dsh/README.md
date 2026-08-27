@@ -1,29 +1,50 @@
 # @attention/dsh
 
-DeepSeek Harness plugin for Attention — 人筛选，AI 整理的信息层与个人收藏工具。
+DeepSeek Harness bundle for Attention. It activates DSH's official
+`@deepseek-ai/dsh-mcp-client` against an Attention Streamable HTTP MCP server.
 
-## 安装
+## Configure credentials
 
-```bash
-dsh plugin add @attention/dsh
-```
-
-## 配置
-
-设置环境变量或在 DSH profile 中配置：
+Set the MCP endpoint and an Attention API key in the environment inherited by
+DSH (for example, in the DSH home `.env` file):
 
 ```bash
-export ATTENTION_API_KEY=your-api-key        # Attention API Key
-export ATTENTION_BASE_URL=http://127.0.0.1:3000  # Attention 服务地址
+export ATTENTION_MCP_URL=https://attention.example/mcp
+export ATTENTION_API_KEY=att_pat_replace_me
 ```
 
-## 能力
+`ATTENTION_MCP_URL` defaults to `http://127.0.0.1:3000/mcp` for local
+development. DSH's built-in MCP client currently accepts static headers, so
+this bundle uses an API key rather than claiming an unsupported OAuth flow.
 
-- **15 个 MCP 工具** — 收藏管理、公开内容浏览、AI 检索、日报订阅、社区审核
-- **iLink 微信 Channel** — 扫码登录微信，自动收藏链接，回复处理结果
-- **Runtime Reporter** — 可选健康上报（不上传聊天内容或凭证）
+## Install
 
-## 开发
+Install the plugin into a named DSH profile, verify the composed Cordis config,
+and then start the same profile:
+
+```bash
+dsh plugin --profile web add @attention/dsh
+dsh --profile web --dump-config
+dsh --profile web
+```
+
+Install `SKILL.md` at `~/.dsh/skills/attention/SKILL.md`. The Attention CLI can
+download the validated Skill and add the plugin in one flow:
+
+```bash
+attention configure deepseek --origin https://attention.example --apply
+```
+
+The MCP tools are exposed by DSH with the `mcp__attention__` prefix. For
+example, Attention's `attention_get_my_account` tool appears as
+`mcp__attention__attention_get_my_account`.
+
+## Scope
+
+This package provides interactive Skill and MCP integration only. It does not
+ship a WeChat/iLink channel adapter or an Attention Runtime reporter.
+
+## Development
 
 ```bash
 pnpm install

@@ -1,14 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "./dist",
-    "rootDir": "../..",
+    "noEmit": true,
     "types": [
-      "node"
+      "node",
+      "vitest"
     ]
   },
   "include": [
-    "src",
-    "../contracts/src"
+    "src/**/*.ts"
   ]
 }

@@ -15106,7 +15106,8 @@ var init_agent_integration = __esm({
       "hermes",
       "codex",
       "claude-code",
-      "workbuddy"
+      "workbuddy",
+      "deepseek"
     ];
     AgentIntegrationIdSchema = external_exports.enum(AGENT_INTEGRATION_IDS);
     AgentCapabilityAvailabilitySchema = external_exports.enum([
@@ -15131,12 +15132,14 @@ var init_agent_integration = __esm({
           "openclaw",
           "hermes",
           "attention-channel",
-          "workbuddy"
+          "workbuddy",
+          "deepseek"
         ]),
         setup: external_exports.enum([
           "host_cli_qr",
           "host_ui_qr",
-          "attention_cli_qr"
+          "attention_cli_qr",
+          "none"
         ]),
         status_evidence: external_exports.enum([
           "host_cli_probe",
@@ -15207,6 +15210,14 @@ var init_agent_integration = __esm({
           code: "custom",
           message: "bridge agents must use the Attention channel owner",
           path: ["channel", "owner"]
+        });
+      }
+      const channelUnsupported = value.channel.availability === "unsupported";
+      if (channelUnsupported !== (value.channel.setup === "none") || channelUnsupported !== (value.channel.status_evidence === "none")) {
+        context.addIssue({
+          code: "custom",
+          message: "unsupported channels require no setup or status evidence, and supported channels require both",
+          path: ["channel"]
         });
       }
       const runtimeOAuth = value.runtime_reporting.mode === "attention_runtime_oauth";
@@ -15513,6 +15524,54 @@ var init_agent_integration = __esm({
           skill: "available"
         },
         platforms: ["macos", "windows"],
+        runtime_reporting: {
+          availability: "unsupported",
+          heartbeat: "unavailable",
+          mode: "none",
+          pairing_reports: false
+        },
+        security: {
+          channel_tokens_leave_device: false,
+          restricted_profile_required: false
+        }
+      },
+      {
+        claims: {
+          can_confirm_channel_pairing: false,
+          can_confirm_mcp: true,
+          can_confirm_runtime: false,
+          can_confirm_wechat_identity: false
+        },
+        channel: {
+          availability: "unsupported",
+          mode: "native",
+          owner: "deepseek",
+          setup: "none",
+          status_evidence: "none"
+        },
+        desktop: {
+          inbound: "unsupported",
+          interactive: "available",
+          platforms: ["macos", "linux", "windows"],
+          shared_skill_mcp: true,
+          visible_session: "not_applicable"
+        },
+        display_name: "DeepSeek Harness",
+        id: "deepseek",
+        inbound: {
+          availability: "unsupported",
+          engine: "none",
+          minimum_version: null,
+          requires_byo_api_key: false,
+          requires_running_cli: false,
+          stable_alternative: null
+        },
+        interactive: {
+          availability: "available",
+          mcp: "available",
+          skill: "available"
+        },
+        platforms: ["macos", "linux", "windows"],
         runtime_reporting: {
           availability: "unsupported",
           heartbeat: "unavailable",
@@ -15840,12 +15899,20 @@ var init_channel_runtime = __esm({
 // ../../packages/contracts/src/agent-installation.ts
 function createInstallSteps(integration) {
   const setupMode = HOST_DETAILS[integration.id].mcp.setupMode;
+  const staticBearerBundle = setupMode === "plugin_bundle_static_bearer";
   const steps = baseSteps.map((step) => {
     if (step.id === "install_skill") {
       return { ...step, availability: integration.interactive.skill };
     }
-    if (step.id === "configure_mcp" && setupMode !== "noninteractive_then_login") {
+    if (step.id === "configure_mcp" && setupMode !== "noninteractive_then_login" && !staticBearerBundle) {
       return { ...step, executor: "user" };
+    }
+    if (step.id === "authorize_mcp" && staticBearerBundle) {
+      return {
+        ...step,
+        credential_target: "mcp_api_key",
+        requires_browser: false
+      };
     }
     return step;
   });
@@ -15909,6 +15976,7 @@ function createInstallationProfile(integration) {
   const details = HOST_DETAILS[integration.id];
   const bridge = integration.channel.mode === "bridge";
   const runtimeOAuth = integration.runtime_reporting.mode === "attention_runtime_oauth";
+  const staticBearerBundle = details.mcp.setupMode === "plugin_bundle_static_bearer";
   return AgentInstallationProfileSchema.parse({
     acceptance: {
       config_probe_is_acceptance: false,
@@ -15947,10 +16015,10 @@ function createInstallationProfile(integration) {
     },
     mcp: {
       add_command_template: details.mcp.add,
-      auth: "oauth",
+      auth: staticBearerBundle ? "bearer_api_key" : "oauth",
       docs_url: details.mcp.docs,
       login_command_template: details.mcp.login,
-      oauth_client: "dedicated_mcp_client",
+      oauth_client: staticBearerBundle ? "not_applicable" : "dedicated_mcp_client",
       probe_evidence: details.mcp.probeEvidence,
       probe_command_template: details.mcp.probe,
       server_name: "attention",
@@ -16060,6 +16128,7 @@ var init_agent_installation = __esm({
       credential_target: external_exports.enum([
         "none",
         "mcp_oauth",
+        "mcp_api_key",
         "runtime_oauth",
         "local_channel"
       ]),
@@ -16129,10 +16198,16 @@ var init_agent_installation = __esm({
           "openclaw",
           "hermes",
           "attention-channel",
-          "workbuddy"
+          "workbuddy",
+          "deepseek"
         ]),
         package_ref: external_exports.string().min(1).nullable(),
-        setup: external_exports.enum(["host_cli_qr", "host_ui_qr", "attention_cli_qr"]),
+        setup: external_exports.enum([
+          "host_cli_qr",
+          "host_ui_qr",
+          "attention_cli_qr",
+          "none"
+        ]),
         setup_command_templates: external_exports.array(AgentCommandTemplateSchema),
         status_evidence: external_exports.enum([
           "host_cli_probe",
@@ -16187,10 +16262,10 @@ var init_agent_installation = __esm({
        */
       mcp: external_exports.object({
         add_command_template: AgentCommandTemplateSchema.nullable(),
-        auth: external_exports.literal("oauth"),
+        auth: external_exports.enum(["oauth", "bearer_api_key"]),
         docs_url: external_exports.string().url(),
         login_command_template: AgentCommandTemplateSchema.nullable(),
-        oauth_client: external_exports.literal("dedicated_mcp_client"),
+        oauth_client: external_exports.enum(["dedicated_mcp_client", "not_applicable"]),
         probe_evidence: external_exports.enum([
           "config_only",
           "health_checked",
@@ -16202,7 +16277,8 @@ var init_agent_installation = __esm({
         setup_mode: external_exports.enum([
           "host_ui",
           "interactive_oauth",
-          "noninteractive_then_login"
+          "noninteractive_then_login",
+          "plugin_bundle_static_bearer"
         ]),
         transport: external_exports.literal("streamable_http"),
         url_template: external_exports.literal(ATTENTION_MCP_URL_TEMPLATE)
@@ -16368,6 +16444,21 @@ var init_agent_installation = __esm({
           code: "custom",
           message: "non-interactive MCP setup requires add, login, and probe commands",
           path: ["mcp", "setup_mode"]
+        });
+      }
+      const staticBearerBundle = value.mcp.setup_mode === "plugin_bundle_static_bearer";
+      if (staticBearerBundle && (value.mcp.auth !== "bearer_api_key" || value.mcp.oauth_client !== "not_applicable" || value.mcp.add_command_template === null || value.mcp.login_command_template !== null || value.mcp.probe_command_template === null)) {
+        context.addIssue({
+          code: "custom",
+          message: "a static-bearer plugin bundle requires add and probe commands, an API key, and no OAuth client or login command",
+          path: ["mcp", "setup_mode"]
+        });
+      }
+      if (!staticBearerBundle && (value.mcp.auth !== "oauth" || value.mcp.oauth_client !== "dedicated_mcp_client")) {
+        context.addIssue({
+          code: "custom",
+          message: "OAuth MCP setup requires a dedicated MCP OAuth client",
+          path: ["mcp", "auth"]
         });
       }
       if (value.skill.delivery === "host_user_directory" && (value.skill.install !== "filesystem_directory" || value.skill.install_command_template !== null || value.skill.local_path?.purpose !== "install_target")) {
@@ -16763,6 +16854,48 @@ var init_agent_installation = __esm({
           localPath: null,
           packageRef: ATTENTION_WORKBUDDY_SKILL_BUNDLE_PUBLIC_PATH,
           sourceKind: "upload_bundle"
+        }
+      },
+      deepseek: {
+        channelDocs: null,
+        channelPackage: null,
+        channelSetupCommands: [],
+        inboundDocs: null,
+        compatibilityMinimumVersion: null,
+        compatibilityChecks: [
+          command("dsh", "--version")
+        ],
+        mcp: {
+          add: command(
+            "dsh",
+            "plugin",
+            "--profile",
+            "web",
+            "add",
+            "@attention/dsh"
+          ),
+          docs: "https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md",
+          login: null,
+          probe: command("dsh", "--profile", "web", "--dump-config"),
+          probeEvidence: "config_only",
+          setupMode: "plugin_bundle_static_bearer"
+        },
+        skill: {
+          bundlePath: null,
+          bundleSha256: null,
+          bundleSkillPath: null,
+          delivery: "host_user_directory",
+          docs: "https://github.com/EthanSMC/Attention",
+          install: "filesystem_directory",
+          installCommand: null,
+          localPath: {
+            entrypoint: "SKILL.md",
+            posixDirectory: "~/.dsh/skills/attention",
+            purpose: "install_target",
+            windowsDirectory: "%USERPROFILE%\\.dsh\\skills\\attention"
+          },
+          packageRef: null,
+          sourceKind: "local_directory"
         }
       }
     };
@@ -24340,6 +24473,9 @@ function defaultSkillDirectory(hostId) {
   if (hostId === "workbuddy") {
     return join7(homedir7(), "Downloads");
   }
+  if (hostId === "deepseek") {
+    return join7(homedir7(), ".dsh", "skills", "attention");
+  }
   return join7(homedir7(), ".attention", "skills", "attention");
 }
 function replaceTemplateValue(value, replacements) {
@@ -24380,6 +24516,9 @@ function describeInboundBoundary(profile) {
   }
   if (profile.channel.availability === "host_managed_unverifiable") {
     return `${profile.display_name} manages its channel and OAuth inside the host UI. Attention ${profile.claims.can_confirm_mcp ? "can observe authenticated MCP calls" : "cannot confirm MCP use"}, not the local WeChat binding or identity.`;
+  }
+  if (profile.channel.availability === "unsupported") {
+    return `${profile.display_name} Skill/MCP is available for interactive use. This integration does not provide inbound WeChat, channel pairing, or Runtime reporting.`;
   }
   return `The ${profile.channel.owner} host owns its local WeChat gateway. Attention does not receive the iLink credential and ${profile.claims.can_confirm_channel_pairing ? "can confirm a reported pairing" : "cannot confirm pairing until a shipped Runtime reporter provides evidence"}.`;
 }
@@ -24797,6 +24936,15 @@ async function applyConfigurePlan(plan, options) {
   const mcp = await applyCommand("configure_mcp", plan.mcpAddCommand, runner);
   results.push(mcp);
   if (mcp.status === "failed") return results;
+  if (plan.profile.mcp.auth === "bearer_api_key") {
+    results.push({
+      command: null,
+      detail: "Set ATTENTION_API_KEY and ATTENTION_MCP_URL in the environment inherited by DSH, then restart the selected profile.",
+      id: "authorize_mcp",
+      status: "manual"
+    });
+    return results;
+  }
   if (options.login) {
     const login = await applyCommand("authorize_mcp", plan.loginCommand, runner);
     results.push(login);

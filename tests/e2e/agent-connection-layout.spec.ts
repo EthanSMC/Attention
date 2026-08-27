@@ -7,7 +7,14 @@ const stylesheetUrl = new URL(
   import.meta.url,
 );
 
-const agents = ["OpenClaw", "Hermes", "Codex", "Claude Code", "WorkBuddy"];
+const agents = [
+  "OpenClaw",
+  "Hermes",
+  "Codex",
+  "Claude Code",
+  "WorkBuddy",
+  "DeepSeek Harness",
+];
 
 function fixture(): string {
   return `
@@ -78,8 +85,8 @@ test("uses a desktop rail and a single horizontally scrollable mobile chip row",
     const buttons = Array.from(
       document.querySelectorAll<HTMLElement>(".agent-setup-picker__item"),
     );
-    if (!picker || buttons.length !== 5) {
-      throw new Error("All five Agent chips must be rendered");
+    if (!picker || buttons.length !== 6) {
+      throw new Error("All six Agent chips must be rendered");
     }
     return {
       checklistCounters: Array.from(

@@ -99,8 +99,8 @@ Member 与 Filter 可在 `/account/digests` 订阅 Domain 并设置 IANA 时区�
 
 ## Agent、MCP 与同步
 
-公开接入文档位于 `/doc`，并为 OpenClaw、Hermes、Codex、Claude Code 和
-WorkBuddy 提供独立 URL。`/agent` 提供本地 Agent 的一键接入提示词和配置流程；登录后的
+公开接入文档位于 `/doc`，并为 OpenClaw、Hermes、Codex、Claude Code、
+WorkBuddy 和 DeepSeek Harness 提供独立 URL。`/agent` 提供本地 Agent 的一键接入提示词和配置流程；登录后的
 `/account/connections` 只管理 OAuth 授权状态和 API Key，不再铺开安装命令。支持浏览器
 OAuth 的客户端应直接连接 Hosted MCP：
 
@@ -110,13 +110,14 @@ claude mcp add --transport http --scope user attention http://127.0.0.1:3000/mcp
 ```
 
 仓库内的本地安装/诊断 CLI 会从同一份机器可读宿主 manifest 生成
-OpenClaw、Hermes、Codex、Claude Code 和 WorkBuddy 的配置，不会另建一套能力声明：
+OpenClaw、Hermes、Codex、Claude Code、WorkBuddy 和 DeepSeek Harness 的配置，不会另建一套能力声明：
 
 ```bash
 pnpm --filter @attention/cli build
 apps/cli/dist/index.js integrations list
 apps/cli/dist/index.js configure codex --origin http://127.0.0.1:3000
 apps/cli/dist/index.js configure workbuddy --origin http://127.0.0.1:3000
+apps/cli/dist/index.js configure deepseek --origin http://127.0.0.1:3000
 apps/cli/dist/index.js doctor codex --origin http://127.0.0.1:3000
 ```
 

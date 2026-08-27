@@ -78,6 +78,7 @@ export const AgentInstallationStepSchema = z
     credential_target: z.enum([
       "none",
       "mcp_oauth",
+      "mcp_api_key",
       "runtime_oauth",
       "local_channel",
     ]),
@@ -178,7 +179,12 @@ export const AgentInstallationProfileSchema = z
           "deepseek",
         ]),
         package_ref: z.string().min(1).nullable(),
-        setup: z.enum(["host_cli_qr", "host_ui_qr", "attention_cli_qr"]),
+        setup: z.enum([
+          "host_cli_qr",
+          "host_ui_qr",
+          "attention_cli_qr",
+          "none",
+        ]),
         setup_command_templates: z.array(AgentCommandTemplateSchema),
         status_evidence: z.enum([
           "host_cli_probe",
@@ -243,10 +249,10 @@ export const AgentInstallationProfileSchema = z
     mcp: z
       .object({
         add_command_template: AgentCommandTemplateSchema.nullable(),
-        auth: z.literal("oauth"),
+        auth: z.enum(["oauth", "bearer_api_key"]),
         docs_url: z.string().url(),
         login_command_template: AgentCommandTemplateSchema.nullable(),
-        oauth_client: z.literal("dedicated_mcp_client"),
+        oauth_client: z.enum(["dedicated_mcp_client", "not_applicable"]),
         probe_evidence: z.enum([
           "config_only",
           "health_checked",
@@ -259,6 +265,7 @@ export const AgentInstallationProfileSchema = z
           "host_ui",
           "interactive_oauth",
           "noninteractive_then_login",
+          "plugin_bundle_static_bearer",
         ]),
         transport: z.literal("streamable_http"),
         url_template: z.literal(ATTENTION_MCP_URL_TEMPLATE),
@@ -502,6 +509,34 @@ export const AgentInstallationProfileSchema = z
         message:
           "non-interactive MCP setup requires add, login, and probe commands",
         path: ["mcp", "setup_mode"],
+      });
+    }
+    const staticBearerBundle =
+      value.mcp.setup_mode === "plugin_bundle_static_bearer";
+    if (
+      staticBearerBundle &&
+      (value.mcp.auth !== "bearer_api_key" ||
+        value.mcp.oauth_client !== "not_applicable" ||
+        value.mcp.add_command_template === null ||
+        value.mcp.login_command_template !== null ||
+        value.mcp.probe_command_template === null)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "a static-bearer plugin bundle requires add and probe commands, an API key, and no OAuth client or login command",
+        path: ["mcp", "setup_mode"],
+      });
+    }
+    if (
+      !staticBearerBundle &&
+      (value.mcp.auth !== "oauth" ||
+        value.mcp.oauth_client !== "dedicated_mcp_client")
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "OAuth MCP setup requires a dedicated MCP OAuth client",
+        path: ["mcp", "auth"],
       });
     }
 
@@ -1018,26 +1053,27 @@ const HOST_DETAILS = {
   deepseek: {
     channelDocs: null,
     channelPackage: null,
-    channelSetupCommands: [
-      command(
-        "dsh",
-        "plugin",
-        "add",
-        "@attention/dsh",
-      ),
-    ] as AgentCommandTemplate[],
+    channelSetupCommands: [] as AgentCommandTemplate[],
     inboundDocs: null,
     compatibilityMinimumVersion: null,
     compatibilityChecks: [
       command("dsh", "--version"),
     ],
     mcp: {
-      add: null,
-      docs: "https://github.com/EthanSMC/Attention",
+      add: command(
+        "dsh",
+        "plugin",
+        "--profile",
+        "web",
+        "add",
+        "@attention/dsh",
+      ),
+      docs:
+        "https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md",
       login: null,
-      probe: null,
-      probeEvidence: "none" as const,
-      setupMode: "host_ui" as const,
+      probe: command("dsh", "--profile", "web", "--dump-config"),
+      probeEvidence: "config_only" as const,
+      setupMode: "plugin_bundle_static_bearer" as const,
     },
     skill: {
       bundlePath: null,
@@ -1051,7 +1087,7 @@ const HOST_DETAILS = {
         entrypoint: "SKILL.md" as const,
         posixDirectory: "~/.dsh/skills/attention",
         purpose: "install_target" as const,
-        windowsDirectory: "%USERPROFILE%\.dsh\skills\attention",
+        windowsDirectory: "%USERPROFILE%\\.dsh\\skills\\attention",
       },
       packageRef: null,
       sourceKind: "local_directory" as const,
@@ -1079,7 +1115,8 @@ const HOST_DETAILS = {
       setupMode:
         | "host_ui"
         | "interactive_oauth"
-        | "noninteractive_then_login";
+        | "noninteractive_then_login"
+        | "plugin_bundle_static_bearer";
     };
     skill: {
       bundlePath: string | null;
@@ -1118,12 +1155,24 @@ function createInstallSteps(
   integration: AgentIntegration,
 ): readonly AgentInstallationStep[] {
   const setupMode = HOST_DETAILS[integration.id].mcp.setupMode;
+  const staticBearerBundle = setupMode === "plugin_bundle_static_bearer";
   const steps = baseSteps.map((step) => {
     if (step.id === "install_skill") {
       return { ...step, availability: integration.interactive.skill };
     }
-    if (step.id === "configure_mcp" && setupMode !== "noninteractive_then_login") {
+    if (
+      step.id === "configure_mcp" &&
+      setupMode !== "noninteractive_then_login" &&
+      !staticBearerBundle
+    ) {
       return { ...step, executor: "user" as const };
+    }
+    if (step.id === "authorize_mcp" && staticBearerBundle) {
+      return {
+        ...step,
+        credential_target: "mcp_api_key" as const,
+        requires_browser: false,
+      };
     }
     return step;
   });
@@ -1201,6 +1250,8 @@ function createInstallationProfile(
   const bridge = integration.channel.mode === "bridge";
   const runtimeOAuth =
     integration.runtime_reporting.mode === "attention_runtime_oauth";
+  const staticBearerBundle =
+    details.mcp.setupMode === "plugin_bundle_static_bearer";
 
   return AgentInstallationProfileSchema.parse({
     acceptance: {
@@ -1244,10 +1295,12 @@ function createInstallationProfile(
     },
     mcp: {
       add_command_template: details.mcp.add,
-      auth: "oauth",
+      auth: staticBearerBundle ? "bearer_api_key" : "oauth",
       docs_url: details.mcp.docs,
       login_command_template: details.mcp.login,
-      oauth_client: "dedicated_mcp_client",
+      oauth_client: staticBearerBundle
+        ? "not_applicable"
+        : "dedicated_mcp_client",
       probe_evidence: details.mcp.probeEvidence,
       probe_command_template: details.mcp.probe,
       server_name: "attention",

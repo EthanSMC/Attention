@@ -83,6 +83,12 @@ const HOST_COPY: Record<
     statusLabel: "Desktop / CLI 可配置",
     tone: "available",
   },
+  deepseek: {
+    statusDetail:
+      "DeepSeek Harness 通过官方 DSH MCP client bundle 连接 Attention；当前使用本机环境中的 Attention API Key。",
+    statusLabel: "Skill / MCP 可配置",
+    tone: "available",
+  },
   hermes: {
     statusDetail:
       "Hermes 可从公开地址安装 Skill；添加 MCP 时会在终端内完成 OAuth 与工具选择。",
@@ -474,7 +480,16 @@ export function projectAgentConnections({
     );
 
     const manualChecklist: readonly AgentConnectionChecklistStep[] =
-      profile.skill.delivery === "host_upload_bundle"
+      profile.mcp.auth === "bearer_api_key"
+        ? [
+            {
+              detail:
+                "在 DSH 继承的环境中设置 ATTENTION_API_KEY 与 ATTENTION_MCP_URL；不要把 API Key 写进 Skill 文件。",
+              title: "配置 Attention API Key",
+              value: null,
+            },
+          ]
+        : profile.skill.delivery === "host_upload_bundle"
         ? [
             {
               detail: "把官方发布的 ZIP 保存到本机；不要解压后再上传。",
@@ -501,7 +516,7 @@ export function projectAgentConnections({
 
     return {
       acceptance: {
-        detail: `在 ${profile.display_name} 中要求 Agent 调用 ${profile.acceptance.tool_name}；只有成功返回当前 Attention 账号信息，才表示 Skill、MCP 与 OAuth 均已可用。查看本地配置不算验收。`,
+        detail: `在 ${profile.display_name} 中要求 Agent 调用 ${profile.acceptance.tool_name}；只有成功返回当前 Attention 账号信息，才表示 Skill、MCP 与${profile.mcp.auth === "oauth" ? " OAuth" : " API Key 认证"}均已可用。查看本地配置不算验收。`,
         toolName: profile.acceptance.tool_name,
       },
       channelSetup: profileChannelSetup(profile, commandValues),

@@ -18,7 +18,7 @@ describe("Agent connection public projection", () => {
     expect(connections.map((connection) => connection.id)).toEqual(
       AGENT_INTEGRATION_IDS,
     );
-    expect(new Set(connections.map((connection) => connection.id)).size).toBe(5);
+    expect(new Set(connections.map((connection) => connection.id)).size).toBe(6);
   });
 
   it("uses public Skill/MCP addresses and only verified native host commands", () => {
@@ -53,6 +53,24 @@ describe("Agent connection public projection", () => {
         .find((connection) => connection.id === "codex")
         ?.commands.some((command) => command.value === "codex mcp get attention --json"),
     ).toBe(true);
+    expect(
+      connections
+        .find((connection) => connection.id === "deepseek")
+        ?.commands.map((command) => command.value),
+    ).toEqual(
+      expect.arrayContaining([
+        "dsh plugin --profile web add @attention/dsh",
+        "dsh --profile web --dump-config",
+      ]),
+    );
+    expect(
+      connections.find((connection) => connection.id === "deepseek")
+        ?.manualChecklist,
+    ).toEqual([
+      expect.objectContaining({
+        detail: expect.stringContaining("ATTENTION_API_KEY"),
+      }),
+    ]);
     expect(
       connections
         .find((connection) => connection.id === "codex")
