@@ -1,0 +1,34 @@
+{
+  "name": "@attention/dsh",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DeepSeek Harness plugin for Attention",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@attention/contracts": "workspace:*",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "dsh": {
+    "plugin": {
+      "id": "attention",
+      "displayName": "Attention",
+      "description": "人筛选，AI 整理的信息层与个人收藏工具。",
+      "version": "1.8.0",
+      "skillVersion": "1.8.0",
+      "toolContractVersion": "1.6.0",
+      "cordis": "./cordis.yml"
+    }
+  }
+}

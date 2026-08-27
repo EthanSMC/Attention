@@ -505,6 +505,7 @@ export const CHANNEL_PROVIDER_BY_AGENT_INTEGRATION = {
   codex: "wechat_ilink",
   "claude-code": "wechat_ilink",
   workbuddy: "workbuddy_wechat",
+  deepseek: "wechat_ilink",
 } as const satisfies Record<AgentIntegrationId, LocalChannelProvider>;
 
 export function isChannelProviderSupportedByAgent(

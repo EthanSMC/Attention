@@ -6,6 +6,7 @@ export const AGENT_INTEGRATION_IDS = [
   "codex",
   "claude-code",
   "workbuddy",
+  "deepseek",
 ] as const;
 
 export const AgentIntegrationIdSchema = z.enum(AGENT_INTEGRATION_IDS);
@@ -49,6 +50,7 @@ export const AgentIntegrationSchema = z
           "hermes",
           "attention-channel",
           "workbuddy",
+          "deepseek",
         ]),
         setup: z.enum([
           "host_cli_qr",
@@ -506,6 +508,54 @@ const manifestInput = [
       heartbeat: "unavailable",
       mode: "none",
       pairing_reports: false,
+    },
+    security: {
+      channel_tokens_leave_device: false,
+      restricted_profile_required: false,
+    },
+  },
+  {
+    claims: {
+      can_confirm_channel_pairing: false,
+      can_confirm_mcp: true,
+      can_confirm_runtime: false,
+      can_confirm_wechat_identity: false,
+    },
+    channel: {
+      availability: "available",
+      mode: "native",
+      owner: "deepseek",
+      setup: "host_cli_qr",
+      status_evidence: "host_cli_probe",
+    },
+    desktop: {
+      inbound: "unsupported",
+      interactive: "available",
+      platforms: ["macos", "linux", "windows"],
+      shared_skill_mcp: true,
+      visible_session: "not_applicable",
+    },
+    display_name: "DeepSeek Harness",
+    id: "deepseek",
+    inbound: {
+      availability: "available",
+      engine: "host_native",
+      minimum_version: null,
+      requires_byo_api_key: false,
+      requires_running_cli: false,
+      stable_alternative: null,
+    },
+    interactive: {
+      availability: "available",
+      mcp: "available",
+      skill: "available",
+    },
+    platforms: ["macos", "linux", "windows"],
+    runtime_reporting: {
+      availability: "available",
+      heartbeat: "runtime",
+      mode: "attention_runtime_oauth",
+      pairing_reports: true,
     },
     security: {
       channel_tokens_leave_device: false,

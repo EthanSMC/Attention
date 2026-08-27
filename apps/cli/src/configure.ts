@@ -101,6 +101,9 @@ export function defaultSkillDirectory(hostId: AgentIntegrationId): string {
   if (hostId === "workbuddy") {
     return join(homedir(), "Downloads");
   }
+  if (hostId === "deepseek") {
+    return join(homedir(), ".dsh", "skills", "attention");
+  }
   return join(homedir(), ".attention", "skills", "attention");
 }
 
