@@ -191,20 +191,31 @@ Official references:
 ## WorkBuddy
 
 WorkBuddy `>= 4.8.2` supports standard MCP OAuth. It also supports a local
-WeChat assistant and uploading a local Skill bundle through its UI. Attention
-publishes the uploadable bundle at:
+WeChat assistant and loading Skills. The preferred installation path is to
+send WorkBuddy a prompt that points it to the canonical Skill in Attention's
+official GitHub repository:
+
+```text
+Please read and install the Attention Skill from the official GitHub repository:
+https://github.com/EthanSMC/Attention/blob/main/apps/web/public/skills/attention/SKILL.md
+Use that repository's SKILL.md without rewriting it, then report the install location and load result.
+```
+
+If WorkBuddy cannot fetch or install the Skill from GitHub, Attention keeps an
+uploadable ZIP as a fallback:
 
 ```text
 {attention_origin}/skills/attention/bundles/attention-workbuddy-1.8.0.zip
-SHA-256: 45b869576feae8e42c06ebe61658496fc9aa26918ab38f81fb54721351bc966c
+SHA-256: 0b1d5dfe2b9df2d13bc46bc26702fcb30e2c1afc308e8989aac8509a1eaa6356
 ```
 
 The archive contains `SKILL.md` directly at its root, as required by Tencent's
-published Skills ZIP specification. Download it, verify the digest, then use
-WorkBuddy's **Add Skill → Upload Skill** UI. The Web connection page presents
-this as a numbered checklist: download ZIP, verify SHA-256, upload through the
-host UI, then add the MCP address and finish OAuth. It does not claim to import
-or enable the Skill automatically.
+published Skills ZIP specification. For this fallback, download it, verify the
+digest, then use WorkBuddy's **Add Skill → Upload Skill** UI. The Web connection
+page presents GitHub as the primary route and labels the ZIP download, digest
+check, and upload steps as fallbacks. After either Skill route, add the MCP
+address and finish OAuth. It does not claim to import or enable the Skill
+automatically.
 
 Official references:
 

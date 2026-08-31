@@ -95,7 +95,7 @@ export function AgentInstallDocument({
 
           {connection.manualChecklist.length ? (
             <div className="agent-manual-checklist">
-              <div className="agent-section-heading"><h3>图形界面安装步骤</h3><span>按顺序完成</span></div>
+              <div className="agent-section-heading"><h3>图形界面安装步骤</h3><span>优先 GitHub，ZIP 备用</span></div>
               <ol>
                 {connection.manualChecklist.map((step) => (
                   <li key={step.title}>

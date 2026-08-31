@@ -10,6 +10,10 @@ import {
 const ATTENTION_SKILL_GITHUB_URL =
   "https://github.com/EthanSMC/Attention/blob/main/apps/web/public/skills/attention/SKILL.md";
 
+const WORKBUDDY_GITHUB_INSTALL_PROMPT =
+  `请从 Attention 官方 GitHub 仓库读取并安装 Skill：${ATTENTION_SKILL_GITHUB_URL}。` +
+  "请使用仓库中的 SKILL.md，不要自行改写；完成后告诉我安装位置和加载结果。";
+
 export interface AgentConnectionCommand {
   kind: "download_and_verify" | "host_configuration" | "configuration_probe";
   label: string;
@@ -106,7 +110,7 @@ const HOST_COPY: Record<
   },
   workbuddy: {
     statusDetail:
-      "优先从 GitHub 安装 Attention Skill；如果宿主无法读取 GitHub，再下载 ZIP 备用包上传，并手动添加 MCP。",
+      "首选让 WorkBuddy 从 Attention 官方 GitHub 获取 Skill；如果宿主无法完成，再上传 ZIP 备用包。MCP 仍需手动添加。",
     statusLabel: "需在宿主界面配置",
     tone: "external",
   },
@@ -495,12 +499,14 @@ export function projectAgentConnections({
         : profile.skill.delivery === "host_upload_bundle"
         ? [
             {
-              detail: "首选在 WorkBuddy 的 Skill 市场中导入 Attention 的公开 GitHub Skill 地址。",
+              detail:
+                "首选方式：复制下面的提示词发给 WorkBuddy，让它读取 Attention 官方 GitHub 中的统一 SKILL.md 并安装。",
               title: "从 GitHub 安装 Skill",
-              value: ATTENTION_SKILL_GITHUB_URL,
+              value: WORKBUDDY_GITHUB_INSTALL_PROMPT,
             },
             {
-              detail: "把官方发布的 ZIP 保存到本机；不要解压后再上传。",
+              detail:
+                "仅当 WorkBuddy 无法从 GitHub 获取或安装时，才把官方 ZIP 备用包保存到本机；不要解压后再上传。",
               title: "备用：下载 Skill ZIP",
               value: profileSkillUrl,
             },
