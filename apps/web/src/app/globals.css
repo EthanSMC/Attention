@@ -46,6 +46,321 @@
   --content-form: 680px;
 }
 
+/* Standalone, unlinked administrator surface. */
+.admin-users-shell,
+.admin-access-message {
+  width: min(1440px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 40px 0 72px;
+}
+
+.admin-access-message {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+.admin-access-message section,
+.admin-user-filters,
+.admin-users-list,
+.admin-audit-panel {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 18px;
+}
+
+.admin-access-message section {
+  width: min(520px, 100%);
+  padding: 32px;
+}
+
+.admin-users-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.admin-users-header h1 {
+  margin: 6px 0 8px;
+}
+
+.admin-users-header p {
+  margin: 0;
+}
+
+.admin-users-header__identity,
+.admin-tier {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.admin-user-filters {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(150px, 220px) auto;
+  align-items: end;
+  gap: 14px;
+  padding: 18px;
+  margin-bottom: 20px;
+}
+
+.admin-user-filters label,
+.admin-entitlement-control label {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.admin-user-filters input,
+.admin-user-filters select,
+.admin-entitlement-control textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.admin-users-list {
+  overflow: hidden;
+}
+
+.admin-users-list__summary,
+.admin-audit-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+}
+
+.admin-users-list__summary h2,
+.admin-users-list__summary p,
+.admin-audit-panel__header h2 {
+  margin: 0;
+}
+
+.admin-users-table-wrap {
+  overflow-x: auto;
+}
+
+.admin-users-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 980px;
+}
+
+.admin-users-table th,
+.admin-users-table td {
+  padding: 16px 18px;
+  border-top: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.admin-users-table th {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.admin-users-table td:first-child {
+  min-width: 220px;
+}
+
+.admin-users-table td:first-child span,
+.admin-users-table td:first-child strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.admin-users-table td:first-child span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.admin-users-table__empty {
+  text-align: center !important;
+  color: var(--muted);
+}
+
+.admin-tier--member {
+  background: #e9f2ff;
+  color: #1d4f91;
+}
+
+.admin-tier--filter {
+  background: #e8f7ee;
+  color: #17673a;
+}
+
+.admin-audit-link {
+  display: block;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.admin-entitlement-control {
+  width: min(360px, 100%);
+}
+
+.admin-entitlement-control textarea {
+  resize: vertical;
+}
+
+.admin-entitlement-control__actions,
+.admin-confirmation__actions,
+.admin-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-entitlement-control__actions {
+  margin-top: 10px;
+}
+
+.admin-entitlement-control__actions .button {
+  min-height: 34px;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+.admin-entitlement-control__feedback {
+  min-height: 18px;
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-pagination {
+  justify-content: flex-end;
+  padding: 16px 20px;
+  border-top: 1px solid var(--line);
+}
+
+.admin-pagination a,
+.admin-pagination span {
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.admin-pagination span {
+  color: var(--muted);
+}
+
+.admin-audit-panel {
+  margin-top: 20px;
+  padding-bottom: 8px;
+}
+
+.admin-audit-panel ol {
+  list-style: none;
+  margin: 0;
+  padding: 0 20px;
+}
+
+.admin-audit-panel li {
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+
+.admin-audit-panel li p {
+  margin: 7px 0;
+}
+
+.admin-audit-panel li small {
+  color: var(--muted);
+}
+
+.admin-audit-panel__event {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.admin-confirmation-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(15 23 42 / 45%);
+}
+
+.admin-confirmation {
+  width: min(520px, 100%);
+  padding: 24px;
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: 0 24px 80px rgb(15 23 42 / 30%);
+}
+
+.admin-confirmation h3 {
+  margin: 6px 0 18px;
+}
+
+.admin-confirmation dl {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.admin-confirmation dl div {
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--surface-muted);
+}
+
+.admin-confirmation dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-confirmation dd {
+  margin: 5px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-confirmation__warning {
+  margin: 16px 0;
+  color: var(--muted);
+}
+
+.admin-confirmation__actions {
+  justify-content: flex-end;
+}
+
+@media (max-width: 720px) {
+  .admin-users-shell {
+    width: min(100% - 20px, 1440px);
+    padding-top: 20px;
+  }
+
+  .admin-users-header,
+  .admin-users-list__summary,
+  .admin-audit-panel__header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .admin-user-filters {
+    grid-template-columns: 1fr;
+  }
+}
+
 * {
   box-sizing: border-box;
 }

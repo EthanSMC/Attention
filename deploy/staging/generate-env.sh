@@ -66,6 +66,7 @@ umask 077
   printf 'FETCHER_QUEUE_TIMEOUT_MS=1000\n'
   printf '\n'
   printf 'NEXT_PUBLIC_APP_URL=https://attention-staging.noveltystudio.cn\n'
+  printf 'ATTENTION_ADMIN_EMAILS=\n'
   printf 'ATTENTION_MCP_PUBLIC_URL=https://attention-staging.noveltystudio.cn/mcp\n'
   printf 'ATTENTION_SYNC_PUBLIC_URL=https://attention-staging.noveltystudio.cn/api/sync\n'
   printf 'ATTENTION_CHANNEL_RUNTIME_PUBLIC_URL=https://attention-staging.noveltystudio.cn/api/runtime\n'

@@ -81,6 +81,7 @@ describe("Compose email configuration", () => {
     const compose = readFileSync(resolve(root, "compose.yaml"), "utf8");
 
     expect(example).toMatchObject({
+      ATTENTION_ADMIN_EMAILS: "",
       ATTENTION_CONSUMER_INVITE_QUOTA: "1",
       ATTENTION_DIGEST_WORKER_ENABLED: "false",
       ATTENTION_EMAIL_PROVIDER: "resend",
@@ -93,6 +94,7 @@ describe("Compose email configuration", () => {
 
     const web = resolveServiceEnvironment(compose, "web", example);
     expect(web).toMatchObject({
+      ATTENTION_ADMIN_EMAILS: "",
       ATTENTION_CONSUMER_INVITE_QUOTA: "1",
       ATTENTION_EMAIL_PROVIDER: "resend",
       ATTENTION_RESEND_FROM: "Attention <no_reply@service.noveltystudio.cn>",
@@ -101,6 +103,7 @@ describe("Compose email configuration", () => {
     });
 
     const worker = resolveServiceEnvironment(compose, "worker", example);
+    expect(worker).not.toHaveProperty("ATTENTION_ADMIN_EMAILS");
     expect(worker).toMatchObject({
       ATTENTION_DIGEST_WORKER_ENABLED: "false",
       ATTENTION_EMAIL_PROVIDER: "webhook",

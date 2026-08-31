@@ -24,6 +24,12 @@ describe("Agent connection public projection", () => {
   it("uses public Skill/MCP addresses and only verified native host commands", () => {
     for (const connection of connections) {
       if (connection.id === "workbuddy") {
+        expect(connection.status.detail).toContain("GitHub");
+        expect(connection.status.detail).toContain("ZIP");
+        expect(connection.sources).toContainEqual({
+          label: "Attention Skill · GitHub",
+          url: "https://github.com/EthanSMC/Attention/blob/main/apps/web/public/skills/attention/SKILL.md",
+        });
         expect(connection.skillUrl).toBe(
           `https://attention.example${ATTENTION_WORKBUDDY_SKILL_BUNDLE_PUBLIC_PATH}`,
         );

@@ -101,6 +101,7 @@ PostgreSQL 至少使用三种身份：
 | `DATABASE_URL` | `attention_web_runtime` 的 PostgreSQL DSN；不能是 owner。 |
 | `ATTENTION_WEB_DATABASE_ROLE` | 默认并建议保持 `attention_web_runtime`。 |
 | `NEXT_PUBLIC_APP_URL` | 用户访问的唯一 HTTPS origin，例如 `https://attention.example.com`。 |
+| `ATTENTION_ADMIN_EMAILS` | 仅注入 Web 服务端的管理员登录邮箱白名单，使用逗号分隔的 NFKC 规范化小写邮箱；空值会关闭全部 `/admin/*` 访问。不得使用 `NEXT_PUBLIC_` 前缀。 |
 | `ATTENTION_HMAC_SECRET` | 候选与收藏流程的独立随机 secret。 |
 | `ATTENTION_AUTH_SECRET` | 浏览器认证的独立随机 secret。 |
 | `ATTENTION_CHANNEL_SECRET` | 旧 Channel intent 协议的独立随机 secret。 |

@@ -260,6 +260,13 @@
       "when": 1787833297355,
       "tag": "0036_deepseek_agent_integration",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1788198943977,
+      "tag": "0037_admin_entitlement_audits",
+      "breakpoints": true
     }
   ]
 }

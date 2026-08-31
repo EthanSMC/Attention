@@ -207,26 +207,31 @@ describe("source-free Agent installation", () => {
     ]);
   });
 
-  it("gives WorkBuddy a numbered manual bundle checklist and every host the same live-tool acceptance", () => {
+  it("guides WorkBuddy through GitHub first, keeps the ZIP as a fallback, and gives every host the same live-tool acceptance", () => {
     const connections = projectAgentConnections({
       mcpUrl: "https://attention.example/mcp",
       origin: "https://attention.example",
     });
     const workbuddy = connections.find(({ id }) => id === "workbuddy");
     expect(workbuddy?.manualChecklist.map(({ title }) => title)).toEqual([
-      "下载 Skill ZIP",
-      "核对 SHA-256",
-      "上传 Skill",
+      "从 GitHub 安装 Skill",
+      "备用：下载 Skill ZIP",
+      "备用：核对 ZIP SHA-256",
+      "备用：上传 Skill ZIP",
       "添加 MCP 并授权",
     ]);
-    expect(workbuddy?.manualChecklist[0]?.value).toMatch(/\.zip$/u);
-    expect(workbuddy?.manualChecklist[1]?.value).toBe(
+    expect(workbuddy?.manualChecklist[0]?.value).toContain(
+      "https://github.com/EthanSMC/Attention/blob/main/apps/web/public/skills/attention/SKILL.md",
+    );
+    expect(workbuddy?.manualChecklist[0]?.detail).toContain("首选");
+    expect(workbuddy?.manualChecklist[1]?.value).toMatch(/\.zip$/u);
+    expect(workbuddy?.manualChecklist[2]?.value).toBe(
       getAgentInstallationProfile("workbuddy").skill.bundle_sha256,
     );
-    expect(workbuddy?.manualChecklist[2]?.detail).toContain(
+    expect(workbuddy?.manualChecklist[3]?.detail).toContain(
       "Add Skill → Upload Skill",
     );
-    expect(workbuddy?.manualChecklist[3]?.value).toBe(
+    expect(workbuddy?.manualChecklist[4]?.value).toBe(
       "https://attention.example/mcp",
     );
 

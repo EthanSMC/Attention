@@ -325,6 +325,76 @@ export const filterProfiles = pgTable(
   ]
 );
 
+export interface AdminEntitlementState {
+  isFilter: boolean;
+  isMember: boolean;
+  tier: "filter" | "free" | "member";
+}
+
+export const adminEntitlementAudits = pgTable(
+  "admin_entitlement_audits",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    actorAccountId: uuid("actor_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    targetAccountId: uuid("target_account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    action: varchar("action", { length: 32 }).notNull(),
+    previousState: jsonb("previous_state").$type<AdminEntitlementState>().notNull(),
+    nextState: jsonb("next_state").$type<AdminEntitlementState>().notNull(),
+    reason: varchar("reason", { length: 500 }).notNull(),
+    source: varchar("source", { length: 64 }).notNull(),
+    requestId: varchar("request_id", { length: 128 }).notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => {
+    const validState = (value: typeof table.previousState) => sql`
+      jsonb_typeof(${value}) = 'object'
+      AND jsonb_typeof(${value}->'isFilter') = 'boolean'
+      AND jsonb_typeof(${value}->'isMember') = 'boolean'
+      AND ${value}->>'tier' IN ('free', 'member', 'filter')
+      AND (
+        (${value}->>'tier' = 'free' AND (${value}->>'isFilter')::boolean = false AND (${value}->>'isMember')::boolean = false)
+        OR (${value}->>'tier' = 'member' AND (${value}->>'isFilter')::boolean = false AND (${value}->>'isMember')::boolean = true)
+        OR (${value}->>'tier' = 'filter' AND (${value}->>'isFilter')::boolean = true AND (${value}->>'isMember')::boolean = true)
+      )
+    `;
+    return [
+      index("admin_entitlement_audits_actor_time_idx").on(
+        table.actorAccountId,
+        table.occurredAt,
+      ),
+      index("admin_entitlement_audits_target_time_idx").on(
+        table.targetAccountId,
+        table.occurredAt,
+      ),
+      index("admin_entitlement_audits_request_idx").on(table.requestId),
+      check(
+        "admin_entitlement_audits_action_allowed",
+        sql`${table.action} IN ('set_member', 'set_filter', 'revoke_filter')`,
+      ),
+      check(
+        "admin_entitlement_audits_reason_not_blank",
+        sql`btrim(${table.reason}) <> ''`,
+      ),
+      check(
+        "admin_entitlement_audits_source_not_blank",
+        sql`btrim(${table.source}) <> ''`,
+      ),
+      check(
+        "admin_entitlement_audits_request_not_blank",
+        sql`btrim(${table.requestId}) <> ''`,
+      ),
+      check(
+        "admin_entitlement_audits_state_shape",
+        sql`(${validState(table.previousState)}) AND (${validState(table.nextState)})`,
+      ),
+    ];
+  },
+);
+
 export const consumerReferrals = pgTable(
   "consumer_referrals",
   {

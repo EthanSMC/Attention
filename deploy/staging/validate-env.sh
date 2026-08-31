@@ -91,6 +91,32 @@ require_integer_range() {
     fail "$key must be between $minimum and $maximum"
 }
 
+require_admin_emails() {
+  local value
+  value=$(value_of ATTENTION_ADMIN_EMAILS)
+  if ! python3 - "$value" <<'PY'
+import re
+import sys
+import unicodedata
+
+raw = sys.argv[1]
+entries = raw.split(",") if raw else []
+normalized = [unicodedata.normalize("NFKC", value).strip().lower() for value in entries]
+valid = bool(entries) and all(
+    value == canonical
+    and 3 <= len(value) <= 320
+    and not any(ord(character) < 32 or ord(character) == 127 for character in value)
+    and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value) is not None
+    for value, canonical in zip(entries, normalized, strict=True)
+)
+valid = valid and len(set(normalized)) == len(normalized)
+raise SystemExit(0 if valid else 1)
+PY
+  then
+    fail "ATTENTION_ADMIN_EMAILS must contain unique normalized email addresses"
+  fi
+}
+
 require_distinct_secrets() {
   local keys=("$@")
   local left_index right_index left_value right_value
@@ -194,6 +220,7 @@ require_min_length RESEND_API_KEY 20
 resend_key=$(value_of RESEND_API_KEY)
 [[ "$resend_key" == re_* ]] || fail "RESEND_API_KEY does not look like a Resend key"
 unset resend_key
+require_admin_emails
 
 require_postgres_url MIGRATION_DATABASE_URL attention_migration_owner POSTGRES_PASSWORD
 require_postgres_url DATABASE_URL attention_web_runtime ATTENTION_WEB_DATABASE_PASSWORD

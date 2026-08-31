@@ -32,7 +32,11 @@ function isSettingsPath(pathname: string): boolean {
 }
 
 function isStandalonePath(pathname: string): boolean {
-  return pathname.startsWith("/doc") || pathname.startsWith("/oauth/");
+  return (
+    pathname.startsWith("/admin/") ||
+    pathname.startsWith("/doc") ||
+    pathname.startsWith("/oauth/")
+  );
 }
 
 export function shouldShowCollectAction(pathname: string): boolean {

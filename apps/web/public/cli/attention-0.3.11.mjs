@@ -18447,7 +18447,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 // src/version.ts
-var ATTENTION_CLI_VERSION = "0.3.10";
+var ATTENTION_CLI_VERSION = "0.3.11";
 
 // src/runtime-oauth.ts
 var RUNTIME_CREDENTIAL_VERSION = 1;

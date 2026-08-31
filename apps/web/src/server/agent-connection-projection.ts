@@ -7,6 +7,9 @@ import {
   type AgentInstallationProfile,
 } from "@attention/contracts";
 
+const ATTENTION_SKILL_GITHUB_URL =
+  "https://github.com/EthanSMC/Attention/blob/main/apps/web/public/skills/attention/SKILL.md";
+
 export interface AgentConnectionCommand {
   kind: "download_and_verify" | "host_configuration" | "configuration_probe";
   label: string;
@@ -103,7 +106,7 @@ const HOST_COPY: Record<
   },
   workbuddy: {
     statusDetail:
-      "下载 Attention Skill bundle 后，在 WorkBuddy 宿主界面上传，并手动添加 MCP。",
+      "优先从 GitHub 安装 Attention Skill；如果宿主无法读取 GitHub，再下载 ZIP 备用包上传，并手动添加 MCP。",
     statusLabel: "需在宿主界面配置",
     tone: "external",
   },
@@ -492,18 +495,23 @@ export function projectAgentConnections({
         : profile.skill.delivery === "host_upload_bundle"
         ? [
             {
+              detail: "首选在 WorkBuddy 的 Skill 市场中导入 Attention 的公开 GitHub Skill 地址。",
+              title: "从 GitHub 安装 Skill",
+              value: ATTENTION_SKILL_GITHUB_URL,
+            },
+            {
               detail: "把官方发布的 ZIP 保存到本机；不要解压后再上传。",
-              title: "下载 Skill ZIP",
+              title: "备用：下载 Skill ZIP",
               value: profileSkillUrl,
             },
             {
               detail: "使用系统文件校验工具核对下载文件，必须与清单完全一致。",
-              title: "核对 SHA-256",
+              title: "备用：核对 ZIP SHA-256",
               value: profile.skill.bundle_sha256,
             },
             {
               detail: "在 WorkBuddy 中打开 Add Skill → Upload Skill，选择刚刚下载并校验的 ZIP。",
-              title: "上传 Skill",
+              title: "备用：上传 Skill ZIP",
               value: null,
             },
             {
@@ -552,6 +560,14 @@ export function projectAgentConnections({
           ? null
           : profileSkillUrl,
       sources: [
+        ...(profile.id === "workbuddy"
+          ? [
+              {
+                label: "Attention Skill · GitHub",
+                url: ATTENTION_SKILL_GITHUB_URL,
+              },
+            ]
+          : []),
         ...profileSources(profile),
         {
           label: "Attention 安装指南",

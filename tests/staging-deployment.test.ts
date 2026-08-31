@@ -45,10 +45,15 @@ function parseEnv(source: string): Record<string, string> {
 function createCompletedEnvironment(directory: string): string {
   const target = resolve(directory, "compose.env");
   expect(run("generate-env.sh", [target]).status).toBe(0);
-  const source = readFileSync(target, "utf8").replace(
-    /^RESEND_API_KEY=.*$/mu,
-    "RESEND_API_KEY=re_staging_test_only_not_a_real_key_1234567890",
-  );
+  const source = readFileSync(target, "utf8")
+    .replace(
+      /^RESEND_API_KEY=.*$/mu,
+      "RESEND_API_KEY=re_staging_test_only_not_a_real_key_1234567890",
+    )
+    .replace(
+      /^ATTENTION_ADMIN_EMAILS=.*$/mu,
+      "ATTENTION_ADMIN_EMAILS=admin@example.com",
+    );
   writeFileSync(target, source, { mode: 0o600 });
   return target;
 }
@@ -64,6 +69,7 @@ describe("staging environment preparation", () => {
 
     const values = parseEnv(readFileSync(target, "utf8"));
     expect(values).toMatchObject({
+      ATTENTION_ADMIN_EMAILS: "",
       ATTENTION_DIGEST_WORKER_ENABLED: "false",
       ATTENTION_EMAIL_PROVIDER: "resend",
       ATTENTION_MIGRATION_DATABASE_HOST: "postgres",
@@ -122,16 +128,22 @@ describe("staging environment preparation", () => {
     expect(incomplete.status).not.toBe(0);
     expect(`${incomplete.stdout}${incomplete.stderr}`).toContain("RESEND_API_KEY");
 
-    const source = readFileSync(target, "utf8").replace(
-      /^RESEND_API_KEY=.*$/mu,
-      "RESEND_API_KEY=re_staging_test_only_not_a_real_key_1234567890",
-    );
+    const source = readFileSync(target, "utf8")
+      .replace(
+        /^RESEND_API_KEY=.*$/mu,
+        "RESEND_API_KEY=re_staging_test_only_not_a_real_key_1234567890",
+      )
+      .replace(
+        /^ATTENTION_ADMIN_EMAILS=.*$/mu,
+        "ATTENTION_ADMIN_EMAILS=admin@example.com",
+      );
     writeFileSync(target, source, { mode: 0o600 });
     const valid = run("validate-env.sh", [target]);
     expect(valid.status, valid.stderr).toBe(0);
     expect(`${valid.stdout}${valid.stderr}`).not.toContain(
       "re_staging_test_only_not_a_real_key_1234567890",
     );
+    expect(`${valid.stdout}${valid.stderr}`).not.toContain("admin@example.com");
 
     chmodSync(target, 0o644);
     const broadPermissions = run("validate-env.sh", [target]);
@@ -144,6 +156,24 @@ describe("staging environment preparation", () => {
     const symlinked = run("validate-env.sh", [link]);
     expect(symlinked.status).not.toBe(0);
     expect(`${symlinked.stdout}${symlinked.stderr}`).toContain("symlink");
+  });
+
+  it("rejects a missing or malformed admin allowlist without echoing it", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "attention-staging-admin-"));
+    const target = createCompletedEnvironment(directory);
+    const invalidValue = "Admin@Example.com,not-an-email";
+    const invalid = readFileSync(target, "utf8").replace(
+      /^ATTENTION_ADMIN_EMAILS=.*$/mu,
+      `ATTENTION_ADMIN_EMAILS=${invalidValue}`,
+    );
+    writeFileSync(target, invalid, { mode: 0o600 });
+
+    const validation = run("validate-env.sh", [target]);
+    expect(validation.status).not.toBe(0);
+    expect(`${validation.stdout}${validation.stderr}`).toContain(
+      "ATTENTION_ADMIN_EMAILS",
+    );
+    expect(`${validation.stdout}${validation.stderr}`).not.toContain(invalidValue);
   });
 
   it("rejects a runtime DSN whose query only looks like the isolated database", () => {
@@ -179,6 +209,10 @@ describe("staging environment preparation", () => {
       .replace(
         /^RESEND_API_KEY=.*$/mu,
         "RESEND_API_KEY=re_staging_test_only_not_a_real_key_1234567890",
+      )
+      .replace(
+        /^ATTENTION_ADMIN_EMAILS=.*$/mu,
+        "ATTENTION_ADMIN_EMAILS=admin@example.com",
       )
       .replace(
         /^ATTENTION_TRUSTED_CLIENT_SOURCE_HEADER=.*$/mu,

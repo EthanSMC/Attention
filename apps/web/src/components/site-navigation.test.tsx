@@ -18,7 +18,7 @@ describe("SiteHeader", () => {
     pathname = "/ai";
   });
 
-  it.each(["/oauth/authorize", "/oauth/authorize/cancel"])(
+  it.each(["/oauth/authorize", "/oauth/authorize/cancel", "/admin/users"])(
     "hides all product navigation on %s",
     (oauthPath) => {
       pathname = oauthPath;
@@ -36,6 +36,7 @@ describe("SiteHeader", () => {
     expect(shouldShowCollectAction("/auth")).toBe(false);
     expect(shouldShowCollectAction("/login")).toBe(false);
     expect(shouldShowCollectAction("/oauth/authorize")).toBe(false);
+    expect(shouldShowCollectAction("/admin/users")).toBe(false);
   });
 
   it("keeps the header, collection action, and mobile navigation on product pages", () => {

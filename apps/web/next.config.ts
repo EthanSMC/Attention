@@ -5,6 +5,9 @@ const workspaceRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
+  experimental: {
+    authInterrupts: true,
+  },
   output: "standalone",
   outputFileTracingRoot: workspaceRoot,
   poweredByHeader: false,
