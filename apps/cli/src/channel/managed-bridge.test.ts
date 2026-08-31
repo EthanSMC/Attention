@@ -210,7 +210,9 @@ fs.writeFileSync(path, JSON.stringify(state));
     await execFileAsync(process.execPath, [paths.launcherPath], {
       env: {
         ...process.env,
-        ATTENTION_BRIDGE_STARTUP_TIMEOUT_MS: "80",
+        // Leave enough time for Node to execute the candidate on loaded hosts
+        // while keeping the never-healthy rollback path bounded.
+        ATTENTION_BRIDGE_STARTUP_TIMEOUT_MS: "500",
         ATTENTION_BRIDGE_UPDATE_STATE_PATH: paths.statePath,
       },
       timeout: 5_000,

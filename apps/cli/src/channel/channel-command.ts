@@ -449,17 +449,9 @@ export async function channelStart(
       await saveChannelState(state, options.baseDirectory);
       write(
         "Attention 账号验收失败：Agent 未能真实调用 attention_get_my_account。\n" +
-          `请先运行 attention configure ${hostId} --apply --login，完成 OAuth 后重试。\n`,
+          `Attention MCP 暂不可用；微信桥继续运行。请运行 attention configure ${hostId} --apply --login 完成 OAuth，之后可在微信中发送“重试”。\n`,
       );
-      if (options.service) {
-        write(
-          "后台服务已停止；修复 OAuth 后，请在终端重新运行 channel start --background。\n",
-        );
-        return 0;
-      }
-      return 1;
-    }
-    if (account) {
+    } else if (account) {
       state.accountVerification = {
         hostId,
         mcpUrl,

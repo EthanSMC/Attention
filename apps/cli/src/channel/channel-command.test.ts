@@ -80,10 +80,14 @@ describe("channel subcommands", () => {
     expect(lines.join("")).toMatch(/宿主自己的微信渠道/u);
   });
 
-  it("requires a live Attention account tool result before iLink login", async () => {
+  it("continues polling an existing iLink session when Attention account verification fails", async () => {
     const base = await makeTempBase();
+    const state = defaultChannelState();
+    state.token = "local-ilink-token";
+    state.accountId = "local-account";
+    await saveChannelState(state, base);
     const lines: string[] = [];
-    let qrRequestAttempted = false;
+    let updatePollAttempted = false;
     const exitCode = await channelStart("codex", {
       accountVerifier: async () => null,
       baseDirectory: base,
@@ -98,19 +102,29 @@ describe("channel subcommands", () => {
           timedOut: false,
         }),
       }),
-      fetchImpl: async () => {
-        qrRequestAttempted = true;
-        return new Response(null, { status: 500 });
+      bridgeUpdateChecker: async () => ({
+        status: "current",
+        version: "0.3.8",
+      }),
+      fetchImpl: async (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith("/getupdates")) {
+          updatePollAttempted = true;
+          return new Response(JSON.stringify({ errcode: -14, ret: 0 }));
+        }
+        throw new Error(`Unexpected iLink path: ${path}`);
       },
       hostCliCheck: async () => true,
       origin: "https://attention.example",
+      runtimeCredentialLoader: async () => false,
+      service: true,
       writeOutput: (text) => lines.push(text),
     });
 
-    expect(exitCode).toBe(1);
-    expect(qrRequestAttempted).toBe(false);
+    expect(exitCode).toBe(0);
+    expect(updatePollAttempted).toBe(true);
     expect(lines.join("")).toContain("attention_get_my_account");
-    expect(lines.join("")).not.toContain("扫码");
+    expect(lines.join("")).toContain("微信桥继续运行");
   });
 
   it("installs a background bridge without starting a duplicate Agent preflight", async () => {
@@ -1469,9 +1483,16 @@ describe("channel subcommands", () => {
     expect(persisted.pendingInbound[0]?.attempts).toBe(1);
   });
 
-  it("stops a background service cleanly when Attention OAuth needs repair", async () => {
+  it("keeps local retry available when Attention OAuth needs repair", async () => {
     const base = await makeTempBase();
+    const state = defaultChannelState();
+    state.token = "local-ilink-token";
+    state.accountId = "local-account";
+    await saveChannelState(state, base);
     const lines: string[] = [];
+    const sentTexts: string[] = [];
+    let brainStarts = 0;
+    let updates = 0;
     expect(
       await channelStart("codex", {
         accountVerifier: async () => null,
@@ -1486,15 +1507,56 @@ describe("channel subcommands", () => {
             sessionId: null,
             timedOut: false,
           }),
+          start: async () => {
+            brainStarts += 1;
+          },
         }),
+        bridgeUpdateChecker: async () => ({
+          status: "current",
+          version: "0.3.8",
+        }),
+        fetchImpl: async (url, init) => {
+          const path = new URL(String(url)).pathname;
+          if (path.endsWith("/getupdates")) {
+            updates += 1;
+            if (updates === 1) {
+              return new Response(JSON.stringify({
+                errcode: 0,
+                get_updates_buf: "cursor-1",
+                msgs: [{
+                  client_id: "message-retry",
+                  context_token: "ctx-owner",
+                  from_user_id: "owner",
+                  item_list: [{ text_item: { text: "重试" }, type: 1 }],
+                }],
+                ret: 0,
+              }));
+            }
+            return new Response(JSON.stringify({ errcode: -14, ret: 0 }));
+          }
+          if (path.endsWith("/sendmessage")) {
+            const body = JSON.parse(String(init?.body)) as {
+              msg: { item_list: Array<{ text_item: { text: string } }> };
+            };
+            sentTexts.push(body.msg.item_list[0]?.text_item.text ?? "");
+            return new Response(JSON.stringify({ errcode: 0, ret: 0 }));
+          }
+          throw new Error(`Unexpected iLink path: ${path}`);
+        },
         hostCliCheck: async () => true,
         origin: "https://attention.example",
+        runtimeCredentialLoader: async () => false,
         service: true,
         writeOutput: (text) => lines.push(text),
       }),
     ).toBe(0);
+    expect(brainStarts).toBe(2);
+    expect(sentTexts).toContain(
+      "已请求重新连接本地 Agent；恢复后会从本地断点继续。",
+    );
     expect(lines.join("")).toContain("OAuth");
-    expect(lines.join("")).toContain("重新运行");
+    expect(lines.join("")).toContain("微信桥继续运行");
+    expect(lines.join("")).not.toContain("后台服务已停止");
   });
 
   it("checks for a managed update only after the service is healthy and idle", async () => {

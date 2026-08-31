@@ -18314,7 +18314,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 // src/version.ts
-var ATTENTION_CLI_VERSION = "0.3.9";
+var ATTENTION_CLI_VERSION = "0.3.10";
 
 // src/runtime-oauth.ts
 var RUNTIME_CREDENTIAL_VERSION = 1;
@@ -23355,18 +23355,10 @@ async function channelStart(hostId, options = {}) {
       await saveChannelState(state, options.baseDirectory);
       write(
         `Attention \u8D26\u53F7\u9A8C\u6536\u5931\u8D25\uFF1AAgent \u672A\u80FD\u771F\u5B9E\u8C03\u7528 attention_get_my_account\u3002
-\u8BF7\u5148\u8FD0\u884C attention configure ${hostId} --apply --login\uFF0C\u5B8C\u6210 OAuth \u540E\u91CD\u8BD5\u3002
+Attention MCP \u6682\u4E0D\u53EF\u7528\uFF1B\u5FAE\u4FE1\u6865\u7EE7\u7EED\u8FD0\u884C\u3002\u8BF7\u8FD0\u884C attention configure ${hostId} --apply --login \u5B8C\u6210 OAuth\uFF0C\u4E4B\u540E\u53EF\u5728\u5FAE\u4FE1\u4E2D\u53D1\u9001\u201C\u91CD\u8BD5\u201D\u3002
 `
       );
-      if (options.service) {
-        write(
-          "\u540E\u53F0\u670D\u52A1\u5DF2\u505C\u6B62\uFF1B\u4FEE\u590D OAuth \u540E\uFF0C\u8BF7\u5728\u7EC8\u7AEF\u91CD\u65B0\u8FD0\u884C channel start --background\u3002\n"
-        );
-        return 0;
-      }
-      return 1;
-    }
-    if (account) {
+    } else if (account) {
       state.accountVerification = {
         hostId,
         mcpUrl,
