@@ -1,0 +1,167 @@
+{
+  "acceptance": {
+    "config_probe_is_acceptance": false,
+    "requirement": "successful_tool_result",
+    "tool_name": "attention_get_my_account"
+  },
+  "channel": {
+    "availability": "unsupported",
+    "credentials": "local_device_only",
+    "docs_url": null,
+    "hosted_by_attention": false,
+    "minimum_version": null,
+    "mode": "native",
+    "owner": "deepseek",
+    "package_ref": null,
+    "setup": "none",
+    "setup_command_templates": [],
+    "status_evidence": "none"
+  },
+  "claims": {
+    "can_confirm_channel_pairing": false,
+    "can_confirm_mcp": true,
+    "can_confirm_runtime": false,
+    "can_confirm_wechat_identity": false
+  },
+  "compatibility": {
+    "command_checks": [
+      {
+        "args": [
+          "--version"
+        ],
+        "executable": "dsh"
+      }
+    ],
+    "minimum_version": null,
+    "policy": "verify_at_install"
+  },
+  "desktop": {
+    "inbound": "unsupported",
+    "interactive": "available",
+    "platforms": [
+      "macos",
+      "linux",
+      "windows"
+    ],
+    "shared_skill_mcp": true,
+    "visible_session": "not_applicable"
+  },
+  "display_name": "DeepSeek Harness",
+  "id": "deepseek",
+  "inbound": {
+    "availability": "unsupported",
+    "docs_url": null,
+    "engine": "none",
+    "minimum_version": null,
+    "requires_byo_api_key": false,
+    "requires_running_cli": false,
+    "stable_alternative": null
+  },
+  "install_steps": [
+    {
+      "availability": "available",
+      "credential_target": "none",
+      "executor": "attention_installer",
+      "id": "detect_host",
+      "requires_browser": false
+    },
+    {
+      "availability": "available",
+      "credential_target": "none",
+      "executor": "attention_installer",
+      "id": "install_skill",
+      "requires_browser": false
+    },
+    {
+      "availability": "available",
+      "credential_target": "none",
+      "executor": "attention_installer",
+      "id": "configure_mcp",
+      "requires_browser": false
+    },
+    {
+      "availability": "available",
+      "credential_target": "mcp_api_key",
+      "executor": "user",
+      "id": "authorize_mcp",
+      "requires_browser": false
+    }
+  ],
+  "interactive": {
+    "availability": "available"
+  },
+  "mcp": {
+    "add_command_template": {
+      "args": [
+        "plugin",
+        "--profile",
+        "web",
+        "add",
+        "@attention/dsh"
+      ],
+      "executable": "dsh"
+    },
+    "auth": "bearer_api_key",
+    "docs_url": "https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md",
+    "login_command_template": null,
+    "oauth_client": "not_applicable",
+    "probe_evidence": "config_only",
+    "probe_command_template": {
+      "args": [
+        "--profile",
+        "web",
+        "--dump-config"
+      ],
+      "executable": "dsh"
+    },
+    "server_name": "attention",
+    "setup_mode": "plugin_bundle_static_bearer",
+    "transport": "streamable_http",
+    "url_template": "{attention_origin}/mcp"
+  },
+  "platforms": [
+    "macos",
+    "linux",
+    "windows"
+  ],
+  "release_stage": "infrastructure_only",
+  "restricted_profile": {
+    "allowed_mcp_servers": [],
+    "denied_capabilities": [],
+    "required": false,
+    "template_path": null
+  },
+  "runtime_reporting": {
+    "availability": "unsupported",
+    "heartbeat": "unavailable",
+    "mode": "none",
+    "oauth_client_boundary": "not_applicable",
+    "pairing_reports": false,
+    "resource_url_template": null,
+    "scopes": []
+  },
+  "skill": {
+    "availability": "available",
+    "bundle_path": null,
+    "bundle_sha256": null,
+    "bundle_skill_path": null,
+    "delivery": "host_user_directory",
+    "docs_url": "https://github.com/EthanSMC/Attention",
+    "document_sha256": "9988f0d4f2b3b3686cabe49b8eb72850e9d5261d065e6bb9d7f1db78f381dcad",
+    "format": "skill_md",
+    "id": "attention",
+    "install": "filesystem_directory",
+    "install_command_template": null,
+    "local_path": {
+      "entrypoint": "SKILL.md",
+      "posix_directory": "~/.dsh/skills/attention",
+      "purpose": "install_target",
+      "windows_directory": "%USERPROFILE%\\.dsh\\skills\\attention"
+    },
+    "package_ref": null,
+    "source_kind": "local_directory",
+    "source_path": "/skills/attention/SKILL.md",
+    "tool_contract_version": "1.6.0",
+    "version": "1.8.0"
+  }
+}

@@ -32,6 +32,10 @@
     {
       "id": "workbuddy",
       "manifest_path": "/skills/attention/installations/v1/agents/workbuddy.json"
+    },
+    {
+      "id": "deepseek",
+      "manifest_path": "/skills/attention/installations/v1/agents/deepseek.json"
     }
   ],
   "migration": {

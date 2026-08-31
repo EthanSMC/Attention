@@ -41,12 +41,12 @@ Availability values are deliberately precise:
   status/event interface to Attention.
 - `unsupported`: no supported path.
 
-All five hosts can use the same Streamable HTTP MCP business interface:
+All six hosts can use the same Streamable HTTP MCP business interface:
 
 ```text
 Skill: {attention_origin}/skills/attention/SKILL.md
 MCP:   {attention_origin}/mcp
-Auth:  OAuth in the user's browser
+Auth:  OAuth in the user's browser, except DeepSeek's static API Key fallback
 ```
 
 An authenticated MCP connection proves only that the Agent can call Attention
@@ -76,6 +76,7 @@ placeholders.
 | Codex | available in CLI/Desktop | local `attention-channel` bridge shipped with the Attention CLI | the published bridge polls iLink and invokes one resident Codex app-server in a restricted profile | MCP plus optional privacy-safe Runtime health/checkpoints; real-device pairing remains unconfirmed until device acceptance |
 | Claude Code | available in Code/Desktop surfaces | local `attention-channel` bridge shipped with the Attention CLI | the bridge polls iLink and invokes headless Claude Code in a restricted profile | MCP plus an available optional privacy-safe local Runtime Reporter; the manifest does not confirm current pairing or live Runtime state without accepted evidence |
 | WorkBuddy | Skill bundle and MCP available in `>= 4.8.2` | WorkBuddy UI | host-managed | MCP only; channel state is unverifiable |
+| DeepSeek Harness | Skill and official DSH MCP client bundle available | unsupported | unsupported | authenticated MCP calls only |
 
 No manifest claims that Attention knows a user's real WeChat identity. The
 service stores no iLink token, contact list, media key, or provider account ID.
@@ -147,6 +148,45 @@ hermes gateway status
 Hermes Desktop can share interactive configuration and Skills, but the
 Gateway remains the inbound owner. Attention Runtime reporting still requires
 a separate helper that has not shipped.
+
+## DeepSeek Harness
+
+DeepSeek Harness discovers the Attention Skill from
+`~/.dsh/skills/attention/SKILL.md`. Configure the MCP endpoint and API Key in
+the environment inherited by DSH:
+
+```text
+ATTENTION_MCP_URL={attention_origin}/mcp
+ATTENTION_API_KEY=att_pat_replace_me
+```
+
+Install the official Cordis patch bundle into the `web` profile and inspect
+the composed configuration before starting it:
+
+```text
+dsh plugin --profile web add @attention/dsh
+dsh --profile web --dump-config
+dsh --profile web
+```
+
+The bundle delegates transport to DSH's built-in
+`@deepseek-ai/dsh-mcp-client`. That client currently supports static headers,
+not an OAuth lifecycle, so the DeepSeek profile truthfully declares
+`mcp.auth: "bearer_api_key"` and never invents a browser login step. DSH
+namespaces the tools as `mcp__attention__<tool-name>`.
+
+This integration does not ship an iLink/WeChat Channel or an Attention Runtime
+reporter. Channel setup, inbound activation, and pairing claims remain
+unsupported.
+
+Official references:
+
+- DSH plugin bundle publishing:
+  <https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/develop/basic/publish.zh.md>
+- DSH MCP client:
+  <https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md>
+- DSH filesystem Skills:
+  <https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/skill/skill-filesystem/README.md>
 
 ## WorkBuddy
 
@@ -578,6 +618,8 @@ public URL as proof of installation. Consumers moving from `2.1.0` should:
 - keep `interactive_oauth` commands attached to a real terminal with stdin,
   because the add step may perform OAuth and tool selection itself;
 - present `host_ui` setup as a manual WorkBuddy action;
+- treat `plugin_bundle_static_bearer` as a non-browser API Key boundary and
+  never synthesize an OAuth login command;
 - require a successful `acceptance.tool_name` result before claiming the
   installation is usable; configuration-only probes are not acceptance; and
 - treat `install_steps[].executor: "user"` as an explicit boundary, not an
@@ -586,7 +628,8 @@ public URL as proof of installation. Consumers moving from `2.1.0` should:
 ## Schema 2.3 migration
 
 Schema `2.3.0` ships the local `attention-channel` bridge for Codex and
-Claude Code. Consumers moving from `2.2.0` should:
+Claude Code and adds the verified DeepSeek Skill/MCP bundle. Consumers moving
+from `2.2.0` should:
 
 - read `inbound.engine: "attention_channel_bridge"` as a shipped local
   bridge that the Attention CLI starts with
@@ -594,6 +637,10 @@ Claude Code. Consumers moving from `2.2.0` should:
   these two hosts;
 - read the bridge activation command from
   `channel.setup_command_templates`;
+- read DeepSeek `mcp.setup_mode: "plugin_bundle_static_bearer"`, install the
+  DSH bundle with the declared argv command, and request the API Key outside
+  command templates and Skill content;
+- keep DeepSeek channel, inbound, and Runtime reporting unsupported;
 - read Codex and Claude Code `runtime_reporting.availability: "available"` as the shipped,
   optional privacy-safe Reporter implementation. Keep
   `claims.can_confirm_channel_pairing` and `claims.can_confirm_runtime` false:

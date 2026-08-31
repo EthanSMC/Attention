@@ -41,13 +41,14 @@ afterEach(async () => {
 });
 
 describe("Agent configuration plans", () => {
-  it("derives all five hosts from the contracts manifest", () => {
+  it("derives all six hosts from the contracts manifest", () => {
     expect(listAgentIntegrations().map((integration) => integration.id)).toEqual([
       "openclaw",
       "hermes",
       "codex",
       "claude-code",
       "workbuddy",
+      "deepseek",
     ]);
     expect(
       listAgentIntegrations().every(
@@ -479,6 +480,43 @@ describe("Skill staging and apply", () => {
     expect(results.find((result) => result.id === "authorize_mcp")).toMatchObject({
       status: "manual",
     });
+  });
+
+  it("installs the DSH bundle while keeping API-key authorization explicit", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "attention-cli-"));
+    temporaryDirectories.push(directory);
+    const invocations: string[] = [];
+    const plan = buildConfigurePlan({
+      hostId: "deepseek",
+      origin: "https://attention.example",
+      skillDirectory: directory,
+    });
+    const results = await applyConfigurePlan(plan, {
+      fetchImpl: async () => new Response(validSkillDocument, { status: 200 }),
+      login: true,
+      runner: async (invocation) => {
+        invocations.push([invocation.executable, ...invocation.args].join("\0"));
+        return {
+          exitCode: 0,
+          signal: null,
+          stderr: "",
+          stdout: "ok",
+          timedOut: false,
+        };
+      },
+    });
+
+    expect(invocations).toEqual([
+      "dsh\0--version",
+      "dsh\0plugin\0--profile\0web\0add\0@attention/dsh",
+    ]);
+    expect(results.find((result) => result.id === "configure_mcp"))
+      .toMatchObject({ status: "applied" });
+    expect(results.find((result) => result.id === "authorize_mcp"))
+      .toMatchObject({
+        detail: expect.stringContaining("ATTENTION_API_KEY"),
+        status: "manual",
+      });
   });
 
   it("downloads WorkBuddy's bundle but leaves import and OAuth to its UI", async () => {

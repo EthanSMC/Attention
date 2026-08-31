@@ -31,7 +31,7 @@ describe("public Agent installation guide", () => {
       origin: "https://attention.example",
     });
 
-    expect(connections).toHaveLength(5);
+    expect(connections).toHaveLength(6);
     expect(indexSource).toContain("projectAgentConnections");
     expect(indexSource).toContain("agentConnections.map");
     expect(indexSource).toContain("`/doc/${agent.id}`");

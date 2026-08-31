@@ -6,6 +6,7 @@ export const AGENT_INTEGRATION_IDS = [
   "codex",
   "claude-code",
   "workbuddy",
+  "deepseek",
 ] as const;
 
 export const AgentIntegrationIdSchema = z.enum(AGENT_INTEGRATION_IDS);
@@ -49,11 +50,13 @@ export const AgentIntegrationSchema = z
           "hermes",
           "attention-channel",
           "workbuddy",
+          "deepseek",
         ]),
         setup: z.enum([
           "host_cli_qr",
           "host_ui_qr",
           "attention_cli_qr",
+          "none",
         ]),
         status_evidence: z.enum([
           "host_cli_probe",
@@ -140,6 +143,18 @@ export const AgentIntegrationSchema = z
         code: "custom",
         message: "bridge agents must use the Attention channel owner",
         path: ["channel", "owner"],
+      });
+    }
+    const channelUnsupported = value.channel.availability === "unsupported";
+    if (
+      channelUnsupported !== (value.channel.setup === "none") ||
+      channelUnsupported !== (value.channel.status_evidence === "none")
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "unsupported channels require no setup or status evidence, and supported channels require both",
+        path: ["channel"],
       });
     }
 
@@ -501,6 +516,54 @@ const manifestInput = [
       skill: "available",
     },
     platforms: ["macos", "windows"],
+    runtime_reporting: {
+      availability: "unsupported",
+      heartbeat: "unavailable",
+      mode: "none",
+      pairing_reports: false,
+    },
+    security: {
+      channel_tokens_leave_device: false,
+      restricted_profile_required: false,
+    },
+  },
+  {
+    claims: {
+      can_confirm_channel_pairing: false,
+      can_confirm_mcp: true,
+      can_confirm_runtime: false,
+      can_confirm_wechat_identity: false,
+    },
+    channel: {
+      availability: "unsupported",
+      mode: "native",
+      owner: "deepseek",
+      setup: "none",
+      status_evidence: "none",
+    },
+    desktop: {
+      inbound: "unsupported",
+      interactive: "available",
+      platforms: ["macos", "linux", "windows"],
+      shared_skill_mcp: true,
+      visible_session: "not_applicable",
+    },
+    display_name: "DeepSeek Harness",
+    id: "deepseek",
+    inbound: {
+      availability: "unsupported",
+      engine: "none",
+      minimum_version: null,
+      requires_byo_api_key: false,
+      requires_running_cli: false,
+      stable_alternative: null,
+    },
+    interactive: {
+      availability: "available",
+      mcp: "available",
+      skill: "available",
+    },
+    platforms: ["macos", "linux", "windows"],
     runtime_reporting: {
       availability: "unsupported",
       heartbeat: "unavailable",

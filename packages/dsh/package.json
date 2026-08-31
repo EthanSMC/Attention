@@ -1,0 +1,30 @@
+{
+  "name": "@attention/dsh",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "DeepSeek Harness bundle for the Attention MCP server",
+  "license": "Apache-2.0",
+  "files": [
+    "README.md",
+    "SKILL.md",
+    "cordis.patch.yml"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
