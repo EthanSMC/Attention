@@ -131,6 +131,10 @@ jobs:
               "RESEND_API_KEY=replace-me-with-a-new-rotated-resend-key",
               "RESEND_API_KEY=re_ci_only_not_a_real_resend_key_1234567890",
           )
+          source = source.replace(
+              "ATTENTION_ADMIN_EMAILS=",
+              "ATTENTION_ADMIN_EMAILS=ci-admin@example.test",
+          )
           path.write_text(source, encoding="utf-8")
           path.chmod(0o600)
           PY

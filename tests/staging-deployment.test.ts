@@ -59,6 +59,15 @@ function createCompletedEnvironment(directory: string): string {
 }
 
 describe("staging environment preparation", () => {
+  it("completes the generated admin allowlist before CI validates the environment", () => {
+    const workflow = readFileSync(resolve(root, ".github/workflows/ci.yml"), "utf8");
+
+    expect(workflow).toContain('"ATTENTION_ADMIN_EMAILS=",');
+    expect(workflow).toContain(
+      '"ATTENTION_ADMIN_EMAILS=ci-admin@example.test",',
+    );
+  });
+
   it("generates an isolated mode-0600 staging environment exactly once", () => {
     const directory = mkdtempSync(resolve(tmpdir(), "attention-staging-env-"));
     const target = resolve(directory, "compose.env");
