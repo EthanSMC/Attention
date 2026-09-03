@@ -83,6 +83,18 @@ Compare the A result with the ECS console. Wait for public resolvers to return
 the intended address. Then prove from outside the ECS/VPC that PostgreSQL is no
 longer reachable before doing any server deployment work:
 
+> **Local proxy/TUN false positives:** Some proxy clients use synthetic DNS in
+> `198.18.0.0/15` and intercept outbound TCP connects. In that environment,
+> running `check-public-surface.sh` against the hostname can falsely report that
+> every tested port is reachable. If the local resolver returns a `198.18.*`
+> address, do not record that result as server evidence. Obtain the current ECS
+> public IPv4 from an authoritative/public resolver or the ECS console, verify
+> it matches the release ticket, and run the port check against that literal
+> public IP from a path that bypasses the proxy/TUN. Keep the hostname check for
+> HTTPS certificate and virtual-host validation. A suspected proxy false
+> positive never waives the public-port gate; the direct-IP check must still
+> pass.
+
 ```bash
 if nc -z -w 3 attention-staging.noveltystudio.cn 5432; then
   echo 'BLOCKED: public PostgreSQL is still reachable' >&2
