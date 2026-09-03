@@ -118,6 +118,127 @@ async function nextTurn(): Promise<void> {
 }
 
 describe("resident Claude Code brain", () => {
+  it("returns structured readiness after the matching account tool result", async () => {
+    const { brain, rpcs } = fixture();
+    const pending = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "verify account",
+      sessionId: null,
+    });
+    await nextTurn();
+    const rpc = rpcs[0];
+    rpc?.emit({
+      message: {
+        content: [
+          {
+            id: "account-1",
+            input: {},
+            name: "mcp__attention__attention_get_my_account",
+            type: "tool_use",
+          },
+        ],
+        role: "assistant",
+      },
+      session_id: "session-1",
+      type: "assistant",
+    });
+    rpc?.emit({
+      message: {
+        content: [
+          {
+            content: JSON.stringify({
+              capabilities: { is_filter: true, is_member: true },
+              profile: {
+                attention_id: "ethan_01",
+                display_name: "Ethan",
+                has_avatar: true,
+              },
+            }),
+            tool_use_id: "account-1",
+            type: "tool_result",
+          },
+        ],
+        role: "user",
+      },
+      session_id: "session-1",
+      type: "user",
+    });
+    rpc?.complete("");
+
+    await expect(pending).resolves.toMatchObject({
+      attentionMcpProbe: {
+        account: {
+          attentionId: "ethan_01",
+          displayName: "Ethan",
+          isFilter: true,
+          isMember: true,
+        },
+        ok: true,
+      },
+      ok: true,
+    });
+    await brain.shutdown();
+  });
+
+  it("classifies an errored account result as MCP auth without degrading Claude auth", async () => {
+    const { brain, rpcs } = fixture();
+    const pending = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "verify account",
+      sessionId: null,
+    });
+    await nextTurn();
+    const rpc = rpcs[0];
+    rpc?.emit({
+      message: {
+        content: [
+          {
+            id: "account-auth-failure",
+            input: {},
+            name: "mcp__attention__attention_get_my_account",
+            type: "tool_use",
+          },
+        ],
+        role: "assistant",
+      },
+      session_id: "session-1",
+      type: "assistant",
+    });
+    rpc?.emit({
+      message: {
+        content: [
+          {
+            content: "OAuth authorization required",
+            is_error: true,
+            tool_use_id: "account-auth-failure",
+            type: "tool_result",
+          },
+        ],
+        role: "user",
+      },
+      session_id: "session-1",
+      type: "user",
+    });
+    rpc?.complete("无法查询账号");
+
+    await expect(pending).resolves.toMatchObject({
+      attentionMcpFailure: {
+        errorCode: "mcp_auth_required",
+        retryable: false,
+      },
+      attentionMcpProbe: {
+        errorCode: "mcp_auth_required",
+        ok: false,
+        retryable: false,
+      },
+    });
+    expect(brain.runtimeSnapshot()).toMatchObject({
+      lastErrorCode: null,
+      phase: "healthy",
+    });
+    await brain.shutdown();
+  });
+
   it("returns a content-free collection control from stream-json MCP results", async () => {
     const { brain, rpcs } = fixture();
     const pending = brain.invoke({

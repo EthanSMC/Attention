@@ -22,6 +22,12 @@ import {
   mcpResultPayload,
   type CollectionReplyControl,
 } from "../collection-reply-control";
+import {
+  classifyAttentionMcpFailure,
+  parseAttentionAccountProbe,
+  type AttentionMcpFailure,
+  type AttentionMcpProbeResult,
+} from "../mcp-readiness";
 
 const DEFAULT_HEALTH_CHECK_INTERVAL_MS = 1_000;
 
@@ -50,6 +56,8 @@ export interface ClaudeResidentBrainOptions {
 }
 
 interface ActiveTurn {
+  attentionMcpFailure: AttentionMcpFailure | null;
+  attentionMcpProbe: AttentionMcpProbeResult | null;
   collectionReplyControl: CollectionReplyControl | null;
   readonly pendingToolNames: Map<string, string>;
   reply: string;
@@ -102,12 +110,10 @@ function assistantText(message: ClaudeStreamMessage): string {
 
 function observeClaudeAttentionTools(
   message: ClaudeStreamMessage,
-  current: CollectionReplyControl | null,
-  pendingToolNames: Map<string, string>,
-): CollectionReplyControl | null {
+  pending: ActiveTurn,
+): void {
   const content = objectRecord(message.message)?.content;
-  if (!Array.isArray(content)) return current;
-  let next = current;
+  if (!Array.isArray(content)) return;
   for (const entry of content) {
     const block = objectRecord(entry);
     if (!block) continue;
@@ -117,26 +123,48 @@ function observeClaudeAttentionTools(
       typeof block.name === "string" &&
       block.name.startsWith("mcp__attention__")
     ) {
-      pendingToolNames.set(block.id, block.name);
+      pending.pendingToolNames.set(block.id, block.name);
       continue;
     }
     if (block.type !== "tool_result" || typeof block.tool_use_id !== "string") {
       continue;
     }
-    const toolName = pendingToolNames.get(block.tool_use_id);
+    const toolName = pending.pendingToolNames.get(block.tool_use_id);
     if (!toolName) continue;
-    pendingToolNames.delete(block.tool_use_id);
+    pending.pendingToolNames.delete(block.tool_use_id);
+    const normalizedToolName = toolName.replace(/^mcp__attention__/u, "");
     if (block.is_error === true) {
-      next = applyAttentionToolResult(next, toolName, null);
+      const failure = classifyAttentionMcpFailure(block.content);
+      pending.attentionMcpFailure = failure;
+      if (normalizedToolName === "attention_get_my_account") {
+        pending.attentionMcpProbe = { ...failure, ok: false };
+      }
+      pending.collectionReplyControl = applyAttentionToolResult(
+        pending.collectionReplyControl,
+        toolName,
+        null,
+      );
       continue;
     }
-    next = applyAttentionToolResult(
-      next,
+    const payload = mcpResultPayload(block.content);
+    pending.collectionReplyControl = applyAttentionToolResult(
+      pending.collectionReplyControl,
       toolName,
-      mcpResultPayload(block.content),
+      payload,
     );
+    if (normalizedToolName === "attention_get_my_account") {
+      const account = parseAttentionAccountProbe(payload);
+      if (account) {
+        pending.attentionMcpProbe = { account, ok: true };
+      } else {
+        const failure = classifyAttentionMcpFailure(
+          payload ?? block.content,
+        );
+        pending.attentionMcpFailure = failure;
+        pending.attentionMcpProbe = { ...failure, ok: false };
+      }
+    }
   }
-  return next;
 }
 
 function unresolvedCollectionTool(
@@ -251,11 +279,7 @@ export function createClaudeResidentBrain(
     const sessionId = stringField(message, "session_id");
     if (sessionId) currentSessionId = sessionId;
     if (activeTurn) {
-      activeTurn.collectionReplyControl = observeClaudeAttentionTools(
-        message,
-        activeTurn.collectionReplyControl,
-        activeTurn.pendingToolNames,
-      );
+      observeClaudeAttentionTools(message, activeTurn);
     }
     if (message.type === "assistant" && activeTurn) {
       const text = assistantText(message);
@@ -306,8 +330,15 @@ export function createClaudeResidentBrain(
     finishActiveTurn({
       ok:
         resultText.trim().length > 0 ||
-        pending.collectionReplyControl !== null,
+        pending.collectionReplyControl !== null ||
+        pending.attentionMcpProbe?.ok === true,
       reply: resultText.trim(),
+      ...(pending.attentionMcpFailure
+        ? { attentionMcpFailure: pending.attentionMcpFailure }
+        : {}),
+      ...(pending.attentionMcpProbe
+        ? { attentionMcpProbe: pending.attentionMcpProbe }
+        : {}),
       ...(pending.collectionReplyControl
         ? { collectionReplyControl: pending.collectionReplyControl }
         : {}),
@@ -475,6 +506,8 @@ export function createClaudeResidentBrain(
         );
       }, turnTimeout);
       activeTurn = {
+        attentionMcpFailure: null,
+        attentionMcpProbe: null,
         collectionReplyControl: null,
         pendingToolNames: new Map(),
         reply: "",

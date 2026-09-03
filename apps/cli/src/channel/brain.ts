@@ -14,6 +14,10 @@ import { createClaudeCodeBrain } from "./brains/claude-code";
 import { createCodexBrain } from "./brains/codex";
 import { BRAIN_TIMEOUT_MS } from "./limits";
 import type { CollectionReplyControl } from "./collection-reply-control";
+import type {
+  AttentionMcpFailure,
+  AttentionMcpProbeResult,
+} from "./mcp-readiness";
 
 const MAXIMUM_CAPTURE_BYTES = 262_144;
 
@@ -34,6 +38,10 @@ export interface ExecBrainResult {
 }
 
 export interface BrainOutcome {
+  /** Stable failure evidence from any Attention MCP tool call. */
+  readonly attentionMcpFailure?: AttentionMcpFailure;
+  /** Structured evidence emitted only for attention_get_my_account. */
+  readonly attentionMcpProbe?: AttentionMcpProbeResult;
   /** Whether the invocation produced a usable reply. */
   readonly ok: boolean;
   /** Final user-facing text (empty when not ok). */

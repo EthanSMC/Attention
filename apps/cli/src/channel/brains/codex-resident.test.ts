@@ -157,6 +157,176 @@ async function nextTurn(): Promise<void> {
 }
 
 describe("resident Codex brain", () => {
+  it("returns structured readiness after attention_get_my_account completes", async () => {
+    const rpc = new ScriptedRpc();
+    rpc.autoCompleteTurns = false;
+    const brain = createCodexResidentBrain({
+      mcpUrl: "https://attention.example/mcp",
+      rpc,
+    });
+    const pending = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "verify account",
+      sessionId: null,
+    });
+    await nextTurn();
+
+    rpc.emit({
+      method: "item/completed",
+      params: {
+        item: {
+          arguments: {},
+          id: "account-1",
+          result: {
+            content: [],
+            structuredContent: {
+              capabilities: { is_filter: false, is_member: true },
+              profile: {
+                attention_id: "ethan_01",
+                display_name: "Ethan",
+                has_avatar: false,
+              },
+            },
+          },
+          server: "attention",
+          status: "completed",
+          tool: "attention_get_my_account",
+          type: "mcpToolCall",
+        },
+        threadId: "thread-1",
+        turnId: "turn-1",
+      },
+    });
+    rpc.emit({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turn: { id: "turn-1", status: "completed" },
+      },
+    });
+
+    await expect(pending).resolves.toMatchObject({
+      attentionMcpProbe: {
+        account: {
+          attentionId: "ethan_01",
+          displayName: "Ethan",
+          isFilter: false,
+          isMember: true,
+        },
+        ok: true,
+      },
+      ok: true,
+    });
+    await brain.shutdown();
+  });
+
+  it("classifies a failed account tool as MCP auth instead of Codex auth", async () => {
+    const rpc = new ScriptedRpc();
+    rpc.autoCompleteTurns = false;
+    const brain = createCodexResidentBrain({
+      mcpUrl: "https://attention.example/mcp",
+      rpc,
+    });
+    const pending = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "verify account",
+      sessionId: null,
+    });
+    await nextTurn();
+
+    rpc.emit({
+      method: "item/completed",
+      params: {
+        item: {
+          error: { message: "OAuth authorization required" },
+          id: "account-auth-failure",
+          server: "attention",
+          status: "failed",
+          tool: "attention_get_my_account",
+          type: "mcpToolCall",
+        },
+        threadId: "thread-1",
+        turnId: "turn-1",
+      },
+    });
+    rpc.complete("thread-1", "turn-1", "无法查询账号");
+
+    await expect(pending).resolves.toMatchObject({
+      attentionMcpFailure: {
+        errorCode: "mcp_auth_required",
+        retryable: false,
+      },
+      attentionMcpProbe: {
+        errorCode: "mcp_auth_required",
+        ok: false,
+        retryable: false,
+      },
+    });
+    expect(brain.runtimeSnapshot()).toMatchObject({
+      lastErrorCode: null,
+      phase: "healthy",
+    });
+    await brain.shutdown();
+  });
+
+  it("records MCP infrastructure failure from a non-probe Attention tool", async () => {
+    const rpc = new ScriptedRpc();
+    rpc.autoCompleteTurns = false;
+    const brain = createCodexResidentBrain({
+      mcpUrl: "https://attention.example/mcp",
+      rpc,
+    });
+    const pending = brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "collect",
+      sessionId: null,
+    });
+    await nextTurn();
+
+    rpc.emit({
+      method: "item/completed",
+      params: {
+        item: {
+          error: { message: "HTTP 503 Service Unavailable" },
+          id: "collect-unreachable",
+          server: "attention",
+          status: "failed",
+          tool: "attention_collect_content",
+          type: "mcpToolCall",
+        },
+        threadId: "thread-1",
+        turnId: "turn-1",
+      },
+    });
+    rpc.complete("thread-1", "turn-1", "稍后再试");
+
+    await expect(pending).resolves.toMatchObject({
+      attentionMcpFailure: {
+        errorCode: "mcp_server_unreachable",
+        retryable: true,
+      },
+    });
+    await brain.shutdown();
+  });
+
+  it("does not infer readiness from the configured MCP server name", async () => {
+    const rpc = new ScriptedRpc();
+    const brain = createCodexResidentBrain({
+      mcpUrl: "https://attention.example/mcp",
+      rpc,
+    });
+
+    const outcome = await brain.invoke({
+      cwd: "/tmp/channel",
+      prompt: "ordinary chat",
+      sessionId: null,
+    });
+
+    expect(outcome).not.toHaveProperty("attentionMcpProbe");
+    expect(rpc.methods()).toContain("mcpServerStatus/list");
+    await brain.shutdown();
+  });
+
   it("returns a content-free collection control from MCP tool results", async () => {
     const rpc = new ScriptedRpc();
     rpc.autoCompleteTurns = false;
