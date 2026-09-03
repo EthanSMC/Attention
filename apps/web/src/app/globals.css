@@ -48,7 +48,8 @@
 
 /* Standalone, unlinked administrator surface. */
 .admin-users-shell {
-  width: min(1440px, calc(100% - 32px));
+  width: calc(100% - clamp(32px, 4vw, 80px));
+  max-width: none;
   margin: 0 auto;
   padding: 40px 0 72px;
 }
@@ -65,8 +66,8 @@
 .admin-shell {
   display: grid;
   align-items: start;
-  gap: clamp(24px, 3vw, 40px);
-  grid-template-columns: 220px minmax(0, 1fr);
+  gap: clamp(20px, 2.5vw, 36px);
+  grid-template-columns: clamp(190px, 15vw, 220px) minmax(0, 1fr);
 }
 
 .admin-shell__sidebar {
@@ -537,7 +538,8 @@
 
 @media (max-width: 780px) {
   .admin-users-shell {
-    width: min(100% - 20px, 1440px);
+    width: calc(100% - 20px);
+    max-width: none;
     padding-top: 20px;
   }
 
