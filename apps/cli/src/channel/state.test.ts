@@ -66,6 +66,80 @@ describe("channel state persistence", () => {
     });
   });
 
+  it("migrates state without an Attention MCP checkpoint to unknown", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    await saveChannelState(state, base);
+    const raw = JSON.parse(
+      await readFile(channelStatePath(base), "utf8"),
+    ) as Record<string, unknown>;
+    delete raw.attentionMcp;
+    await writeFile(channelStatePath(base), JSON.stringify(raw), "utf8");
+
+    expect(Reflect.get(await loadChannelState(base), "attentionMcp")).toEqual({
+      lastCheckedAt: null,
+      lastErrorCode: null,
+      lastReadyAt: null,
+      nextRetryAt: null,
+      retryAttempt: 0,
+      status: "unknown",
+    });
+  });
+
+  it("round-trips a bounded Attention MCP checkpoint", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    Reflect.set(state, "attentionMcp", {
+      lastCheckedAt: "2026-09-03T08:00:00.000Z",
+      lastErrorCode: "mcp_server_unreachable",
+      lastReadyAt: "2026-09-03T07:00:00.000Z",
+      nextRetryAt: "2026-09-03T08:00:03.000Z",
+      retryAttempt: 2,
+      status: "unreachable",
+    });
+
+    await saveChannelState(state, base);
+
+    expect(Reflect.get(await loadChannelState(base), "attentionMcp")).toEqual({
+      lastCheckedAt: "2026-09-03T08:00:00.000Z",
+      lastErrorCode: "mcp_server_unreachable",
+      lastReadyAt: "2026-09-03T07:00:00.000Z",
+      nextRetryAt: "2026-09-03T08:00:03.000Z",
+      retryAttempt: 2,
+      status: "unreachable",
+    });
+  });
+
+  it("normalizes an invalid MCP checkpoint without changing runtime state", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    state.runtimeState.phase = "healthy";
+    await saveChannelState(state, base);
+    const raw = JSON.parse(
+      await readFile(channelStatePath(base), "utf8"),
+    ) as Record<string, unknown>;
+    raw.attentionMcp = {
+      lastCheckedAt: "not-a-date",
+      lastErrorCode: "Bearer private-token",
+      lastReadyAt: false,
+      nextRetryAt: "tomorrow",
+      retryAttempt: -1,
+      status: "waiting",
+    };
+    await writeFile(channelStatePath(base), JSON.stringify(raw), "utf8");
+
+    const loaded = await loadChannelState(base);
+    expect(Reflect.get(loaded, "attentionMcp")).toEqual({
+      lastCheckedAt: null,
+      lastErrorCode: null,
+      lastReadyAt: null,
+      nextRetryAt: null,
+      retryAttempt: 0,
+      status: "unknown",
+    });
+    expect(loaded.runtimeState.phase).toBe("healthy");
+  });
+
   it("persists a runtime phase checkpoint atomically", async () => {
     const base = await makeTempBase();
     const state = defaultChannelState();
