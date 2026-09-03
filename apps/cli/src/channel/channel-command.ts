@@ -945,6 +945,7 @@ export async function channelStart(
           activeBrain,
           cwd,
           persist,
+          activeMcpSupervisor,
           reporterSlot.current,
         );
         if (!client.token) continue;
@@ -1003,6 +1004,7 @@ export async function channelStart(
           activeBrain,
           cwd,
           persist,
+          activeMcpSupervisor,
           reporterSlot.current,
         );
         await flushPendingOutbound(runtime, persist);
@@ -1038,6 +1040,7 @@ async function processPendingInbound(
   brain: BrainAdapter,
   cwd: string,
   persist: () => Promise<void>,
+  mcpSupervisor: McpRecoverySupervisor,
   reporterRuntime: ReporterRuntime | null = null,
 ): Promise<void> {
   const batch = runtime.state.pendingInbound.slice(0, MAXIMUM_PENDING_MESSAGES);
@@ -1045,6 +1048,12 @@ async function processPendingInbound(
     batch[0] && inboundRetryIsCoolingDown(batch[0], runtime.state),
   );
   for (const pending of batch) {
+    if (
+      pending.blockedBy === "attention_mcp" &&
+      runtime.state.attentionMcp.status !== "ready"
+    ) {
+      continue;
+    }
     const pairingCode = reporterRuntime?.pairing.challenge?.pairing_code ?? null;
     const bypassingBlockedBusiness = businessQueueBlocked;
     if (
@@ -1110,6 +1119,46 @@ async function processPendingInbound(
     }
     syncRuntimeCheckpoint(runtime.state, brain);
     let outcomeReplies = [...outcome.replies];
+    if (outcome.controlCommand === "retry") {
+      enqueueOutbound(runtime.state, {
+        contextToken:
+          runtime.state.contextTokens[message.fromUserId] ??
+          message.contextToken,
+        id: outboundIdentifier({
+          inboundId: pending.id,
+          kind: "result",
+          index: 0,
+        }),
+        text: "正在重新连接 Attention MCP，微信登录不会中断。",
+        toUserId: message.fromUserId,
+      });
+      await persist();
+      await flushPendingOutbound(runtime, persist);
+      if (!runtime.client.token) return;
+
+      const recovery = await mcpSupervisor.retryNow();
+      syncRuntimeCheckpoint(runtime.state, brain);
+      enqueueOutbound(runtime.state, {
+        contextToken:
+          runtime.state.contextTokens[message.fromUserId] ??
+          message.contextToken,
+        id: outboundIdentifier({
+          inboundId: pending.id,
+          kind: "result",
+          index: 1,
+        }),
+        text: mcpRecoveryReply(recovery, brain.hostId),
+        toUserId: message.fromUserId,
+      });
+      completeInbound(runtime.state, pending.id);
+      await persist();
+      reporterRuntime?.reporter.transition(
+        buildReporterSnapshot(runtime, brain),
+      );
+      await flushPendingOutbound(runtime, persist);
+      if (!runtime.client.token) return;
+      continue;
+    }
     if (outcome.controlCommand) {
       if (
         outcome.controlCommand === "pairing_verification" &&
@@ -1142,9 +1191,18 @@ async function processPendingInbound(
       if (controlFailure) outcomeReplies = [controlFailure];
     }
     if (!outcome.completed) {
-      businessQueueBlocked = true;
       pending.attempts += 1;
-      scheduleInboundRetry(runtime.state, pending.attempts);
+      if (outcome.attentionMcpFailure) {
+        pending.blockedBy = "attention_mcp";
+        await mcpSupervisor.recordProbe({
+          ...outcome.attentionMcpFailure,
+          ok: false,
+        });
+      } else {
+        pending.blockedBy = "runtime";
+        businessQueueBlocked = true;
+        scheduleInboundRetry(runtime.state, pending.attempts);
+      }
       if (pending.attempts === 1) {
         outcomeReplies.forEach((reply, index) => {
           enqueueOutbound(runtime.state, {
@@ -1169,6 +1227,7 @@ async function processPendingInbound(
       continue;
     }
 
+    pending.blockedBy = null;
     if (!bypassingBlockedBusiness) {
       runtime.state.runtimeState.nextRetryAt = null;
       runtime.state.runtimeState.retryAttempt = 0;
@@ -1197,6 +1256,24 @@ async function processPendingInbound(
     );
     await flushPendingOutbound(runtime, persist);
     if (!runtime.client.token) return;
+  }
+}
+
+function mcpRecoveryReply(
+  outcome: McpRecoveryOutcome,
+  hostId: BrainAdapter["hostId"],
+): string {
+  switch (outcome.kind) {
+    case "ready":
+      return "Attention MCP 已恢复，并已验证当前账号。";
+    case "auth_required":
+      return `Attention MCP 需要重新授权；微信对话仍可用。请在本机运行 attention configure ${hostId} --apply --login，完成后回复“重试”。`;
+    case "cooldown":
+      return `Attention MCP 正在限制频繁重试；微信对话仍可用。可在 ${outcome.retryAt} 后再试。`;
+    case "scheduled":
+      return `Attention MCP 暂未恢复（${outcome.errorCode}）；微信对话仍可用，已安排在 ${outcome.nextRetryAt} 自动重试。`;
+    case "failed":
+      return `Attention MCP 暂未恢复（${outcome.errorCode}）；微信对话仍可用，请检查本机配置后再发送“重试”。`;
   }
 }
 

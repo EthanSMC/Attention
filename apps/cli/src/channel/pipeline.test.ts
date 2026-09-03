@@ -340,6 +340,46 @@ describe("handleInboundMessage", () => {
     expect(output.replies.join("\n")).not.toContain("Codex Runtime");
   });
 
+  it("reports iLink, Runtime, Attention MCP, and Reporter independently", async () => {
+    const state = defaultChannelState();
+    state.token = "local-ilink-token";
+    state.runtimeState.phase = "healthy";
+    state.attentionMcp.status = "auth_required";
+    state.attentionMcp.lastErrorCode = "mcp_auth_required";
+    const output = await handleInboundMessage({
+      brain: fakeBrain("codex"),
+      cwd: "/tmp",
+      message: textMessage("状态"),
+      state,
+    });
+
+    const reply = output.replies.join("\n");
+    expect(reply).toContain("iLink：已登录");
+    expect(reply).toContain("Codex Runtime：healthy");
+    expect(reply).toContain(
+      "Attention MCP：auth_required（微信对话仍可用）",
+    );
+    expect(reply).toContain("Reporter：未启用");
+  });
+
+  it("defers retry completion until the recovery result is known", async () => {
+    const state = defaultChannelState();
+    const output = await handleInboundMessage({
+      brain: fakeBrain("codex"),
+      cwd: "/tmp",
+      message: textMessage("帮我重连一下？", { client_id: "retry-1" }),
+      state,
+    });
+
+    expect(output).toMatchObject({
+      completed: false,
+      controlCommand: "retry",
+      processed: true,
+      replies: [],
+    });
+    expect(state.processedMessageIds).toEqual([]);
+  });
+
   it("intercepts only the exact ephemeral Runtime pairing code", async () => {
     const state = defaultChannelState();
     let calls = 0;
@@ -566,6 +606,56 @@ describe("handleInboundMessage", () => {
     expect(state.processedMessageIds).toEqual([]);
   });
 
+  it("keeps an MCP-dependent message pending when its tool call fails", async () => {
+    const state = defaultChannelState();
+    const output = await handleInboundMessage({
+      brain: fakeBrain("codex"),
+      cwd: "/tmp",
+      invokeBrain: async () => ({
+        attentionMcpFailure: {
+          errorCode: "mcp_auth_required",
+          retryable: false,
+        },
+        ok: true,
+        reply: "模型误称操作成功",
+        resumeFailed: false,
+        sessionId: "session-1",
+        timedOut: false,
+      }),
+      message: textMessage("收藏 https://example.com", {
+        client_id: "collect-1",
+      }),
+      state,
+    });
+
+    expect(output.completed).toBe(false);
+    expect(output.attentionMcpFailure).toEqual({
+      errorCode: "mcp_auth_required",
+      retryable: false,
+    });
+    expect(output.replies).toEqual([
+      "Attention MCP 需要重新授权；这条操作已保留。请在电脑完成授权后发送“重试”。",
+    ]);
+    expect(state.runtimeState.activeTurnMessageRef).not.toBeNull();
+    expect(state.processedMessageIds).toEqual([]);
+    expect(state.history).toEqual([]);
+  });
+
+  it("still completes ordinary chat while Attention MCP needs authorization", async () => {
+    const state = defaultChannelState();
+    state.attentionMcp.status = "auth_required";
+    const output = await handleInboundMessage({
+      brain: fakeBrain("codex"),
+      cwd: "/tmp",
+      invokeBrain: async () => okOutcome("我还在，可以继续聊。"),
+      message: textMessage("你还在吗"),
+      state,
+    });
+
+    expect(output.completed).toBe(true);
+    expect(output.replies).toEqual(["我还在，可以继续聊。"]);
+  });
+
   it("caps oversized input before it reaches the brain", async () => {
     const state = defaultChannelState();
     let seenPrompt = "";
@@ -605,7 +695,15 @@ describe("matchControlCommand", () => {
     ["帮助", "help"],
     ["/help", "help"],
     ["重试", "retry"],
+    ["重试一下", "retry"],
+    ["再试一次", "retry"],
     ["重新连接", "retry"],
+    ["重新连接一下", "retry"],
+    ["重连", "retry"],
+    ["帮我重连一下", "retry"],
+    ["帮我重试一下", "retry"],
+    ["帮我重连一下？", "retry"],
+    ["　重试一下！　", "retry"],
     ["/retry", "retry"],
     ["继续", "continue"],
     ["/continue", "continue"],
@@ -620,6 +718,10 @@ describe("matchControlCommand", () => {
     "继续讨论这个方案",
     "帮我查看状态",
     "状态怎么样",
+    "帮我重试这段代码",
+    "重新连接数据库",
+    "为什么重试还是失败",
+    "写一个 retry 函数",
     "/status please",
   ])("does not intercept normal chat %s", (text) => {
     expect(matchControlCommand(text, { degraded: true })).toBeNull();

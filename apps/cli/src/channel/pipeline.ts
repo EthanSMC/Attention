@@ -15,7 +15,6 @@ import {
   BRAIN_MAXIMUM_INPUT_CHARS,
   CONTROL_CONTINUE_REPLY,
   CONTROL_HELP_REPLY,
-  CONTROL_RETRY_REPLY,
   MAXIMUM_REPLY_CHARS,
   NON_TEXT_REPLY,
   RESET_CONFIRMATION_REPLY,
@@ -33,6 +32,7 @@ import {
   rememberProcessedMessage,
 } from "./state";
 import { safeCollectionReply } from "./collection-reply-control";
+import type { AttentionMcpFailure } from "./mcp-readiness";
 
 export interface PipelineInput {
   readonly brain: BrainAdapter;
@@ -54,10 +54,12 @@ export interface PipelineOutput {
   readonly completed: boolean;
   /** Reply texts to send back in order (already split to message size). */
   readonly replies: readonly string[];
-  /** True when the message was new and fully handled. */
+  /** True when the message was new and accepted for handling. */
   readonly processed: boolean;
   /** Exact local command handled without invoking the brain, when present. */
   readonly controlCommand?: ControlCommand;
+  /** Structured Attention MCP failure that kept this message pending. */
+  readonly attentionMcpFailure?: AttentionMcpFailure;
 }
 
 export type ControlCommand =
@@ -84,6 +86,18 @@ const ALWAYS_LOCAL_COMMANDS: Readonly<Record<string, ControlCommand>> = {
   "重置会话": "reset_confirmation",
 };
 
+const RETRY_COMMANDS: ReadonlySet<string> = new Set([
+  "/retry",
+  "再试一次",
+  "帮我重连一下",
+  "帮我重试一下",
+  "重新连接",
+  "重新连接一下",
+  "重连",
+  "重试",
+  "重试一下",
+]);
+
 /** Derives a bounded idempotency reference from the complete message id. */
 export function buildMessageRef(messageId: string): string {
   const digest = createHash("sha256").update(messageId).digest("hex");
@@ -95,7 +109,12 @@ export function matchControlCommand(
   text: string,
   context: { readonly degraded: boolean },
 ): ControlCommand | null {
-  const commandText = text.trim();
+  const commandText = text
+    .normalize("NFKC")
+    .trim()
+    .replace(/[。！？?!]+$/gu, "")
+    .trim();
+  if (RETRY_COMMANDS.has(commandText)) return "retry";
   const alwaysLocal = ALWAYS_LOCAL_COMMANDS[commandText];
   if (alwaysLocal) return alwaysLocal;
   if (
@@ -166,6 +185,15 @@ export async function handleInboundMessage(
       replies: [RESET_REPLY],
     };
   }
+  if (controlCommand === "retry") {
+    state.lastActivityAt = new Date().toISOString();
+    return {
+      completed: false,
+      controlCommand,
+      processed: true,
+      replies: [],
+    };
+  }
   if (controlCommand) {
     state.lastActivityAt = new Date().toISOString();
     rememberProcessedMessage(state, messageId);
@@ -178,10 +206,20 @@ export async function handleInboundMessage(
   }
 
   const messageRef = buildMessageRef(messageId);
+  const previousActiveTurnMessageRef =
+    state.runtimeState.activeTurnMessageRef;
   state.runtimeState.activeTurnMessageRef = messageRef;
   const outcome = await invokeWithFallback(input, text, messageRef);
 
   state.lastActivityAt = new Date().toISOString();
+  if (outcome.attentionMcpFailure) {
+    return {
+      attentionMcpFailure: outcome.attentionMcpFailure,
+      completed: false,
+      processed: true,
+      replies: [attentionMcpFailureReply(outcome.attentionMcpFailure)],
+    };
+  }
   if (
     !outcome.collectionReplyControl &&
     (!outcome.ok || !outcome.reply.trim())
@@ -195,7 +233,11 @@ export async function handleInboundMessage(
     };
   }
 
-  state.runtimeState.activeTurnMessageRef = null;
+  state.runtimeState.activeTurnMessageRef =
+    previousActiveTurnMessageRef !== null &&
+    previousActiveTurnMessageRef !== messageRef
+      ? previousActiveTurnMessageRef
+      : null;
   state.runtimeState.lastSuccessfulMessageAt = state.lastActivityAt;
   const safeReply = outcome.collectionReplyControl
     ? safeCollectionReply(outcome.collectionReplyControl)
@@ -207,6 +249,19 @@ export async function handleInboundMessage(
     processed: true,
     replies: splitReply(safeReply),
   };
+}
+
+function attentionMcpFailureReply(failure: AttentionMcpFailure): string {
+  switch (failure.errorCode) {
+    case "mcp_auth_required":
+    case "mcp_token_refresh_failed":
+      return "Attention MCP 需要重新授权；这条操作已保留。请在电脑完成授权后发送“重试”。";
+    case "mcp_server_unreachable":
+      return "Attention MCP 暂时不可达；这条操作已保留并会在恢复后重试。";
+    case "mcp_account_probe_failed":
+    case "mcp_protocol_failed":
+      return "Attention MCP 工具异常；这条操作已保留，请稍后发送“重试”。";
+  }
 }
 
 function canResumeInterruptedTurn(state: ChannelState): boolean {
@@ -221,7 +276,7 @@ function canResumeInterruptedTurn(state: ChannelState): boolean {
 }
 
 function buildControlReply(
-  command: Exclude<ControlCommand, "reset">,
+  command: Exclude<ControlCommand, "reset" | "retry">,
   state: ChannelState,
   hostId: BrainAdapter["hostId"],
 ): string {
@@ -230,29 +285,36 @@ function buildControlReply(
       return CONTROL_HELP_REPLY;
     case "pairing_verification":
       return "正在验证设备绑定…";
-    case "retry":
-      return CONTROL_RETRY_REPLY;
     case "continue":
       return CONTROL_CONTINUE_REPLY;
     case "reset_confirmation":
       return RESET_CONFIRMATION_REPLY;
     case "status": {
       const runtime = state.runtimeState;
-      const wechat = state.token
-        ? "本地存在微信登录态"
-        : "本地未保存微信登录态";
+      const wechat = state.token ? "已登录" : "未登录";
       const lastSuccess = runtime.lastSuccessfulMessageAt ?? "无";
-      const retry = runtime.nextRetryAt
-        ? `下次自动重试：${runtime.nextRetryAt}。`
+      const runtimeRetry = runtime.nextRetryAt
+        ? `（下次自动重试：${runtime.nextRetryAt}）`
         : "";
+      const mcpRetry = state.attentionMcp.nextRetryAt
+        ? `，下次自动重试：${state.attentionMcp.nextRetryAt}`
+        : "";
+      const mcpAvailability =
+        state.attentionMcp.status === "ready"
+          ? ""
+          : "（微信对话仍可用）";
+      const reporterEnabled =
+        state.runtimeReporter.installationId !== null ||
+        state.runtimeReporter.bindingId !== null;
       const runtimeName = hostId === "claude-code" ? "Claude Code" : "Codex";
       return [
-        `${wechat}。`,
-        `${runtimeName} Runtime：${runtime.phase}。`,
-        `最近成功处理：${lastSuccess}。`,
-        `${state.pendingInbound.length} 条消息等待处理，${state.pendingOutbound.length} 条待发送。`,
-        retry,
-      ].join("");
+        `iLink：${wechat}`,
+        `${runtimeName} Runtime：${runtime.phase}${runtimeRetry}`,
+        `Attention MCP：${state.attentionMcp.status}${mcpAvailability}${mcpRetry}`,
+        `Reporter：${reporterEnabled ? "已启用" : "未启用"}`,
+        `最近成功处理：${lastSuccess}`,
+        `队列：${state.pendingInbound.length} 条待处理，${state.pendingOutbound.length} 条待发送`,
+      ].join("\n");
     }
   }
 }

@@ -21,7 +21,7 @@ import {
 } from "./channel-command";
 import { defaultChannelState, loadChannelState, saveChannelState } from "./state";
 import { acquireChannelLock } from "./lock";
-import { handleInboundMessage } from "./pipeline";
+import { buildMessageRef, handleInboundMessage } from "./pipeline";
 
 function brainLifecycle() {
   return {
@@ -111,6 +111,9 @@ describe("channel subcommands", () => {
     state.accountId = "local-account";
     await saveChannelState(state, base);
     const lines: string[] = [];
+    const sentTexts: string[] = [];
+    let brainInvocations = 0;
+    let updates = 0;
     let updatePollAttempted = false;
     const exitCode = await channelStart("codex", {
       accountVerifier: async () => failedAccountProbe(),
@@ -118,23 +121,47 @@ describe("channel subcommands", () => {
       brainFactory: () => ({
         ...brainLifecycle(),
         hostId: "codex",
-        invoke: async () => ({
-          ok: false,
-          reply: "",
+        invoke: async () => {
+          brainInvocations += 1;
+          return {
+          ok: true,
+          reply: "我还在，可以继续聊。",
           resumeFailed: false,
-          sessionId: null,
+          sessionId: "thread-1",
           timedOut: false,
-        }),
+          };
+        },
       }),
       bridgeUpdateChecker: async () => ({
         status: "current",
         version: "0.3.8",
       }),
-      fetchImpl: async (url) => {
+      fetchImpl: async (url, init) => {
         const path = new URL(String(url)).pathname;
         if (path.endsWith("/getupdates")) {
           updatePollAttempted = true;
+          updates += 1;
+          if (updates === 1) {
+            return new Response(JSON.stringify({
+              errcode: 0,
+              get_updates_buf: "cursor-1",
+              msgs: [{
+                client_id: "message-chat",
+                context_token: "ctx-owner",
+                from_user_id: "owner",
+                item_list: [{ text_item: { text: "你还在吗" }, type: 1 }],
+              }],
+              ret: 0,
+            }));
+          }
           return new Response(JSON.stringify({ errcode: -14, ret: 0 }));
+        }
+        if (path.endsWith("/sendmessage")) {
+          const body = JSON.parse(String(init?.body)) as {
+            msg: { item_list: Array<{ text_item: { text: string } }> };
+          };
+          sentTexts.push(body.msg.item_list[0]?.text_item.text ?? "");
+          return new Response(JSON.stringify({ errcode: 0, ret: 0 }));
         }
         throw new Error(`Unexpected iLink path: ${path}`);
       },
@@ -147,6 +174,8 @@ describe("channel subcommands", () => {
 
     expect(exitCode).toBe(0);
     expect(updatePollAttempted).toBe(true);
+    expect(brainInvocations).toBe(1);
+    expect(sentTexts).toContain("我还在，可以继续聊。");
     expect(lines.join("")).toContain("需要重新授权");
     expect(lines.join("")).toContain("普通对话仍可用");
   });
@@ -1543,10 +1572,16 @@ describe("channel subcommands", () => {
     const lines: string[] = [];
     const sentTexts: string[] = [];
     let brainStarts = 0;
+    let accountVerifications = 0;
     let updates = 0;
     expect(
       await channelStart("codex", {
-        accountVerifier: async () => failedAccountProbe(),
+        accountVerifier: async () => {
+          accountVerifications += 1;
+          return accountVerifications === 1
+            ? failedAccountProbe()
+            : verifiedAccountProbe();
+        },
         baseDirectory: base,
         brainFactory: () => ({
           ...brainLifecycle(),
@@ -1578,7 +1613,7 @@ describe("channel subcommands", () => {
                   client_id: "message-retry",
                   context_token: "ctx-owner",
                   from_user_id: "owner",
-                  item_list: [{ text_item: { text: "重试" }, type: 1 }],
+                  item_list: [{ text_item: { text: "帮我重连一下？" }, type: 1 }],
                 }],
                 ret: 0,
               }));
@@ -1602,12 +1637,191 @@ describe("channel subcommands", () => {
       }),
     ).toBe(0);
     expect(brainStarts).toBe(2);
+    expect(accountVerifications).toBe(2);
     expect(sentTexts).toContain(
-      "已请求重新连接本地 Agent；恢复后会从本地断点继续。",
+      "正在重新连接 Attention MCP，微信登录不会中断。",
     );
+    expect(sentTexts).toContain("Attention MCP 已恢复，并已验证当前账号。");
+    expect(sentTexts.indexOf("正在重新连接 Attention MCP，微信登录不会中断。"))
+      .toBeLessThan(
+        sentTexts.indexOf("Attention MCP 已恢复，并已验证当前账号。"),
+      );
     expect(lines.join("")).toContain("OAuth");
     expect(lines.join("")).toContain("微信桥继续运行");
     expect(lines.join("")).not.toContain("后台服务已停止");
+    const persisted = await loadChannelState(base);
+    expect(persisted.attentionMcp.status).toBe("ready");
+    expect(persisted.pendingInbound).toEqual([]);
+  });
+
+  it("reports authorization still required without claiming recovery", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    state.token = "local-ilink-token";
+    state.accountId = "local-account";
+    await saveChannelState(state, base);
+    const sentTexts: string[] = [];
+    let updates = 0;
+
+    expect(
+      await channelStart("codex", {
+        accountVerifier: async () => failedAccountProbe(),
+        baseDirectory: base,
+        brainFactory: () => ({
+          ...brainLifecycle(),
+          hostId: "codex",
+          invoke: async () => ({
+            ok: true,
+            reply: "not reached",
+            resumeFailed: false,
+            sessionId: "thread-1",
+            timedOut: false,
+          }),
+        }),
+        fetchImpl: async (url, init) => {
+          const path = new URL(String(url)).pathname;
+          if (path.endsWith("/getupdates")) {
+            updates += 1;
+            if (updates === 1) {
+              return new Response(JSON.stringify({
+                errcode: 0,
+                get_updates_buf: "cursor-1",
+                msgs: [{
+                  client_id: "message-retry-auth",
+                  context_token: "ctx-owner",
+                  from_user_id: "owner",
+                  item_list: [{ text_item: { text: "重试一下" }, type: 1 }],
+                }],
+                ret: 0,
+              }));
+            }
+            return new Response(JSON.stringify({ errcode: -14, ret: 0 }));
+          }
+          if (path.endsWith("/sendmessage")) {
+            const body = JSON.parse(String(init?.body)) as {
+              msg: { item_list: Array<{ text_item: { text: string } }> };
+            };
+            sentTexts.push(body.msg.item_list[0]?.text_item.text ?? "");
+            return new Response(JSON.stringify({ errcode: 0, ret: 0 }));
+          }
+          throw new Error(`Unexpected iLink path: ${path}`);
+        },
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        runtimeCredentialLoader: async () => false,
+        service: true,
+        writeOutput: () => undefined,
+      }),
+    ).toBe(0);
+
+    expect(sentTexts).toContain(
+      "正在重新连接 Attention MCP，微信登录不会中断。",
+    );
+    expect(sentTexts.some((text) => text.includes(
+      "attention configure codex --apply --login",
+    ))).toBe(true);
+    expect(sentTexts.some((text) => text.includes("已恢复"))).toBe(false);
+    expect((await loadChannelState(base)).attentionMcp.status).toBe(
+      "auth_required",
+    );
+  });
+
+  it("keeps an MCP operation pending while allowing later ordinary chat", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    state.token = "local-ilink-token";
+    state.accountId = "local-account";
+    await saveChannelState(state, base);
+    const sentTexts: string[] = [];
+    let invocation = 0;
+    let updates = 0;
+
+    expect(
+      await channelStart("codex", {
+        accountVerifier: async () => verifiedAccountProbe(),
+        baseDirectory: base,
+        brainFactory: () => ({
+          ...brainLifecycle(),
+          hostId: "codex",
+          invoke: async () => {
+            invocation += 1;
+            if (invocation === 1) {
+              return {
+                attentionMcpFailure: failedAccountProbe(),
+                ok: true,
+                reply: "模型误称已收藏",
+                resumeFailed: false,
+                sessionId: "thread-1",
+                timedOut: false,
+              };
+            }
+            return {
+              ok: true,
+              reply: "我还在，可以继续聊。",
+              resumeFailed: false,
+              sessionId: "thread-1",
+              timedOut: false,
+            };
+          },
+        }),
+        fetchImpl: async (url, init) => {
+          const path = new URL(String(url)).pathname;
+          if (path.endsWith("/getupdates")) {
+            updates += 1;
+            if (updates === 1) {
+              return new Response(JSON.stringify({
+                errcode: 0,
+                get_updates_buf: "cursor-1",
+                msgs: [
+                  {
+                    client_id: "message-mcp",
+                    context_token: "ctx-owner",
+                    from_user_id: "owner",
+                    item_list: [{ text_item: { text: "收藏 https://example.com" }, type: 1 }],
+                  },
+                  {
+                    client_id: "message-chat",
+                    context_token: "ctx-owner",
+                    from_user_id: "owner",
+                    item_list: [{ text_item: { text: "你还在吗" }, type: 1 }],
+                  },
+                ],
+                ret: 0,
+              }));
+            }
+            return new Response(JSON.stringify({ errcode: -14, ret: 0 }));
+          }
+          if (path.endsWith("/sendmessage")) {
+            const body = JSON.parse(String(init?.body)) as {
+              msg: { item_list: Array<{ text_item: { text: string } }> };
+            };
+            sentTexts.push(body.msg.item_list[0]?.text_item.text ?? "");
+            return new Response(JSON.stringify({ errcode: 0, ret: 0 }));
+          }
+          throw new Error(`Unexpected iLink path: ${path}`);
+        },
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        runtimeCredentialLoader: async () => false,
+        service: true,
+        writeOutput: () => undefined,
+      }),
+    ).toBe(0);
+
+    expect(invocation).toBe(2);
+    expect(sentTexts).toContain(
+      "Attention MCP 需要重新授权；这条操作已保留。请在电脑完成授权后发送“重试”。",
+    );
+    expect(sentTexts).toContain("我还在，可以继续聊。");
+    expect(sentTexts).not.toContain("模型误称已收藏");
+    const persisted = await loadChannelState(base);
+    expect(persisted.pendingInbound.map((item) => item.id)).toEqual([
+      "message-mcp",
+    ]);
+    expect(persisted.pendingInbound[0]?.blockedBy).toBe("attention_mcp");
+    expect(persisted.runtimeState.activeTurnMessageRef).toBe(
+      buildMessageRef("message-mcp"),
+    );
   });
 
   it("checks for a managed update only after the service is healthy and idle", async () => {

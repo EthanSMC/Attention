@@ -74,6 +74,7 @@ export interface RuntimeReporterLocalState {
 export interface PendingInboundMessage {
   acknowledged: boolean;
   attempts: number;
+  blockedBy: "attention_mcp" | "runtime" | null;
   readonly id: string;
   readonly message: InboundMessage;
 }
@@ -224,6 +225,11 @@ function normalizeState(raw: unknown): ChannelState {
                 candidate.attempts >= 0
                   ? candidate.attempts
                   : 0,
+              blockedBy:
+                candidate.blockedBy === "attention_mcp" ||
+                candidate.blockedBy === "runtime"
+                  ? candidate.blockedBy
+                  : null,
               id: candidate.id,
               message: candidate.message,
             },

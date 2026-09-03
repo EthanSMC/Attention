@@ -19,6 +19,7 @@ export function enqueueInbound(
     state.pendingInbound.push({
       acknowledged: false,
       attempts: 0,
+      blockedBy: null,
       id,
       message,
     });
