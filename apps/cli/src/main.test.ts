@@ -379,4 +379,120 @@ describe("Attention CLI", () => {
     expect(help).toContain("never opens a browser");
     expect(help).not.toContain("does not ship an Attention iLink companion");
   });
+
+  it("prints a known CLI update reminder only on stderr", async () => {
+    const capture = captureOutput();
+
+    expect(
+      await runAttentionCli(["--version"], {
+        checkCliUpdate: async () => ({
+          currentVersion: ATTENTION_CLI_VERSION,
+          latestVersion: "0.3.14",
+        }),
+        output: capture.output,
+      }),
+    ).toBe(0);
+
+    expect(capture.logs).toEqual([ATTENTION_CLI_VERSION]);
+    expect(capture.errors).toEqual([
+      `[update] Attention CLI 0.3.14 可用（当前 ${ATTENTION_CLI_VERSION}）。运行 \`attention update\` 升级。`,
+    ]);
+  });
+
+  it("keeps the hidden release probe exact and skips startup checking", async () => {
+    const capture = captureOutput();
+    let checked = false;
+
+    expect(
+      await runAttentionCli(["--bridge-update-probe"], {
+        checkCliUpdate: async () => {
+          checked = true;
+          return {
+            currentVersion: ATTENTION_CLI_VERSION,
+            latestVersion: "0.3.14",
+          };
+        },
+        output: capture.output,
+      }),
+    ).toBe(0);
+
+    expect(checked).toBe(false);
+    expect(capture.errors).toEqual([]);
+    expect(capture.logs).toEqual([
+      JSON.stringify({
+        permission_profile_sha256:
+          "008145538ba70eaef4d66a6e99c588dd0cae2087dba8de85202e21f2eb738230",
+        version: ATTENTION_CLI_VERSION,
+      }),
+    ]);
+  });
+
+  it("ignores startup-check failures and preserves the primary command", async () => {
+    const capture = captureOutput();
+
+    expect(
+      await runAttentionCli(["--version"], {
+        checkCliUpdate: async () => {
+          throw new Error("offline");
+        },
+        output: capture.output,
+      }),
+    ).toBe(0);
+
+    expect(capture.logs).toEqual([ATTENTION_CLI_VERSION]);
+    expect(capture.errors).toEqual([]);
+  });
+
+  it("runs attention update directly and preserves JSON stdout", async () => {
+    const capture = captureOutput();
+
+    expect(
+      await runAttentionCli(["update", "--json"], {
+        output: capture.output,
+        runCliUpdate: async () => ({
+          fromVersion: "0.3.12",
+          installationKind: "managed_symlink",
+          status: "updated",
+          toVersion: "0.3.13",
+        }),
+      }),
+    ).toBe(0);
+
+    expect(capture.errors).toEqual([]);
+    expect(JSON.parse(capture.logs[0] ?? "null")).toEqual({
+      fromVersion: "0.3.12",
+      installationKind: "managed_symlink",
+      status: "updated",
+      toVersion: "0.3.13",
+    });
+  });
+
+  it("returns a focused error for an unmanaged global command", async () => {
+    const capture = captureOutput();
+
+    expect(
+      await runAttentionCli(["update"], {
+        output: capture.output,
+        runCliUpdate: async () => ({
+          errorCode: "unsupported_installation",
+          installationKind: "unsupported",
+          status: "error",
+        }),
+      }),
+    ).toBe(1);
+
+    expect(capture.logs).toEqual([]);
+    expect(capture.errors.join("\n")).toMatch(
+      /不属于 Attention 管理的版本化安装/u,
+    );
+  });
+
+  it("documents the explicit CLI update command", async () => {
+    const capture = captureOutput();
+
+    expect(await runAttentionCli(["--help"], { output: capture.output })).toBe(0);
+    expect(capture.logs.join("\n")).toContain(
+      "attention update [--origin <https-origin>] [--json]",
+    );
+  });
 });
