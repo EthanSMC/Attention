@@ -116,6 +116,28 @@ describe("Agent configuration plans", () => {
     }).profile.skill.delivery).toBe("host_user_directory");
   });
 
+  it("uses the shared keyring policy for the interactive Codex MCP login", () => {
+    const plan = buildConfigurePlan({
+      hostId: "codex",
+      origin: "https://attention.example/",
+    });
+
+    expect(plan.loginCommand).toEqual({
+      executable: "codex",
+      args: [
+        "-c",
+        'mcp_oauth_credentials_store="keyring"',
+        "-c",
+        "features.secret_auth_storage=false",
+        "-c",
+        'mcp_servers.attention.url="https://attention.example/mcp"',
+        "mcp",
+        "login",
+        "attention",
+      ],
+    });
+  });
+
   it("publishes a verified WorkBuddy bundle while keeping import UI-managed", () => {
     const plan = buildConfigurePlan({
       hostId: "workbuddy",
@@ -321,6 +343,7 @@ describe("Skill staging and apply", () => {
     });
 
     expect(events).toEqual([
+      'codex -c mcp_oauth_credentials_store="keyring" -c features.secret_auth_storage=false --version',
       "codex app-server --help",
       "codex mcp add --help",
       "codex mcp get --help",
@@ -350,27 +373,68 @@ describe("Skill staging and apply", () => {
       login: false,
       runner: async (invocation) => {
         invocations.push([invocation.executable, ...invocation.args].join(" "));
+        const policyCheck = invocation.args.at(-1) === "--version";
         return {
-          exitCode: 2,
+          exitCode: policyCheck ? 0 : 2,
           signal: null,
-          stderr: "unsupported command",
-          stdout: "",
+          stderr: policyCheck ? "" : "unsupported command",
+          stdout: policyCheck ? "codex-cli 0.151.0" : "",
           timedOut: false,
         };
       },
     });
 
-    expect(invocations).toEqual(["codex app-server --help"]);
+    expect(invocations).toEqual([
+      'codex -c mcp_oauth_credentials_store="keyring" -c features.secret_auth_storage=false --version',
+      "codex app-server --help",
+    ]);
     expect(fetched).toBe(false);
-    expect(results).toEqual([
+    expect(results.at(-1)).toEqual(
       expect.objectContaining({
         id: "compatibility_check_1",
         status: "failed",
       }),
-    ]);
+    );
     await expect(access(join(directory, "SKILL.md"))).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("stops safely when Codex rejects the shared keyring overrides", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "attention-cli-"));
+    temporaryDirectories.push(directory);
+    let fetched = false;
+    const plan = buildConfigurePlan({
+      hostId: "codex",
+      origin: "https://attention.example",
+      skillDirectory: directory,
+    });
+
+    const results = await applyConfigurePlan(plan, {
+      fetchImpl: async () => {
+        fetched = true;
+        return new Response(validSkillDocument, { status: 200 });
+      },
+      login: true,
+      runner: async () => ({
+        exitCode: 2,
+        signal: null,
+        stderr: "unknown config key mcp_oauth_credentials_store",
+        stdout: "codex-cli 0.90.0",
+        timedOut: false,
+      }),
+    });
+
+    expect(fetched).toBe(false);
+    expect(results).toEqual([
+      expect.objectContaining({
+        detail: expect.stringMatching(
+          /Codex 0\.90\.0.*upgrade.*Bridge.*chat.*Attention MCP/iu,
+        ),
+        id: "codex_mcp_credential_compatibility",
+        status: "failed",
+      }),
+    ]);
   });
 
   it("validates Hermes' remote Skill contract before invoking the host installer", async () => {
@@ -467,6 +531,7 @@ describe("Skill staging and apply", () => {
       runner,
     });
     expect(invocations).toEqual([
+      "codex\0-c\0mcp_oauth_credentials_store=\"keyring\"\0-c\0features.secret_auth_storage=false\0--version",
       "codex\0app-server\0--help",
       "codex\0mcp\0add\0--help",
       "codex\0mcp\0get\0--help",

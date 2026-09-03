@@ -21,7 +21,15 @@ import type {
   CommandRunner,
 } from "./command-runner";
 import { formatInvocation, runCommand } from "./command-runner";
-import { resolveAttentionPublicUrl } from "./origin";
+import {
+  codexAttentionMcpPolicyCheckCommand,
+  parseCodexCliVersion,
+  withCodexAttentionMcpPolicy,
+} from "./codex-mcp-credential-policy";
+import {
+  normalizeAttentionOrigin,
+  resolveAttentionPublicUrl,
+} from "./origin";
 
 const MAXIMUM_SKILL_BYTES = 262_144;
 const MAXIMUM_SKILL_BUNDLE_BYTES = 10 * 1024 * 1024;
@@ -168,19 +176,20 @@ export function buildConfigurePlan(input: {
   readonly skillDirectory?: string;
 }): ConfigurePlan {
   const profile = getAgentInstallationProfile(input.hostId);
+  const origin = normalizeAttentionOrigin(input.origin);
   const skillDirectory = resolve(
     input.skillDirectory ?? defaultSkillDirectory(profile.id),
   );
-  const mcpUrl = resolveAttentionPublicUrl(input.origin, profile.mcp.url_template);
+  const mcpUrl = resolveAttentionPublicUrl(origin, profile.mcp.url_template);
   const skillSourceUrl = resolveAttentionPublicUrl(
-    input.origin,
+    origin,
     profile.skill.source_path,
   );
   const skillBundleUrl = profile.skill.bundle_path
-    ? resolveAttentionPublicUrl(input.origin, profile.skill.bundle_path)
+    ? resolveAttentionPublicUrl(origin, profile.skill.bundle_path)
     : null;
   const replacements = {
-    attention_origin: input.origin,
+    attention_origin: origin,
     attention_skill_directory: skillDirectory,
     mcp_url: mcpUrl,
     skill_bundle_url: skillBundleUrl ?? "",
@@ -189,6 +198,14 @@ export function buildConfigurePlan(input: {
   const stageSkill =
     profile.skill.delivery === "host_import_directory" ||
     profile.skill.delivery === "host_user_directory";
+  const renderedLoginCommand = renderCommandTemplate(
+    profile.mcp.login_command_template,
+    replacements,
+  );
+  const loginCommand =
+    profile.id === "codex" && renderedLoginCommand
+      ? withCodexAttentionMcpPolicy(renderedLoginCommand, mcpUrl)
+      : renderedLoginCommand;
 
   return {
     channelCommands: profile.channel.setup_command_templates.map((template) => {
@@ -209,10 +226,7 @@ export function buildConfigurePlan(input: {
     downloadSkillBundle: profile.skill.delivery === "host_upload_bundle",
     hostId: profile.id,
     inboundBoundary: describeInboundBoundary(profile),
-    loginCommand: renderCommandTemplate(
-      profile.mcp.login_command_template,
-      replacements,
-    ),
+    loginCommand,
     mcpAddCommand: renderCommandTemplate(
       profile.mcp.add_command_template,
       replacements,
@@ -223,7 +237,7 @@ export function buildConfigurePlan(input: {
       replacements,
     ),
     mcpUrl,
-    origin: input.origin,
+    origin,
     profile,
     skillDirectory,
     skillDocumentSha256: profile.skill.document_sha256,
@@ -528,6 +542,31 @@ export async function applyConfigurePlan(
 ): Promise<readonly ApplyResult[]> {
   const results: ApplyResult[] = [];
   const runner = options.runner ?? runCommand;
+
+  if (plan.hostId === "codex") {
+    const command = codexAttentionMcpPolicyCheckCommand();
+    const checked = await runner(command, { timeoutMs: 45_000 });
+    const version = parseCodexCliVersion(
+      `${checked.stdout}\n${checked.stderr}`,
+    );
+    if (checked.exitCode !== 0) {
+      results.push({
+        command,
+        detail:
+          `Codex ${version ?? "version unknown"} cannot use Attention's shared keyring credential policy. ` +
+          "Please upgrade Codex. The Bridge can continue chat, but Attention MCP cannot be safely auto-recovered on this Codex build.",
+        id: "codex_mcp_credential_compatibility",
+        status: "failed",
+      });
+      return results;
+    }
+    results.push({
+      command,
+      detail: `Codex ${version ?? "version unknown"} accepts the shared keyring credential policy.`,
+      id: "codex_mcp_credential_compatibility",
+      status: "applied",
+    });
+  }
 
   for (const [index, command] of plan.compatibilityCheckCommands.entries()) {
     const compatibility = await applyCommand(

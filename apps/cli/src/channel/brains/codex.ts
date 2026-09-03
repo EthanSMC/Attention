@@ -1,5 +1,7 @@
 import type { ATTENTION_MCP_TOOL_NAMES } from "@attention/contracts";
 
+import { codexAttentionMcpOverrideArgs } from "../../codex-mcp-credential-policy";
+
 import {
   CodexAppServerRpc,
   type CodexAppServerRpcOptions,
@@ -70,8 +72,7 @@ export function createCodexBrain(options: CodexBrainOptions): BrainAdapter {
         "--disable",
         feature,
       ]),
-      "-c",
-      `mcp_servers.attention.url=${JSON.stringify(options.mcpUrl)}`,
+      ...codexAttentionMcpOverrideArgs(options.mcpUrl),
       "-c",
       `mcp_servers.attention.enabled_tools=${JSON.stringify(ATTENTION_CHANNEL_MCP_TOOL_NAMES)}`,
       "-c",
