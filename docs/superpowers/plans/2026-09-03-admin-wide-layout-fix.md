@@ -4,7 +4,7 @@
 
 **Goal:** Remove excessive left whitespace from `/admin/users` on wide desktop viewports while preserving safe gutters, table containment, and the existing mobile layout.
 
-**Architecture:** Keep the existing `AdminShell` markup and data flow unchanged. Add a source-level CSS regression test, then replace the centered `1440px` cap with viewport-responsive safe gutters and tighten the desktop grid so the main column receives all remaining width.
+**Architecture:** Keep the existing `AdminShell` markup and data flow unchanged. Add a Playwright geometry regression test that renders the real stylesheet, then replace the centered `1440px` cap with viewport-responsive safe gutters and tighten the desktop grid so the main column receives all remaining width.
 
 **Tech Stack:** Next.js, React, CSS, Vitest, Playwright/browser QA, Docker Compose staging deployment
 
@@ -23,52 +23,75 @@
 ### Task 1: Lock the responsive admin layout contract
 
 **Files:**
-- Create: `apps/web/src/components/admin-shell-layout.test.ts`
+- Create: `tests/e2e/admin-shell-layout.spec.ts`
 - Modify: `apps/web/src/app/globals.css:48-76,538-542`
 
 **Interfaces:**
 - Consumes: CSS selectors `.admin-users-shell`, `.admin-shell`, and `.admin-users-table-wrap`.
-- Produces: a tested layout contract with viewport-responsive safe gutters, a bounded sidebar, a flexible main column, and table-local horizontal overflow.
+- Produces: a browser-tested layout contract with viewport-responsive safe gutters, a bounded sidebar, a flexible main column, and table-local horizontal overflow.
 
 - [ ] **Step 1: Write the failing CSS regression test**
 
 ```ts
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
+import { expect, test } from "@playwright/test";
 
-const styles = readFileSync(
-  new URL("../app/globals.css", import.meta.url),
-  "utf8",
+const stylesheetUrl = new URL(
+  "../../apps/web/src/app/globals.css",
+  import.meta.url,
 );
 
-function firstRule(selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  return styles.match(new RegExp(`${escaped}\\s*\\{(?<body>[^}]+)\\}`, "u"))
-    ?.groups?.body ?? "";
-}
+test("uses balanced safe gutters and contains overflow across admin breakpoints", async ({
+  page,
+}) => {
+  const stylesheet = await readFile(stylesheetUrl, "utf8");
+  await page.setContent(`<style>${stylesheet}</style><main class="admin-users-shell"><div class="admin-shell"><aside class="admin-shell__sidebar"><section class="admin-identity">Admin</section></aside><div class="admin-shell__content"><section class="admin-users-list"><div class="admin-users-table-wrap"><table class="admin-users-table"><tbody><tr><td>Account</td><td>Created</td><td>Tier</td><td>Actions</td></tr></tbody></table></div></section></div></div></main>`);
 
-describe("admin shell responsive layout", () => {
-  it("uses viewport-responsive desktop gutters instead of a centered width cap", () => {
-    const shell = firstRule(".admin-users-shell");
-    expect(shell).toContain("width: calc(100% - clamp(32px, 4vw, 80px))");
-    expect(shell).toContain("max-width: none");
-    expect(shell).not.toContain("1440px");
-  });
+  for (const width of [1280, 1440, 1800]) {
+    await page.setViewportSize({ height: 900, width });
+    const geometry = await page.evaluate(() => {
+      const shell = document.querySelector<HTMLElement>(".admin-users-shell");
+      const content = document.querySelector<HTMLElement>(".admin-shell__content");
+      const tableWrap = document.querySelector<HTMLElement>(".admin-users-table-wrap");
+      if (!shell || !content || !tableWrap) throw new Error("Admin fixture is incomplete");
+      const rect = shell.getBoundingClientRect();
+      return {
+        contentWidth: content.getBoundingClientRect().width,
+        left: rect.left,
+        pageFits: document.documentElement.scrollWidth === document.documentElement.clientWidth,
+        right: width - rect.right,
+        tableOverflow: getComputedStyle(tableWrap).overflowX,
+      };
+    });
+    expect(Math.abs(geometry.left - geometry.right), `viewport ${width}`).toBeLessThan(1);
+    expect(geometry.left, `viewport ${width}`).toBeLessThanOrEqual(40);
+    expect(geometry.pageFits, `viewport ${width}`).toBe(true);
+    expect(geometry.tableOverflow, `viewport ${width}`).toBe("auto");
+    expect(geometry.contentWidth, `viewport ${width}`).toBeGreaterThan(width - 340);
+  }
 
-  it("gives the main column remaining space and contains table overflow", () => {
-    expect(firstRule(".admin-shell")).toContain(
-      "grid-template-columns: clamp(190px, 15vw, 220px) minmax(0, 1fr)",
-    );
-    expect(firstRule(".admin-users-table-wrap")).toContain("overflow-x: auto");
+  await page.setViewportSize({ height: 844, width: 390 });
+  const mobile = await page.evaluate(() => {
+    const layout = document.querySelector<HTMLElement>(".admin-shell");
+    const tableWrap = document.querySelector<HTMLElement>(".admin-users-table-wrap");
+    if (!layout || !tableWrap) throw new Error("Admin fixture is incomplete");
+    return {
+      layoutDisplay: getComputedStyle(layout).display,
+      pageFits: document.documentElement.scrollWidth === document.documentElement.clientWidth,
+      tableOverflow: getComputedStyle(tableWrap).overflowX,
+    };
   });
+  expect(mobile.layoutDisplay).toBe("block");
+  expect(mobile.pageFits).toBe(true);
+  expect(mobile.tableOverflow).toBe("auto");
 });
 ```
 
 - [ ] **Step 2: Run the focused test and verify that the old width cap fails**
 
-Run: `pnpm exec vitest run apps/web/src/components/admin-shell-layout.test.ts`
+Run: `pnpm exec playwright test tests/e2e/admin-shell-layout.spec.ts`
 
-Expected: FAIL because `.admin-users-shell` still uses `width: min(1440px, calc(100% - 32px))` and `.admin-shell` still uses a fixed `220px` sidebar.
+Expected: FAIL at `1800px` because the centered `1440px` shell leaves `180px` on each side instead of at most `40px`.
 
 - [ ] **Step 3: Implement the responsive gutter and grid rules**
 
@@ -98,14 +121,14 @@ Expected: FAIL because `.admin-users-shell` still uses `width: min(1440px, calc(
 
 - [ ] **Step 4: Run focused layout and shell tests**
 
-Run: `pnpm exec vitest run apps/web/src/components/admin-shell-layout.test.ts apps/web/src/components/admin-shell.test.tsx`
+Run: `pnpm exec playwright test tests/e2e/admin-shell-layout.spec.ts && pnpm exec vitest run apps/web/src/components/admin-shell.test.tsx`
 
-Expected: both test files PASS.
+Expected: both the Playwright geometry test and Vitest shell test PASS.
 
 - [ ] **Step 5: Commit the tested layout change**
 
 ```bash
-git add apps/web/src/app/globals.css apps/web/src/components/admin-shell-layout.test.ts
+git add apps/web/src/app/globals.css tests/e2e/admin-shell-layout.spec.ts
 git commit -m "fix(web): use wide admin workspace"
 ```
 
