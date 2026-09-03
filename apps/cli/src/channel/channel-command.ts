@@ -37,6 +37,10 @@ import {
   checkAndStageBridgeUpdate,
 } from "./bridge-updater";
 import { prepareChannelCodexHome } from "./codex-home";
+import type {
+  AttentionMcpProbeResult,
+  VerifiedAttentionAccount,
+} from "./mcp-readiness";
 import {
   ILinkClient,
   ILinkQrProtocolError,
@@ -103,7 +107,6 @@ import {
 
 export const CHANNEL_BRIDGE_HOSTS = ["codex", "claude-code"] as const;
 export type ChannelBridgeHost = (typeof CHANNEL_BRIDGE_HOSTS)[number];
-const ACCOUNT_VERIFICATION_CACHE_MS = 24 * 60 * 60 * 1_000;
 const SUMMARY_NOTIFICATION_POLL_INTERVAL_MS = 30_000;
 
 export function runtimeReporterDegradedMessage(
@@ -123,7 +126,7 @@ export interface ChannelCommandOptions {
   readonly accountVerifier?: (
     brain: BrainAdapter,
     cwd: string,
-  ) => Promise<VerifiedAttentionAccount | null>;
+  ) => Promise<AttentionMcpProbeResult>;
   readonly baseDirectory?: string;
   readonly background?: boolean;
   readonly backgroundInstaller?: (input: {
@@ -162,13 +165,6 @@ export interface ChannelCommandOptions {
   readonly serviceUninstaller?: () => Promise<void>;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly writeOutput?: (text: string) => void;
-}
-
-export interface VerifiedAttentionAccount {
-  readonly attentionId: string | null;
-  readonly displayName: string;
-  readonly isFilter: boolean;
-  readonly isMember: boolean;
 }
 
 interface Runtime {
@@ -428,30 +424,19 @@ export async function channelStart(
     }
     syncRuntimeCheckpoint(state, activeBrain);
     await saveChannelState(state, options.baseDirectory);
-    const accountVerifiedAt = state.accountVerification
-      ? Date.parse(state.accountVerification.verifiedAt)
-      : Number.NaN;
-    const now = Date.now();
-    const cachedAccountVerification =
-      options.service === true &&
-      state.accountVerification?.hostId === hostId &&
-      state.accountVerification.mcpUrl === mcpUrl &&
-      accountVerifiedAt <= now + 60_000 &&
-      accountVerifiedAt >= now - ACCOUNT_VERIFICATION_CACHE_MS;
-    const account = cachedAccountVerification
-      ? null
-      : await (options.accountVerifier ?? verifyAttentionAccount)(
-          activeBrain,
-          cwd,
-        );
-    if (!cachedAccountVerification && !account) {
+    const accountProbe = await (
+      options.accountVerifier ?? verifyAttentionAccount
+    )(activeBrain, cwd);
+    applyAttentionMcpProbe(state, accountProbe);
+    if (!accountProbe.ok) {
       state.accountVerification = null;
       await saveChannelState(state, options.baseDirectory);
       write(
         "Attention 账号验收失败：Agent 未能真实调用 attention_get_my_account。\n" +
           `Attention MCP 暂不可用；微信桥继续运行。请运行 attention configure ${hostId} --apply --login 完成 OAuth，之后可在微信中发送“重试”。\n`,
       );
-    } else if (account) {
+    } else {
+      const account = accountProbe.account;
       state.accountVerification = {
         hostId,
         mcpUrl,
@@ -463,8 +448,6 @@ export async function channelStart(
           `${account.attentionId ? ` (@${account.attentionId})` : ""}` +
           `，Filter=${account.isFilter ? "是" : "否"}，Member=${account.isMember ? "是" : "否"}。\n`,
       );
-    } else {
-      write("Attention 账号最近已验收；后台服务直接恢复微信桥。\n");
     }
 
     const client = new ILinkClient({
@@ -1341,18 +1324,15 @@ async function pollAndQueueSummaryNotifications(
   }
 }
 
-const ACCOUNT_VERIFICATION_PREFIX = "ATTENTION_ACCOUNT_OK ";
-
 export async function verifyAttentionAccount(
   brain: BrainAdapter,
   cwd: string,
-): Promise<VerifiedAttentionAccount | null> {
+): Promise<AttentionMcpProbeResult> {
   const verificationPrompt = [
     "这是 Attention 微信桥接启动前的账号验收。",
     "必须现在真实调用 attention_get_my_account；不要依据配置、历史或猜测回答。",
-    "工具成功后，只输出一行：",
-    'ATTENTION_ACCOUNT_OK {"display_name":"<返回值>","attention_id":"<返回值或null>","is_filter":<true|false>,"is_member":<true|false>}',
-    "工具失败、未授权或不可用时，不要输出 ATTENTION_ACCOUNT_OK。",
+    "工具成功后可以用一句中文简述结果；模型文字不作为验收证据。",
+    "工具失败、未授权或不可用时，如实简短说明。",
   ].join("\n");
   const outcome = await brain.invoke({
     cwd,
@@ -1361,37 +1341,37 @@ export async function verifyAttentionAccount(
     // or create the designated Channel conversation.
     sessionId: null,
   });
-  if (!outcome.ok) return null;
-  const marker = outcome.reply
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.startsWith(ACCOUNT_VERIFICATION_PREFIX));
-  if (!marker) return null;
-  try {
-    const parsed = JSON.parse(
-      marker.slice(ACCOUNT_VERIFICATION_PREFIX.length),
-    ) as Record<string, unknown>;
-    if (
-      typeof parsed.display_name !== "string" ||
-      parsed.display_name.trim().length === 0 ||
-      !(
-        parsed.attention_id === null ||
-        typeof parsed.attention_id === "string"
-      ) ||
-      typeof parsed.is_filter !== "boolean" ||
-      typeof parsed.is_member !== "boolean"
-    ) {
-      return null;
+  return (
+    outcome.attentionMcpProbe ?? {
+      errorCode: "mcp_account_probe_failed",
+      ok: false,
+      retryable: false,
     }
-    return {
-      attentionId: parsed.attention_id,
-      displayName: parsed.display_name.trim(),
-      isFilter: parsed.is_filter,
-      isMember: parsed.is_member,
-    };
-  } catch {
-    return null;
+  );
+}
+
+function applyAttentionMcpProbe(
+  state: ChannelState,
+  probe: AttentionMcpProbeResult,
+): void {
+  const checkedAt = new Date().toISOString();
+  state.attentionMcp.lastCheckedAt = checkedAt;
+  state.attentionMcp.nextRetryAt = null;
+  state.attentionMcp.retryAttempt = 0;
+  if (probe.ok) {
+    state.attentionMcp.lastErrorCode = null;
+    state.attentionMcp.lastReadyAt = checkedAt;
+    state.attentionMcp.status = "ready";
+    return;
   }
+  state.attentionMcp.lastErrorCode = probe.errorCode;
+  state.attentionMcp.status =
+    probe.errorCode === "mcp_auth_required" ||
+    probe.errorCode === "mcp_token_refresh_failed"
+      ? "auth_required"
+      : probe.errorCode === "mcp_server_unreachable"
+        ? "unreachable"
+        : "tool_error";
 }
 
 export async function channelStatus(

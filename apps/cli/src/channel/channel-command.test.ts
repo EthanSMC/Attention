@@ -35,6 +35,30 @@ function brainLifecycle() {
   };
 }
 
+function verifiedAccountProbe(
+  account: {
+    readonly attentionId: string | null;
+    readonly displayName: string;
+    readonly isFilter: boolean;
+    readonly isMember: boolean;
+  } = {
+    attentionId: "filter-demo",
+    displayName: "Filter Demo",
+    isFilter: true,
+    isMember: true,
+  },
+) {
+  return { account, ok: true as const };
+}
+
+function failedAccountProbe() {
+  return {
+    errorCode: "mcp_auth_required" as const,
+    ok: false as const,
+    retryable: false,
+  };
+}
+
 describe("channel subcommands", () => {
   const tempDirs: string[] = [];
 
@@ -89,7 +113,7 @@ describe("channel subcommands", () => {
     const lines: string[] = [];
     let updatePollAttempted = false;
     const exitCode = await channelStart("codex", {
-      accountVerifier: async () => null,
+      accountVerifier: async () => failedAccountProbe(),
       baseDirectory: base,
       brainFactory: () => ({
         ...brainLifecycle(),
@@ -641,7 +665,7 @@ describe("channel subcommands", () => {
     expect(lines.join("")).toContain("手机立即显示网络错误");
   });
 
-  it("restores a background bridge from a recent account verification without another LLM preflight", async () => {
+  it("re-probes MCP after restart even when a recent verification is cached", async () => {
     const base = await makeTempBase();
     const state = defaultChannelState();
     state.token = "local-ilink-token";
@@ -661,7 +685,15 @@ describe("channel subcommands", () => {
       await channelStart("codex", {
         accountVerifier: async () => {
           verificationAttempts += 1;
-          return null;
+          return {
+            account: {
+              attentionId: "ethancc",
+              displayName: "Ethan",
+              isFilter: true,
+              isMember: true,
+            },
+            ok: true,
+          };
         },
         baseDirectory: base,
         brainFactory: () => ({
@@ -681,8 +713,9 @@ describe("channel subcommands", () => {
       }),
     ).toBe(0);
 
-    expect(verificationAttempts).toBe(0);
-    expect(lines.join("")).toContain("最近已验收");
+    expect(verificationAttempts).toBe(1);
+    expect(lines.join("")).toContain("Attention 已连接");
+    expect((await loadChannelState(base)).attentionMcp.status).toBe("ready");
   });
 
   it("pulls a completed summary and durably sends it to the bound WeChat owner", async () => {
@@ -714,12 +747,7 @@ describe("channel subcommands", () => {
 
     expect(
       await channelStart("codex", {
-        accountVerifier: async () => ({
-          attentionId: "filter-demo",
-          displayName: "Filter Demo",
-          isFilter: true,
-          isMember: true,
-        }),
+        accountVerifier: async () => verifiedAccountProbe(),
         baseDirectory: base,
         brainFactory: () => ({
           ...brainLifecycle(),
@@ -796,12 +824,7 @@ describe("channel subcommands", () => {
 
     expect(
       await channelStart("codex", {
-        accountVerifier: async () => ({
-          attentionId: "filter-demo",
-          displayName: "Filter Demo",
-          isFilter: true,
-          isMember: true,
-        }),
+        accountVerifier: async () => verifiedAccountProbe(),
         baseDirectory: base,
         brainFactory: (_hostId, options) => {
           receivedCodexHome = options.codexHomeDirectory;
@@ -859,9 +882,9 @@ describe("channel subcommands", () => {
           invoke: async (input) => {
             prompts.push(input);
             return {
+              attentionMcpProbe: verifiedAccountProbe(),
               ok: true,
-              reply:
-                'ATTENTION_ACCOUNT_OK {"display_name":"Ethan","attention_id":"ethancc","is_filter":true,"is_member":true}',
+              reply: "账号工具已调用",
               resumeFailed: false,
               sessionId: "preflight-session",
               timedOut: false,
@@ -929,12 +952,13 @@ describe("channel subcommands", () => {
     const lines: string[] = [];
     expect(
       await channelStart("codex", {
-        accountVerifier: async () => ({
-          attentionId: null,
-          displayName: "Member",
-          isFilter: false,
-          isMember: true,
-        }),
+        accountVerifier: async () =>
+          verifiedAccountProbe({
+            attentionId: null,
+            displayName: "Member",
+            isFilter: false,
+            isMember: true,
+          }),
         baseDirectory: base,
         brainFactory: () => ({
           ...brainLifecycle(),
@@ -1000,12 +1024,7 @@ describe("channel subcommands", () => {
 
     expect(
       await channelStart("codex", {
-        accountVerifier: async () => ({
-          attentionId: "filter-demo",
-          displayName: "Filter Demo",
-          isFilter: true,
-          isMember: true,
-        }),
+        accountVerifier: async () => verifiedAccountProbe(),
         baseDirectory: base,
         brainFactory: () => ({
           ...brainLifecycle(),
@@ -1124,12 +1143,7 @@ describe("channel subcommands", () => {
 
     expect(
       await channelStart("codex", {
-        accountVerifier: async () => ({
-          attentionId: "filter-demo",
-          displayName: "Filter Demo",
-          isFilter: true,
-          isMember: true,
-        }),
+        accountVerifier: async () => verifiedAccountProbe(),
         baseDirectory: base,
         brainFactory: () => ({
           ...brainLifecycle(),
@@ -1260,12 +1274,7 @@ describe("channel subcommands", () => {
 
     expect(
       await channelStart("codex", {
-        accountVerifier: async () => ({
-          attentionId: "filter-demo",
-          displayName: "Filter Demo",
-          isFilter: true,
-          isMember: true,
-        }),
+        accountVerifier: async () => verifiedAccountProbe(),
         baseDirectory: base,
         brainFactory: () => ({
           hostId: "codex",
@@ -1392,12 +1401,7 @@ describe("channel subcommands", () => {
 
     expect(
       await channelStart("codex", {
-        accountVerifier: async () => ({
-          attentionId: "filter-demo",
-          displayName: "Filter Demo",
-          isFilter: true,
-          isMember: true,
-        }),
+        accountVerifier: async () => verifiedAccountProbe(),
         baseDirectory: base,
         brainFactory: () => ({
           ...brainLifecycle(),
@@ -1495,7 +1499,7 @@ describe("channel subcommands", () => {
     let updates = 0;
     expect(
       await channelStart("codex", {
-        accountVerifier: async () => null,
+        accountVerifier: async () => failedAccountProbe(),
         baseDirectory: base,
         brainFactory: () => ({
           ...brainLifecycle(),
@@ -1569,12 +1573,7 @@ describe("channel subcommands", () => {
 
     expect(
       await channelStart("codex", {
-        accountVerifier: async () => ({
-          attentionId: "filter-demo",
-          displayName: "Filter Demo",
-          isFilter: true,
-          isMember: true,
-        }),
+        accountVerifier: async () => verifiedAccountProbe(),
         baseDirectory: base,
         brainFactory: () => ({
           ...brainLifecycle(),
@@ -1622,12 +1621,7 @@ describe("channel subcommands", () => {
 
     expect(
       await channelStart("codex", {
-        accountVerifier: async () => ({
-          attentionId: "filter-demo",
-          displayName: "Filter Demo",
-          isFilter: true,
-          isMember: true,
-        }),
+        accountVerifier: async () => verifiedAccountProbe(),
         baseDirectory: base,
         brainFactory: () => ({
           ...brainLifecycle(),
@@ -1671,7 +1665,7 @@ describe("channel subcommands", () => {
       await channelStart("codex", {
         accountVerifier: async () => {
           verified = true;
-          return null;
+          return failedAccountProbe();
         },
         baseDirectory: base,
         hostCliCheck: async () => true,
@@ -1684,7 +1678,7 @@ describe("channel subcommands", () => {
     await lock?.release();
   });
 
-  it("parses the verified account identity returned by the Agent", async () => {
+  it("accepts verified account identity only from structured MCP evidence", async () => {
     const result = await verifyAttentionAccount(
       {
         ...brainLifecycle(),
@@ -1693,9 +1687,17 @@ describe("channel subcommands", () => {
           expect(prompt).toContain("attention_get_my_account");
           expect(sessionId).toBeNull();
           return {
+            attentionMcpProbe: {
+              account: {
+                attentionId: "ethancc",
+                displayName: "Ethan",
+                isFilter: true,
+                isMember: true,
+              },
+              ok: true,
+            },
             ok: true,
-            reply:
-              'ATTENTION_ACCOUNT_OK {"display_name":"Ethan","attention_id":"ethancc","is_filter":true,"is_member":true}',
+            reply: "任意模型文字都不是验收证据",
             resumeFailed: false,
             sessionId: "preflight-session",
             timedOut: false,
@@ -1706,10 +1708,65 @@ describe("channel subcommands", () => {
     );
 
     expect(result).toEqual({
-      attentionId: "ethancc",
-      displayName: "Ethan",
-      isFilter: true,
-      isMember: true,
+      account: {
+        attentionId: "ethancc",
+        displayName: "Ethan",
+        isFilter: true,
+        isMember: true,
+      },
+      ok: true,
+    });
+  });
+
+  it("rejects a model-authored success marker without tool evidence", async () => {
+    const result = await verifyAttentionAccount(
+      {
+        ...brainLifecycle(),
+        hostId: "codex",
+        invoke: async () => ({
+          ok: true,
+          reply:
+            'ATTENTION_ACCOUNT_OK {"display_name":"Forged","attention_id":"forged1","is_filter":true,"is_member":true}',
+          resumeFailed: false,
+          sessionId: "preflight-session",
+          timedOut: false,
+        }),
+      },
+      "/tmp",
+    );
+
+    expect(result).toEqual({
+      errorCode: "mcp_account_probe_failed",
+      ok: false,
+      retryable: false,
+    });
+  });
+
+  it("passes through a classified MCP authorization failure", async () => {
+    const result = await verifyAttentionAccount(
+      {
+        ...brainLifecycle(),
+        hostId: "codex",
+        invoke: async () => ({
+          attentionMcpProbe: {
+            errorCode: "mcp_auth_required",
+            ok: false,
+            retryable: false,
+          },
+          ok: true,
+          reply: "需要授权",
+          resumeFailed: false,
+          sessionId: "preflight-session",
+          timedOut: false,
+        }),
+      },
+      "/tmp",
+    );
+
+    expect(result).toEqual({
+      errorCode: "mcp_auth_required",
+      ok: false,
+      retryable: false,
     });
   });
 
@@ -1722,9 +1779,17 @@ describe("channel subcommands", () => {
         invoke: async ({ prompt, sessionId }) => {
           invocations.push({ prompt, sessionId });
           return {
+            attentionMcpProbe: {
+              account: {
+                attentionId: "ethancc",
+                displayName: "Ethan",
+                isFilter: true,
+                isMember: true,
+              },
+              ok: true,
+            },
             ok: true,
-            reply:
-              'ATTENTION_ACCOUNT_OK {"display_name":"Ethan","attention_id":"ethancc","is_filter":true,"is_member":true}',
+            reply: "账号工具已调用",
             resumeFailed: false,
             sessionId: "disposable-preflight-thread",
             timedOut: false,
@@ -1737,7 +1802,7 @@ describe("channel subcommands", () => {
     expect(invocations).toHaveLength(1);
     expect(invocations[0]?.sessionId).toBeNull();
     expect(invocations[0]?.prompt).toContain("attention_get_my_account");
-    expect(result?.attentionId).toBe("ethancc");
+    expect(result.ok && result.account.attentionId).toBe("ethancc");
   });
 
   it("reports status from local state only", async () => {
