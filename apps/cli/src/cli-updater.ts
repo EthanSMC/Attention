@@ -315,34 +315,46 @@ async function managedInstallation(
   commandPathValue: string | undefined,
   homeDirectory: string,
 ): Promise<ManagedInstallation> {
-  const commandPath = commandPathValue
-    ? resolve(commandPathValue)
-    : join(homeDirectory, ".local", "bin", "attention");
-  if (commandPath !== join(homeDirectory, ".local", "bin", "attention")) {
-    throw new CliUpdateError("unsupported_installation");
+  try {
+    const commandPath = commandPathValue
+      ? resolve(commandPathValue)
+      : join(homeDirectory, ".local", "bin", "attention");
+    if (commandPath !== join(homeDirectory, ".local", "bin", "attention")) {
+      throw new CliUpdateError("unsupported_installation");
+    }
+    const commandStat = await lstat(commandPath);
+    if (!commandStat.isSymbolicLink()) {
+      throw new CliUpdateError("unsupported_installation");
+    }
+    const originalTarget = await readlink(commandPath);
+    const currentArtifactPath = resolve(dirname(commandPath), originalTarget);
+    const releasesDirectory = join(homeDirectory, ".local", "share", "attention");
+    if (
+      dirname(currentArtifactPath) !== releasesDirectory ||
+      !/^attention-(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.mjs$/u.test(
+        basename(currentArtifactPath),
+      ) ||
+      !(await lstat(currentArtifactPath)).isFile()
+    ) {
+      throw new CliUpdateError("unsupported_installation");
+    }
+    return {
+      commandPath,
+      currentArtifactPath,
+      originalTarget,
+      releasesDirectory,
+    };
+  } catch (error) {
+    if (error instanceof CliUpdateError) throw error;
+    if (
+      ["EINVAL", "ENOENT", "ENOTDIR"].includes(
+        String((error as NodeJS.ErrnoException).code),
+      )
+    ) {
+      throw new CliUpdateError("unsupported_installation");
+    }
+    throw error;
   }
-  const commandStat = await lstat(commandPath);
-  if (!commandStat.isSymbolicLink()) {
-    throw new CliUpdateError("unsupported_installation");
-  }
-  const originalTarget = await readlink(commandPath);
-  const currentArtifactPath = resolve(dirname(commandPath), originalTarget);
-  const releasesDirectory = join(homeDirectory, ".local", "share", "attention");
-  if (
-    dirname(currentArtifactPath) !== releasesDirectory ||
-    !/^attention-(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.mjs$/u.test(
-      basename(currentArtifactPath),
-    ) ||
-    !(await lstat(currentArtifactPath)).isFile()
-  ) {
-    throw new CliUpdateError("unsupported_installation");
-  }
-  return {
-    commandPath,
-    currentArtifactPath,
-    originalTarget,
-    releasesDirectory,
-  };
 }
 
 async function atomicWriteArtifact(path: string, contents: Buffer): Promise<void> {
@@ -417,7 +429,12 @@ export async function updateAttentionCli(
   let createdCandidatePath: string | null = null;
   try {
     let state = await loadState(homeDirectory);
-    const origin = selectedOrigin(options, state);
+    let origin: string | null;
+    try {
+      origin = selectedOrigin(options, state);
+    } catch {
+      throw new CliUpdateError("invalid_origin");
+    }
     if (!origin) throw new CliUpdateError("missing_origin");
     const manifest = await fetchAttentionReleaseManifest({
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),

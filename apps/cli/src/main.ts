@@ -18,6 +18,7 @@ import {
   buildConfigurePlan,
   listAgentIntegrations,
 } from "./configure";
+import type { CliUpdateNotice, CliUpdateResult } from "./cli-updater";
 import { formatInvocation } from "./command-runner";
 import {
   type DiagnosticCheck,
@@ -41,9 +42,15 @@ export interface AttentionCliDependencies {
     options: ApplyConfigureOptions,
   ) => Promise<readonly ApplyResult[]>;
   readonly authorizeRuntime?: RuntimeAuthorizer;
+  readonly checkCliUpdate?: (
+    explicitOrigin?: string,
+  ) => Promise<CliUpdateNotice | null>;
   readonly environment?: NodeJS.ProcessEnv;
   readonly loadRuntimeIdentity?: () => Promise<RuntimeRegistrationIdentity>;
   readonly output?: OutputWriter;
+  readonly runCliUpdate?: (
+    explicitOrigin?: string,
+  ) => Promise<CliUpdateResult>;
   readonly runChannel?: (input: {
     readonly action: "logout" | "start" | "status";
     readonly background: boolean;
@@ -74,6 +81,7 @@ const HELP = `Attention local Agent installer and diagnostics
 
 Usage:
   attention integrations [list] [--json]
+  attention update [--origin <https-origin>] [--json]
   attention configure <host> --origin <https-origin> [--skill-dir <path>]
                       [--apply] [--login] [--force-skill] [--json]
   attention doctor <host> --origin <https-origin> [--probe] [--json]
@@ -107,6 +115,8 @@ Safety:
   Local iLink tokens are never requested, uploaded, or printed: the channel
   bridge stores them under ~/.attention/channel/ and reports only bounded,
   privacy-safe health checkpoints through the dedicated Runtime credential.
+  update explicitly downloads, verifies, probes, and atomically selects a new
+  Attention-managed standalone CLI. Package-manager installations are not overwritten.
 
 Origin:
   Pass --origin or set ATTENTION_ORIGIN. Non-loopback origins must use HTTPS.
@@ -178,6 +188,12 @@ function parseHost(value: string | undefined): AgentIntegrationId {
     );
   }
   return parsed.data;
+}
+
+function explicitOriginArgument(args: readonly string[]): string | undefined {
+  const index = args.indexOf("--origin");
+  const value = index >= 0 ? args[index + 1] : undefined;
+  return value && !value.startsWith("--") ? value : undefined;
 }
 
 function rejectConfigureOnlyOptions(
@@ -377,6 +393,22 @@ function formatDoctor(checks: readonly DiagnosticCheck[], json: boolean): string
     .join("\n");
 }
 
+function formatCliUpdateResult(result: CliUpdateResult): string {
+  if (result.status === "current") {
+    return `Attention CLI ${result.version} 已是最新版本。`;
+  }
+  if (result.status === "updated") {
+    return `Attention CLI 已从 ${result.fromVersion} 升级到 ${result.toVersion}。`;
+  }
+  if (result.errorCode === "unsupported_installation") {
+    return "当前 attention 命令不属于 Attention 管理的版本化安装；请使用原安装方式升级。";
+  }
+  if (result.errorCode === "missing_origin") {
+    return "缺少 Attention origin。请传入 --origin <https-origin>，或设置 ATTENTION_ORIGIN。";
+  }
+  return `Attention CLI 升级失败（${result.errorCode}）；当前版本保持不变。`;
+}
+
 function defaultOutput(): OutputWriter {
   return {
     error: (value) => process.stderr.write(`${value}\n`),
@@ -399,6 +431,20 @@ export async function runAttentionCli(
     );
     return 0;
   }
+  if (args[0] !== "update" && dependencies.checkCliUpdate) {
+    try {
+      const notice = await dependencies.checkCliUpdate(
+        explicitOriginArgument(args),
+      );
+      if (notice) {
+        output.error(
+          `[update] Attention CLI ${notice.latestVersion} 可用（当前 ${notice.currentVersion}）。运行 \`attention update\` 升级。`,
+        );
+      }
+    } catch {
+      // A startup update check must never affect the requested command.
+    }
+  }
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     output.log(HELP.trimEnd());
     return 0;
@@ -411,6 +457,30 @@ export async function runAttentionCli(
   try {
     const command = args[0];
     const options = parseOptions(args.slice(1));
+    if (command === "update") {
+      if (
+        options.apply ||
+        options.background ||
+        options.forceSkill ||
+        options.login ||
+        options.probe ||
+        options.service ||
+        options.skillDirectory ||
+        options.positionals.length > 0
+      ) {
+        throw new Error(
+          "Usage: attention update [--origin <https-origin>] [--json]",
+        );
+      }
+      if (!dependencies.runCliUpdate) {
+        throw new Error("CLI update runtime is unavailable.");
+      }
+      const result = await dependencies.runCliUpdate(options.origin);
+      if (options.json) output.log(JSON.stringify(result, null, 2));
+      else if (result.status === "error") output.error(formatCliUpdateResult(result));
+      else output.log(formatCliUpdateResult(result));
+      return result.status === "error" ? 1 : 0;
+    }
     if (command === "integrations") {
       rejectConfigureOnlyOptions(options, "integrations");
       if (options.origin || options.probe) {

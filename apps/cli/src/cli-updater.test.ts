@@ -330,6 +330,22 @@ describe("explicit CLI update", () => {
     );
   });
 
+  it("reports a stable error for an invalid explicit origin", async () => {
+    const result = await updateAttentionCli({
+      currentVersion: "0.3.12",
+      environment: {},
+      explicitOrigin: "http://not-loopback.example",
+      homeDirectory: await temporaryHome(),
+      nodeVersion: "24.0.0",
+    });
+
+    expect(result).toEqual({
+      errorCode: "invalid_origin",
+      installationKind: "unsupported",
+      status: "error",
+    });
+  });
+
   it("writes a probed versioned artifact and atomically switches the managed symlink", async () => {
     const fixture = await managedFixture();
 
@@ -494,5 +510,26 @@ describe("explicit CLI update", () => {
     expect(await readFile(fixture.commandPath, "utf8")).toBe(
       "package-manager wrapper",
     );
+  });
+
+  it("treats a missing managed command as an unsupported installation", async () => {
+    const homeDirectory = await temporaryHome();
+    const commandPath = join(homeDirectory, ".local", "bin", "attention");
+
+    const result = await updateAttentionCli({
+      commandPath,
+      currentVersion: "0.3.12",
+      environment: {},
+      explicitOrigin: "https://attention.example",
+      fetchImpl: successfulFetch([]),
+      homeDirectory,
+      nodeVersion: "24.0.0",
+    });
+
+    expect(result).toEqual({
+      errorCode: "unsupported_installation",
+      installationKind: "unsupported",
+      status: "error",
+    });
   });
 });
