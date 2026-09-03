@@ -25,10 +25,15 @@ describe("AdminShell", () => {
     expect(markup).toContain("@admin_01");
     expect(markup).toContain("用户权限");
     expect(markup).toContain("审计记录");
+    expect(markup).toContain('aria-label="管理端导航"');
     expect(markup).toContain(
       'aria-current="page" href="/admin/users?tab=audits"',
     );
+    expect(markup.indexOf('aria-label="当前管理员"')).toBeLessThan(
+      markup.indexOf('aria-label="管理端导航"'),
+    );
     expect(markup).not.toContain('href="/account');
+    expect(markup).not.toContain("<main");
     expect(markup).toContain("Admin content");
   });
 });

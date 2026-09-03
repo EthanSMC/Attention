@@ -30,7 +30,7 @@ describe("admin users navigation", () => {
   it("omits default and audit-only parameters from the users tab", () => {
     expect(
       adminUsersHref(
-        { page: 1, query: undefined, tier: undefined },
+        { page: 1 },
         {
           auditUser: "11111111-1111-4111-8111-111111111111",
           tab: "users",

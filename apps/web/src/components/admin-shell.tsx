@@ -46,7 +46,7 @@ export function AdminShell({
           </div>
         </section>
 
-        <nav className="admin-navigation">
+        <nav aria-label="管理端导航" className="admin-navigation">
           <p>管理</p>
           <Link
             href={usersHref}
@@ -65,7 +65,7 @@ export function AdminShell({
         </nav>
       </aside>
 
-      <main className="admin-shell__content">{children}</main>
+      <div className="admin-shell__content">{children}</div>
     </div>
   );
 }

@@ -18,7 +18,12 @@ describe("SiteHeader", () => {
     pathname = "/ai";
   });
 
-  it.each(["/oauth/authorize", "/oauth/authorize/cancel", "/admin/users"])(
+  it.each([
+    "/oauth/authorize",
+    "/oauth/authorize/cancel",
+    "/admin/users",
+    "/admin/users?tab=audits",
+  ])(
     "hides all product navigation on %s",
     (oauthPath) => {
       pathname = oauthPath;
