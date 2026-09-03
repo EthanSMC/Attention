@@ -77,7 +77,7 @@ function semanticVersion(value: unknown): readonly [number, number, number] | nu
     : null;
 }
 
-function compareSemanticVersions(left: string, right: string): number {
+export function compareSemanticVersions(left: string, right: string): number {
   const leftParts = semanticVersion(left);
   const rightParts = semanticVersion(right);
   if (!leftParts || !rightParts) throw new Error("Invalid semantic version.");
