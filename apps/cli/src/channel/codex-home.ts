@@ -54,6 +54,21 @@ async function existingDestinationMatches(
   }
 }
 
+async function rejectHomeScopedMcpCredentials(
+  destinationHome: string,
+): Promise<void> {
+  for (const name of [".credentials.json", "secrets"] as const) {
+    try {
+      await lstat(join(destinationHome, name));
+      throw new Error(
+        `Attention found home-scoped MCP credentials in the isolated Codex home (${name}); refusing to use or overwrite them. Reauthorize through attention configure codex --apply --login after upgrading Codex.`,
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+}
+
 /**
  * Builds an auth-only CODEX_HOME for the local Channel runtime.
  *
@@ -80,6 +95,7 @@ export async function prepareChannelCodexHome(
   );
   await mkdir(destinationHome, { mode: 0o700, recursive: true });
   await chmod(destinationHome, 0o700);
+  await rejectHomeScopedMcpCredentials(destinationHome);
   const destinationAuthPath = join(destinationHome, "auth.json");
 
   if (sourceAuthPath === destinationAuthPath) return destinationHome;

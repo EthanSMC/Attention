@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ATTENTION_WORKBUDDY_SKILL_BUNDLE_PUBLIC_PATH } from "@attention/contracts";
 
 import { runAttentionCli } from "./main";
+import { ATTENTION_CLI_VERSION } from "./version";
 
 function captureOutput(): {
   readonly errors: string[];
@@ -35,7 +36,7 @@ describe("Attention CLI", () => {
       JSON.stringify({
         permission_profile_sha256:
           "008145538ba70eaef4d66a6e99c588dd0cae2087dba8de85202e21f2eb738230",
-        version: "0.3.11",
+        version: ATTENTION_CLI_VERSION,
       }),
     ]);
   });

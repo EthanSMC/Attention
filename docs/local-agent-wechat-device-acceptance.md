@@ -65,6 +65,34 @@ Filter 新收藏默认公开，Member 新收藏默认私密；用户在消息中
    `--background` 命令扫码后恢复。
 7. 第二个桥实例必须被本地锁拒绝；崩溃留下的旧锁必须可自动恢复。
 
+## MCP 独立健康与对话恢复
+
+以下项目必须分别验收，不能因为某一层在线就推断其他层正常：
+
+1. 在微信发送“状态”，回复分别列出 `iLink` 登录、Codex/Claude Runtime、
+   `Attention MCP`、Runtime Reporter 和本地队列。MCP 为 `auth_required`、
+   `unreachable` 或 `tool_error` 时必须同时明确“微信对话仍可用”。
+2. MCP OAuth 失效时发送普通问候，Agent 仍应正常回复；不得把 MCP 未授权说成
+   Attention 账号离线、Codex 登录过期或 Bridge 已停止。
+3. MCP OAuth 失效时发送收藏请求，必须返回稳定的授权说明，并将原消息保留在本地
+   队列；不得采信模型自述的成功，也不得写入聊天历史或把消息标记为已完成。
+4. 在微信发送“重试”“重试一下”“再试一次”“重新连接”“重连”或
+   “帮我重连一下？”，Bridge 立即回复“正在重新连接 Attention MCP，微信登录不会
+   中断”，随后重启 resident、执行一次真实 `attention_get_my_account`，再按结果回复。
+   “帮我重试这段代码”“重新连接数据库”“为什么重试还是失败”等普通消息不得被
+   拦截成本地命令。
+5. 探针成功必须来自结构化工具结果；`ATTENTION_ACCOUNT_OK` 等模型文本、配置中出现
+   `attention` 服务名或 Runtime 进程存活都不算通过。手动重试并发时只允许一个恢复
+   任务；瞬时网络/协议错误按 1、3、10、30、60 秒上限退避，OAuth/refresh-token
+   错误停止自动重试并要求用户重新授权。
+6. Codex 首次或迁移后的授权使用
+   `attention configure codex --apply --login`。全局登录与隔离 resident 必须使用
+   同一 `attention` 服务名、同一标准化 MCP URL、系统 keyring，并关闭受
+   `CODEX_HOME` 影响的 secret storage。隔离 home 只链接 Codex 账号 `auth.json`，
+   不得读取、复制或链接 `.credentials.json`、`secrets/` 或任何 MCP token。
+7. 对 iLink/微信扫码或手机网络单独断网复验。此类失败属于微信/iLink 上游限制，
+   必须原样标为上游网络或登录问题；不得声称 MCP OAuth 恢复已修复手机扫码网络。
+
 ## 本地 Agent 补全共享摘要
 
 以下验收分别用 `codex` 和 `claude-code` 执行。使用两个 Attention 账号和两个此前

@@ -19,6 +19,12 @@ import {
   mcpResultPayload,
   type CollectionReplyControl,
 } from "../collection-reply-control";
+import {
+  classifyAttentionMcpFailure,
+  parseAttentionAccountProbe,
+  type AttentionMcpFailure,
+  type AttentionMcpProbeResult,
+} from "../mcp-readiness";
 
 const CODEX_MODEL = "gpt-5.6-luna";
 const CODEX_REASONING_EFFORT = "medium";
@@ -42,6 +48,8 @@ interface TurnResult {
 }
 
 interface ActiveTurn {
+  attentionMcpFailure: AttentionMcpFailure | null;
+  attentionMcpProbe: AttentionMcpProbeResult | null;
   collectionReplyControl: CollectionReplyControl | null;
   readonly resolve: (outcome: BrainOutcome) => void;
   readonly threadId: string;
@@ -190,11 +198,32 @@ export function createCodexResidentBrain(
         (item.status === "completed" || item.status === "failed") &&
         typeof item.tool === "string"
       ) {
+        const toolName = item.tool.replace(/^mcp__attention__/u, "");
+        const payload =
+          item.status === "failed" ? null : mcpResultPayload(item.result);
         pending.collectionReplyControl = applyAttentionToolResult(
           pending.collectionReplyControl,
-          item.tool,
-          item.status === "failed" ? null : mcpResultPayload(item.result),
+          toolName,
+          payload,
         );
+        if (item.status === "failed") {
+          const failure = classifyAttentionMcpFailure(
+            item.error ?? item.result ?? item,
+          );
+          pending.attentionMcpFailure = failure;
+          if (toolName === "attention_get_my_account") {
+            pending.attentionMcpProbe = { ...failure, ok: false };
+          }
+        } else if (toolName === "attention_get_my_account") {
+          const account = parseAttentionAccountProbe(payload);
+          if (account) {
+            pending.attentionMcpProbe = { account, ok: true };
+          } else {
+            const failure = classifyAttentionMcpFailure(payload);
+            pending.attentionMcpFailure = failure;
+            pending.attentionMcpProbe = { ...failure, ok: false };
+          }
+        }
       }
       if (
         item?.type === "agentMessage" &&
@@ -211,8 +240,16 @@ export function createCodexResidentBrain(
     finishActiveTurn({
       ok:
         completedSuccessfully &&
-        (pending.reply.length > 0 || pending.collectionReplyControl !== null),
+        (pending.reply.length > 0 ||
+          pending.collectionReplyControl !== null ||
+          pending.attentionMcpProbe?.ok === true),
       reply: completedSuccessfully ? pending.reply : "",
+      ...(pending.attentionMcpFailure
+        ? { attentionMcpFailure: pending.attentionMcpFailure }
+        : {}),
+      ...(pending.attentionMcpProbe
+        ? { attentionMcpProbe: pending.attentionMcpProbe }
+        : {}),
       ...(pending.collectionReplyControl
         ? { collectionReplyControl: pending.collectionReplyControl }
         : {}),
@@ -459,6 +496,8 @@ export function createCodexResidentBrain(
         );
       }, turnTimeout);
       activeTurn = {
+        attentionMcpFailure: null,
+        attentionMcpProbe: null,
         collectionReplyControl: null,
         reply: "",
         resolve,

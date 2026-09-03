@@ -30,6 +30,9 @@ describe("durable channel queues", () => {
       "m6",
       "m7",
     ]);
+    expect(state.pendingInbound.every((item) => item.blockedBy === null)).toBe(
+      true,
+    );
   });
 
   it("deduplicates pending and already completed deliveries", () => {

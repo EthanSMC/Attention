@@ -125,4 +125,32 @@ describe("prepareChannelCodexHome", () => {
       ).rejects.toThrow(/codex login/iu);
     });
   });
+
+  it.each([".credentials.json", "secrets"])(
+    "refuses a home-scoped MCP credential artifact at %s",
+    async (credentialArtifact) => {
+      await withTemporaryDirectory(async (baseDirectory) => {
+        const sourceCodexHome = join(baseDirectory, "source-codex");
+        await mkdir(sourceCodexHome, { recursive: true });
+        await writeFile(join(sourceCodexHome, "auth.json"), "source", {
+          mode: 0o600,
+        });
+        const isolatedHome = channelCodexHomeDirectory(baseDirectory);
+        await mkdir(isolatedHome, { recursive: true });
+        if (credentialArtifact === "secrets") {
+          await mkdir(join(isolatedHome, credentialArtifact));
+        } else {
+          await writeFile(join(isolatedHome, credentialArtifact), "secret");
+        }
+
+        await expect(
+          prepareChannelCodexHome({
+            baseDirectory,
+            platform: "darwin",
+            sourceCodexHome,
+          }),
+        ).rejects.toThrow(/home-scoped MCP credentials/iu);
+      });
+    },
+  );
 });

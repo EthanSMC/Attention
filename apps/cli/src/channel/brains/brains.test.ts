@@ -191,6 +191,12 @@ describe("codex brain", () => {
       'mcp_servers.attention.url="https://attention.example/mcp"',
     );
     expect(captured.rpcOptions?.args).toContain(
+      'mcp_oauth_credentials_store="keyring"',
+    );
+    expect(captured.rpcOptions?.args).toContain(
+      "features.secret_auth_storage=false",
+    );
+    expect(captured.rpcOptions?.args).toContain(
       `mcp_servers.attention.enabled_tools=${JSON.stringify(ATTENTION_CHANNEL_MCP_TOOL_NAMES)}`,
     );
     expect(captured.rpcOptions?.args).toContain('web_search="live"');

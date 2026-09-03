@@ -17,6 +17,12 @@ import { ChannelSummaryNotificationCursorSchema } from "@attention/contracts";
 
 import { ILINK_BASE_URL, validateIlinkBaseUrl } from "./ilink-protocol";
 import { BRAIN_HISTORY_TURNS, PROCESSED_MESSAGE_RING_SIZE } from "./limits";
+import {
+  defaultAttentionMcpCheckpoint,
+  type AttentionMcpCheckpoint,
+  type AttentionMcpErrorCode,
+  type AttentionMcpStatus,
+} from "./mcp-readiness";
 import type { InboundMessage } from "./messages";
 
 export interface HistoryEntry {
@@ -68,6 +74,7 @@ export interface RuntimeReporterLocalState {
 export interface PendingInboundMessage {
   acknowledged: boolean;
   attempts: number;
+  blockedBy: "attention_mcp" | "runtime" | null;
   readonly id: string;
   readonly message: InboundMessage;
 }
@@ -81,6 +88,7 @@ export interface PendingOutboundMessage {
 
 export interface ChannelState {
   accountVerification: AccountVerificationCheckpoint | null;
+  attentionMcp: AttentionMcpCheckpoint;
   token: string | null;
   accountId: string;
   baseUrl: string;
@@ -115,6 +123,7 @@ export function defaultChannelState(): ChannelState {
   return {
     accountVerification: null,
     accountId: "",
+    attentionMcp: defaultAttentionMcpCheckpoint(),
     baseUrl: ILINK_BASE_URL,
     brainSession: null,
     contextTokens: {},
@@ -153,6 +162,7 @@ function normalizeState(raw: unknown): ChannelState {
       record.accountVerification,
     ),
     accountId: typeof record.accountId === "string" ? record.accountId : "",
+    attentionMcp: normalizeAttentionMcpCheckpoint(record.attentionMcp),
     baseUrl: normalizeBaseUrl(record.baseUrl),
     brainSession:
       record.brainSession !== null &&
@@ -215,6 +225,11 @@ function normalizeState(raw: unknown): ChannelState {
                 candidate.attempts >= 0
                   ? candidate.attempts
                   : 0,
+              blockedBy:
+                candidate.blockedBy === "attention_mcp" ||
+                candidate.blockedBy === "runtime"
+                  ? candidate.blockedBy
+                  : null,
               id: candidate.id,
               message: candidate.message,
             },
@@ -330,6 +345,57 @@ const RUNTIME_PHASES: ReadonlySet<RuntimePhase> = new Set([
   "stopped",
 ]);
 
+const ATTENTION_MCP_STATUSES: ReadonlySet<AttentionMcpStatus> = new Set([
+  "unknown",
+  "checking",
+  "ready",
+  "reconnecting",
+  "auth_required",
+  "unreachable",
+  "tool_error",
+]);
+
+const ATTENTION_MCP_ERROR_CODES: ReadonlySet<AttentionMcpErrorCode> = new Set([
+  "mcp_auth_required",
+  "mcp_token_refresh_failed",
+  "mcp_server_unreachable",
+  "mcp_protocol_failed",
+  "mcp_account_probe_failed",
+]);
+
+function normalizeAttentionMcpCheckpoint(
+  raw: unknown,
+): AttentionMcpCheckpoint {
+  const fallback = defaultAttentionMcpCheckpoint();
+  if (raw === null || typeof raw !== "object") return fallback;
+  const record = raw as Record<string, unknown>;
+  if (
+    typeof record.status !== "string" ||
+    !ATTENTION_MCP_STATUSES.has(record.status as AttentionMcpStatus)
+  ) {
+    return fallback;
+  }
+  return {
+    lastCheckedAt: nullableIsoTimestamp(record.lastCheckedAt),
+    lastErrorCode:
+      typeof record.lastErrorCode === "string" &&
+      ATTENTION_MCP_ERROR_CODES.has(
+        record.lastErrorCode as AttentionMcpErrorCode,
+      )
+        ? (record.lastErrorCode as AttentionMcpErrorCode)
+        : null,
+    lastReadyAt: nullableIsoTimestamp(record.lastReadyAt),
+    nextRetryAt: nullableIsoTimestamp(record.nextRetryAt),
+    retryAttempt:
+      typeof record.retryAttempt === "number" &&
+      Number.isSafeInteger(record.retryAttempt) &&
+      record.retryAttempt >= 0
+        ? record.retryAttempt
+        : 0,
+    status: record.status as AttentionMcpStatus,
+  };
+}
+
 function normalizeRuntimeCheckpoint(raw: unknown): RuntimeCheckpoint {
   const fallback = defaultRuntimeCheckpoint();
   if (raw === null || typeof raw !== "object") return fallback;
@@ -419,6 +485,7 @@ export async function saveChannelState(
     JSON.stringify(
       {
         ...state,
+        attentionMcp: normalizeAttentionMcpCheckpoint(state.attentionMcp),
         runtimeState: normalizeRuntimeCheckpoint(state.runtimeState),
       },
       null,

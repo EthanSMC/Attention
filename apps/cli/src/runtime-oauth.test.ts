@@ -15,6 +15,7 @@ import {
   runtimeOAuthCallbackHeaders,
   runtimeAccessToken,
 } from "./runtime-oauth";
+import { ATTENTION_CLI_VERSION } from "./version";
 
 const temporaryDirectories: string[] = [];
 const protectedResourceMetadataUrl =
@@ -235,7 +236,7 @@ describe("dedicated Runtime OAuth", () => {
       registrationEndpoint,
     ]);
     expect(new Set(harness.userAgents)).toEqual(
-      new Set(["attention-cli/0.3.11"]),
+      new Set([`attention-cli/${ATTENTION_CLI_VERSION}`]),
     );
     expect(harness.registrationBodies).toEqual([{
       application_type: "native",
@@ -249,7 +250,7 @@ describe("dedicated Runtime OAuth", () => {
       response_types: ["code"],
       scope: runtimeScope,
       software_id: "attention-channel-runtime",
-      software_version: "0.3.11",
+      software_version: ATTENTION_CLI_VERSION,
       token_endpoint_auth_method: "none",
     }]);
     expect(harness.registrationBodies[0]).not.toHaveProperty("mac_address");

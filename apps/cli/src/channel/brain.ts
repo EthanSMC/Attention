@@ -9,11 +9,16 @@
 
 import { spawn } from "node:child_process";
 
+import { resolveHostExecutable } from "../host-executable";
 import { boundedDiagnosticOutput } from "../redact";
 import { createClaudeCodeBrain } from "./brains/claude-code";
 import { createCodexBrain } from "./brains/codex";
 import { BRAIN_TIMEOUT_MS } from "./limits";
 import type { CollectionReplyControl } from "./collection-reply-control";
+import type {
+  AttentionMcpFailure,
+  AttentionMcpProbeResult,
+} from "./mcp-readiness";
 
 const MAXIMUM_CAPTURE_BYTES = 262_144;
 
@@ -34,6 +39,10 @@ export interface ExecBrainResult {
 }
 
 export interface BrainOutcome {
+  /** Stable failure evidence from any Attention MCP tool call. */
+  readonly attentionMcpFailure?: AttentionMcpFailure;
+  /** Structured evidence emitted only for attention_get_my_account. */
+  readonly attentionMcpProbe?: AttentionMcpProbeResult;
   /** Whether the invocation produced a usable reply. */
   readonly ok: boolean;
   /** Final user-facing text (empty when not ok). */
@@ -84,8 +93,9 @@ export interface BrainAdapter {
 export async function execBrain(
   invocation: BrainInvocation,
 ): Promise<ExecBrainResult> {
+  const executable = await resolveHostExecutable(invocation.executable);
   return await new Promise((resolve) => {
-    const child = spawn(invocation.executable, [...invocation.args], {
+    const child = spawn(executable, [...invocation.args], {
       cwd: invocation.cwd,
       env: {
         ...process.env,

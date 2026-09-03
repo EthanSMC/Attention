@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 
 import { boundedDiagnosticOutput } from "./redact";
+import { resolveHostExecutable } from "./host-executable";
 
 const MAXIMUM_CAPTURE_BYTES = 65_536;
 
@@ -27,8 +28,9 @@ export const runCommand: CommandRunner = async (
   options = {},
 ): Promise<CommandResult> => {
   const timeoutMs = options.timeoutMs ?? 15_000;
+  const executable = await resolveHostExecutable(invocation.executable);
   return await new Promise((resolve) => {
-    const child = spawn(invocation.executable, [...invocation.args], {
+    const child = spawn(executable, [...invocation.args], {
       env: {
         ...process.env,
         FORCE_COLOR: "0",

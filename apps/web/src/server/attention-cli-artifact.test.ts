@@ -15,12 +15,18 @@ interface CliManifest {
 
 describe("public Attention CLI artifact", () => {
   it("retains only the current public bundle and its manifest", () => {
+    const manifest = JSON.parse(
+      readFileSync(
+        new URL("../../../web/public/cli/manifest.json", import.meta.url),
+        "utf8",
+      ),
+    ) as CliManifest;
     const publicCliFiles = readdirSync(
       new URL("../../public/cli", import.meta.url),
     ).sort();
 
     expect(publicCliFiles).toEqual([
-      "attention-0.3.11.mjs",
+      `attention-${manifest.version}.mjs`,
       "manifest.json",
     ]);
   });
