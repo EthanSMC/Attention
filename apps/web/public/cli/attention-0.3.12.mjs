@@ -1159,8 +1159,8 @@ var init_regexes = __esm({
     _emoji = `^(\\p{Extended_Pictographic}|\\p{Emoji_Component})+$`;
     ipv4 = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$/;
     ipv6 = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$/;
-    mac = (delimiter) => {
-      const escapedDelim = escapeRegex(delimiter ?? ":");
+    mac = (delimiter2) => {
+      const escapedDelim = escapeRegex(delimiter2 ?? ":");
       return new RegExp(`^(?:[0-9A-F]{2}${escapedDelim}){5}[0-9A-F]{2}$|^(?:[0-9a-f]{2}${escapedDelim}){5}[0-9a-f]{2}$`);
     };
     cidrv4 = /^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\/([0-9]|[1-2][0-9]|3[0-2])$/;
@@ -17992,8 +17992,8 @@ __export(state_exports, {
   saveChannelState: () => saveChannelState
 });
 import { chmod as chmod4, mkdir as mkdir4, readFile as readFile4, rename as rename4, rm as rm4, writeFile as writeFile4 } from "node:fs/promises";
-import { homedir as homedir3 } from "node:os";
-import { dirname as dirname4, join as join4 } from "node:path";
+import { homedir as homedir4 } from "node:os";
+import { dirname as dirname4, join as join5 } from "node:path";
 import { randomUUID as randomUUID4 } from "node:crypto";
 function defaultRuntimeCheckpoint() {
   return {
@@ -18033,10 +18033,10 @@ function defaultChannelState() {
   };
 }
 function channelStateDirectory(baseDirectory) {
-  return join4(baseDirectory ?? homedir3(), ".attention", "channel");
+  return join5(baseDirectory ?? homedir4(), ".attention", "channel");
 }
 function channelStatePath(baseDirectory) {
-  return join4(channelStateDirectory(baseDirectory), "state.json");
+  return join5(channelStateDirectory(baseDirectory), "state.json");
 }
 function normalizeState(raw) {
   const base = defaultChannelState();
@@ -18293,7 +18293,7 @@ init_src();
 init_src();
 import { createHash as createHash8, randomUUID as randomUUID8 } from "node:crypto";
 import { mkdir as mkdir8 } from "node:fs/promises";
-import { homedir as homedir6, hostname as hostname3 } from "node:os";
+import { homedir as homedir7, hostname as hostname3 } from "node:os";
 import { resolve as resolve2 } from "node:path";
 import { createInterface } from "node:readline/promises";
 
@@ -18316,12 +18316,63 @@ function boundedDiagnosticOutput(value, maximumCharacters = 4e3) {
 \u2026 output truncated`;
 }
 
+// src/host-executable.ts
+import { constants } from "node:fs";
+import { access, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { delimiter, join } from "node:path";
+async function isExecutableFile(path) {
+  try {
+    const entry = await stat(path);
+    if (!entry.isFile()) return false;
+    await access(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function isOnPath(executable, pathValue) {
+  if (!pathValue) return false;
+  for (const directory of pathValue.split(delimiter)) {
+    if (directory && await isExecutableFile(join(directory, executable))) {
+      return true;
+    }
+  }
+  return false;
+}
+async function resolveHostExecutable(executable, options = {}) {
+  if (executable !== "codex") return executable;
+  const environment = options.environment ?? process.env;
+  const configured = environment.ATTENTION_CODEX_EXECUTABLE?.trim();
+  if (configured && await isExecutableFile(configured)) return configured;
+  if (await isOnPath(executable, environment.PATH)) return executable;
+  if ((options.platform ?? process.platform) !== "darwin") return executable;
+  const applicationDirectories = options.applicationDirectories ?? [
+    "/Applications",
+    join(homedir(), "Applications")
+  ];
+  for (const applicationDirectory of applicationDirectories) {
+    for (const appName of ["Codex.app", "ChatGPT.app"]) {
+      const candidate = join(
+        applicationDirectory,
+        appName,
+        "Contents",
+        "Resources",
+        "codex"
+      );
+      if (await isExecutableFile(candidate)) return candidate;
+    }
+  }
+  return executable;
+}
+
 // src/command-runner.ts
 var MAXIMUM_CAPTURE_BYTES = 65536;
 var runCommand = async (invocation, options = {}) => {
   const timeoutMs = options.timeoutMs ?? 15e3;
+  const executable = await resolveHostExecutable(invocation.executable);
   return await new Promise((resolve4) => {
-    const child = spawn(invocation.executable, [...invocation.args], {
+    const child = spawn(executable, [...invocation.args], {
       env: {
         ...process.env,
         FORCE_COLOR: "0",
@@ -18546,8 +18597,8 @@ init_src();
 import { createHash as createHash2, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { homedir as homedir2 } from "node:os";
+import { dirname, join as join2 } from "node:path";
 
 // src/version.ts
 var ATTENTION_CLI_VERSION = "0.3.12";
@@ -18788,7 +18839,7 @@ async function requestToken(tokenEndpoint, form, fetchImpl) {
   return parseTokenResponse(parsed);
 }
 function defaultCredentialPath() {
-  return join(homedir(), ".attention", "runtime", "credentials.json");
+  return join2(homedir2(), ".attention", "runtime", "credentials.json");
 }
 function credentialPath(options) {
   return options.credentialPath ?? defaultCredentialPath();
@@ -18823,7 +18874,7 @@ async function saveRuntimeCredential(path, credential) {
       throw error51;
     }
   }
-  const temporary = join(
+  const temporary = join2(
     directory,
     `.credentials-${process.pid}-${randomUUID()}.tmp`
   );
@@ -20839,7 +20890,7 @@ function createBrainAdapter(hostId, options) {
 // src/channel/bridge-updater.ts
 import { createHash as createHash3, randomUUID as randomUUID3 } from "node:crypto";
 import { chmod as chmod3, mkdir as mkdir3, readFile as readFile3, rename as rename3, rm as rm3, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname3, join as join3 } from "node:path";
+import { dirname as dirname3, join as join4 } from "node:path";
 
 // src/channel/managed-bridge.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
@@ -20851,20 +20902,20 @@ import {
   rm as rm2,
   writeFile as writeFile2
 } from "node:fs/promises";
-import { homedir as homedir2 } from "node:os";
-import { dirname as dirname2, isAbsolute, join as join2 } from "node:path";
+import { homedir as homedir3 } from "node:os";
+import { dirname as dirname2, isAbsolute, join as join3 } from "node:path";
 var BRIDGE_UPDATE_RESTART_EXIT_CODE = 75;
 var VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 var SHA256_PATTERN2 = /^[a-f0-9]{64}$/u;
-function managedBridgePaths(homeDirectory = homedir2()) {
-  const rootDirectory = join2(homeDirectory, ".local", "share", "attention");
-  const stateDirectory = join2(homeDirectory, ".attention", "update");
+function managedBridgePaths(homeDirectory = homedir3()) {
+  const rootDirectory = join3(homeDirectory, ".local", "share", "attention");
+  const stateDirectory = join3(homeDirectory, ".attention", "update");
   return {
-    launcherPath: join2(rootDirectory, "launcher.mjs"),
+    launcherPath: join3(rootDirectory, "launcher.mjs"),
     rootDirectory,
     stateDirectory,
-    statePath: join2(stateDirectory, "state.json"),
-    versionsDirectory: join2(rootDirectory, "versions")
+    statePath: join3(stateDirectory, "state.json"),
+    versionsDirectory: join3(rootDirectory, "versions")
   };
 }
 function validArtifact(value) {
@@ -20897,11 +20948,11 @@ async function atomicWrite(path, contents, mode) {
     await rm2(temporary, { force: true });
   }
 }
-async function loadManagedBridgeUpdateState(homeDirectory = homedir2()) {
+async function loadManagedBridgeUpdateState(homeDirectory = homedir3()) {
   const raw = await readFile2(managedBridgePaths(homeDirectory).statePath, "utf8");
   return parseManagedBridgeUpdateState(JSON.parse(raw));
 }
-async function saveManagedBridgeUpdateState(state, homeDirectory = homedir2()) {
+async function saveManagedBridgeUpdateState(state, homeDirectory = homedir3()) {
   const normalized = parseManagedBridgeUpdateState(state);
   const { stateDirectory, statePath } = managedBridgePaths(homeDirectory);
   await mkdir2(stateDirectory, { mode: 448, recursive: true });
@@ -20913,13 +20964,13 @@ async function bootstrapManagedBridge(input) {
   if (!VERSION_PATTERN.test(input.version) || !SHA256_PATTERN2.test(input.permissionProfileSha256)) {
     throw new Error("Managed Bridge release identity is invalid.");
   }
-  const home = input.homeDirectory ?? homedir2();
+  const home = input.homeDirectory ?? homedir3();
   const paths = managedBridgePaths(home);
   await mkdir2(paths.rootDirectory, { mode: 448, recursive: true });
   await mkdir2(paths.versionsDirectory, { mode: 448, recursive: true });
   await chmod2(paths.rootDirectory, 448);
   await chmod2(paths.versionsDirectory, 448);
-  const artifactPath = join2(
+  const artifactPath = join3(
     paths.versionsDirectory,
     `attention-${input.version}.mjs`
   );
@@ -20954,7 +21005,7 @@ async function bootstrapManagedBridge(input) {
   );
   return { artifactPath, launcherPath: paths.launcherPath };
 }
-async function markManagedBridgeHealthy(version2, homeDirectory = homedir2()) {
+async function markManagedBridgeHealthy(version2, homeDirectory = homedir3()) {
   let state;
   try {
     state = await loadManagedBridgeUpdateState(homeDirectory);
@@ -21218,7 +21269,7 @@ async function checkAndStageBridgeUpdate(options) {
     const digest = createHash3("sha256").update(artifactResponse.bytes).digest("hex");
     if (digest !== manifest.sha256) throw new BridgeUpdateError("artifact_digest_mismatch");
     const paths = managedBridgePaths(options.homeDirectory);
-    const candidatePath = join3(paths.versionsDirectory, `attention-${manifest.version}.mjs`);
+    const candidatePath = join4(paths.versionsDirectory, `attention-${manifest.version}.mjs`);
     try {
       const existing = await readFile3(candidatePath);
       if (!existing.equals(artifactResponse.bytes)) {
@@ -21274,26 +21325,26 @@ async function checkAndStageBridgeUpdate(options) {
 // src/channel/codex-home.ts
 init_state();
 import {
-  access,
+  access as access2,
   chmod as chmod5,
   link,
   lstat as lstat2,
   mkdir as mkdir5,
   readlink,
-  stat,
+  stat as stat2,
   symlink
 } from "node:fs/promises";
-import { constants } from "node:fs";
-import { homedir as homedir4 } from "node:os";
-import { dirname as dirname5, join as join5, resolve } from "node:path";
+import { constants as constants2 } from "node:fs";
+import { homedir as homedir5 } from "node:os";
+import { dirname as dirname5, join as join6, resolve } from "node:path";
 function channelCodexHomeDirectory(baseDirectory) {
-  return join5(channelStateDirectory(baseDirectory), "codex-home");
+  return join6(channelStateDirectory(baseDirectory), "codex-home");
 }
 function sourceCodexHome(options) {
-  return options.sourceCodexHome ?? process.env.CODEX_HOME ?? join5(options.homeDirectory ?? homedir4(), ".codex");
+  return options.sourceCodexHome ?? process.env.CODEX_HOME ?? join6(options.homeDirectory ?? homedir5(), ".codex");
 }
 async function sameLinkedFile(left, right) {
-  const [leftStat, rightStat] = await Promise.all([stat(left), stat(right)]);
+  const [leftStat, rightStat] = await Promise.all([stat2(left), stat2(right)]);
   return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
 }
 async function existingDestinationMatches(destination, source) {
@@ -21311,7 +21362,7 @@ async function existingDestinationMatches(destination, source) {
 async function rejectHomeScopedMcpCredentials(destinationHome) {
   for (const name of [".credentials.json", "secrets"]) {
     try {
-      await lstat2(join5(destinationHome, name));
+      await lstat2(join6(destinationHome, name));
       throw new Error(
         `Attention found home-scoped MCP credentials in the isolated Codex home (${name}); refusing to use or overwrite them. Reauthorize through attention configure codex --apply --login after upgrading Codex.`
       );
@@ -21322,9 +21373,9 @@ async function rejectHomeScopedMcpCredentials(destinationHome) {
 }
 async function prepareChannelCodexHome(options = {}) {
   const sourceHome = resolve(sourceCodexHome(options));
-  const sourceAuthPath = join5(sourceHome, "auth.json");
+  const sourceAuthPath = join6(sourceHome, "auth.json");
   try {
-    await access(sourceAuthPath, constants.R_OK);
+    await access2(sourceAuthPath, constants2.R_OK);
   } catch {
     throw new Error(
       `Codex login was not found at ${sourceAuthPath}. Run codex login, then retry Attention Channel setup.`
@@ -21336,7 +21387,7 @@ async function prepareChannelCodexHome(options = {}) {
   await mkdir5(destinationHome, { mode: 448, recursive: true });
   await chmod5(destinationHome, 448);
   await rejectHomeScopedMcpCredentials(destinationHome);
-  const destinationAuthPath = join5(destinationHome, "auth.json");
+  const destinationAuthPath = join6(destinationHome, "auth.json");
   if (sourceAuthPath === destinationAuthPath) return destinationHome;
   if (await existingDestinationMatches(destinationAuthPath, sourceAuthPath)) {
     return destinationHome;
@@ -21758,9 +21809,9 @@ init_ilink_protocol();
 init_state();
 import { randomUUID as randomUUID5 } from "node:crypto";
 import { mkdir as mkdir6, open, readFile as readFile5, rm as rm5 } from "node:fs/promises";
-import { join as join6 } from "node:path";
+import { join as join7 } from "node:path";
 function channelLockPath(baseDirectory) {
-  return join6(channelStateDirectory(baseDirectory), "bridge.lock");
+  return join7(channelStateDirectory(baseDirectory), "bridge.lock");
 }
 function processAlive(pid) {
   try {
@@ -23351,8 +23402,8 @@ function channelSessionFingerprint(token) {
 
 // src/channel/service.ts
 import { randomUUID as randomUUID7 } from "node:crypto";
-import { access as access2, chmod as chmod6, mkdir as mkdir7, rename as rename5, rm as rm6, writeFile as writeFile5 } from "node:fs/promises";
-import { homedir as homedir5 } from "node:os";
+import { access as access3, chmod as chmod6, mkdir as mkdir7, rename as rename5, rm as rm6, writeFile as writeFile5 } from "node:fs/promises";
+import { homedir as homedir6 } from "node:os";
 import { dirname as dirname6, posix, win32 } from "node:path";
 var SERVICE_LABEL = "cn.noveltystudio.attention.channel";
 function xml(value) {
@@ -23365,7 +23416,7 @@ function cmd(value) {
   return `"${value.replaceAll('"', '""')}"`;
 }
 function buildChannelServicePlan(input) {
-  const home = input.homeDirectory ?? homedir5();
+  const home = input.homeDirectory ?? homedir6();
   const bridgeArgs = [
     input.cliScript,
     "channel",
@@ -23505,7 +23556,7 @@ ${[
   throw new Error(`Background channel service is unsupported on ${input.platform}.`);
 }
 function buildChannelServiceRemovalPlan(input) {
-  const home = input.homeDirectory ?? homedir5();
+  const home = input.homeDirectory ?? homedir6();
   if (input.platform === "darwin") {
     const uid = input.uid ?? process.getuid?.();
     if (uid === void 0) throw new Error("Cannot determine macOS user id.");
@@ -23603,7 +23654,7 @@ async function installChannelService(plan, runner = runCommand, sleep) {
   await executeCommands(plan.commands, plan.label, runner, sleep);
 }
 async function installManagedChannelService(input, runner = runCommand, sleep) {
-  const homeDirectory = input.homeDirectory ?? homedir5();
+  const homeDirectory = input.homeDirectory ?? homedir6();
   const managed = await bootstrapManagedBridge({
     currentArtifactPath: input.currentCliScript,
     homeDirectory,
@@ -23635,7 +23686,7 @@ async function isChannelServiceConfigured(input) {
   try {
     path = buildChannelServiceRemovalPlan(input).paths[0];
     if (!path) return false;
-    await access2(path);
+    await access3(path);
     return true;
   } catch (error51) {
     if (error51 instanceof Error && "code" in error51 && error51.code === "ENOENT") {
@@ -24169,7 +24220,7 @@ async function channelStart(hostId, options = {}) {
         options.baseDirectory
       )}\uFF09`
     );
-    const managedBridgeHome = options.baseDirectory ?? homedir6();
+    const managedBridgeHome = options.baseDirectory ?? homedir7();
     const bridgeUpdateClock = options.bridgeUpdateClock ?? (() => /* @__PURE__ */ new Date());
     const bridgeUpdateJitterMs = deterministicBridgeUpdateJitter(
       runtime.state.runtimeReporter.installationId ?? hostname3()
@@ -24694,7 +24745,7 @@ async function channelStatus(options = {}) {
   const backgroundConfigured = await (options.serviceInspector ?? defaultServiceInspector)();
   let managedUpdate = null;
   try {
-    managedUpdate = await (options.bridgeUpdateStateLoader ?? (async () => await loadManagedBridgeUpdateState(options.baseDirectory ?? homedir6())))();
+    managedUpdate = await (options.bridgeUpdateStateLoader ?? (async () => await loadManagedBridgeUpdateState(options.baseDirectory ?? homedir7())))();
   } catch {
   }
   const report = {
@@ -24816,7 +24867,7 @@ async function defaultBackgroundInstaller(input) {
   await installManagedChannelService({
     currentCliScript: resolve2(cliScript),
     ...process.env.PATH ? { environmentPath: process.env.PATH } : {},
-    homeDirectory: homedir6(),
+    homeDirectory: homedir7(),
     hostId: input.hostId,
     nodeExecutable: process.execPath,
     origin: input.origin,
@@ -24829,7 +24880,7 @@ async function defaultBackgroundInstaller(input) {
 async function defaultServiceUninstaller() {
   await uninstallChannelService(
     buildChannelServiceRemovalPlan({
-      homeDirectory: homedir6(),
+      homeDirectory: homedir7(),
       platform: process.platform,
       ...process.getuid ? { uid: process.getuid() } : {}
     })
@@ -24837,7 +24888,7 @@ async function defaultServiceUninstaller() {
 }
 async function defaultServiceInspector() {
   return await isChannelServiceConfigured({
-    homeDirectory: homedir6(),
+    homeDirectory: homedir7(),
     platform: process.platform,
     ...process.getuid ? { uid: process.getuid() } : {}
   });
@@ -25020,8 +25071,8 @@ function isTimeoutError(error51) {
 init_src();
 import { createHash as createHash9 } from "node:crypto";
 import { mkdir as mkdir9, lstat as lstat3, readFile as readFile6, rename as rename6, rm as rm7, writeFile as writeFile6 } from "node:fs/promises";
-import { homedir as homedir7 } from "node:os";
-import { basename, dirname as dirname7, join as join7, resolve as resolve3 } from "node:path";
+import { homedir as homedir8 } from "node:os";
+import { basename, dirname as dirname7, join as join8, resolve as resolve3 } from "node:path";
 var MAXIMUM_SKILL_BYTES = 262144;
 var MAXIMUM_SKILL_BUNDLE_BYTES = 10 * 1024 * 1024;
 function listAgentIntegrations() {
@@ -25038,21 +25089,21 @@ function listAgentIntegrations() {
 }
 function defaultSkillDirectory(hostId) {
   if (hostId === "codex") {
-    return join7(homedir7(), ".agents", "skills", "attention");
+    return join8(homedir8(), ".agents", "skills", "attention");
   }
   if (hostId === "claude-code") {
-    return join7(homedir7(), ".claude", "skills", "attention");
+    return join8(homedir8(), ".claude", "skills", "attention");
   }
   if (hostId === "openclaw") {
     return resolve3("attention-skill");
   }
   if (hostId === "workbuddy") {
-    return join7(homedir7(), "Downloads");
+    return join8(homedir8(), "Downloads");
   }
   if (hostId === "deepseek") {
-    return join7(homedir7(), ".dsh", "skills", "attention");
+    return join8(homedir8(), ".dsh", "skills", "attention");
   }
-  return join7(homedir7(), ".attention", "skills", "attention");
+  return join8(homedir8(), ".attention", "skills", "attention");
 }
 function replaceTemplateValue(value, replacements) {
   let rendered = value;
@@ -25208,7 +25259,7 @@ async function downloadAttentionSkillBundle(input) {
       `Skill bundle checksum mismatch (expected ${input.expectedSha256}, received ${actualSha256}).`
     );
   }
-  const target = join7(input.directory, safeBundleFilename(input.sourceUrl));
+  const target = join8(input.directory, safeBundleFilename(input.sourceUrl));
   const kind = await pathKind(target);
   if (kind === "other") {
     throw new Error(`Refusing to replace non-file or symbolic-link target: ${target}`);
@@ -25310,9 +25361,9 @@ async function fetchAttentionSkillDocument(input) {
 }
 async function pathKind(path) {
   try {
-    const stat2 = await lstat3(path);
-    if (stat2.isSymbolicLink()) return "other";
-    return stat2.isFile() ? "file" : "other";
+    const stat3 = await lstat3(path);
+    if (stat3.isSymbolicLink()) return "other";
+    return stat3.isFile() ? "file" : "other";
   } catch (error51) {
     if (error51 instanceof Error && "code" in error51 && Reflect.get(error51, "code") === "ENOENT") {
       return "missing";
@@ -25328,7 +25379,7 @@ async function stageAttentionSkill(input) {
     ...input.fetchImpl ? { fetchImpl: input.fetchImpl } : {},
     sourceUrl: input.sourceUrl
   });
-  const target = join7(input.directory, "SKILL.md");
+  const target = join8(input.directory, "SKILL.md");
   const kind = await pathKind(target);
   if (kind === "other") {
     throw new Error(`Refusing to replace non-file or symbolic-link target: ${target}`);

@@ -9,6 +9,7 @@
 
 import { spawn } from "node:child_process";
 
+import { resolveHostExecutable } from "../host-executable";
 import { boundedDiagnosticOutput } from "../redact";
 import { createClaudeCodeBrain } from "./brains/claude-code";
 import { createCodexBrain } from "./brains/codex";
@@ -92,8 +93,9 @@ export interface BrainAdapter {
 export async function execBrain(
   invocation: BrainInvocation,
 ): Promise<ExecBrainResult> {
+  const executable = await resolveHostExecutable(invocation.executable);
   return await new Promise((resolve) => {
-    const child = spawn(invocation.executable, [...invocation.args], {
+    const child = spawn(executable, [...invocation.args], {
       cwd: invocation.cwd,
       env: {
         ...process.env,
