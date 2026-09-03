@@ -4806,6 +4806,15 @@ main {
   gap: 8px;
 }
 
+body:has(.oauth-consent-shell) {
+  padding-bottom: 0;
+}
+
+body:has(.oauth-consent-shell) > main {
+  min-height: 100vh;
+  margin-left: 0;
+}
+
 .oauth-consent-shell {
   width: 100%;
   max-width: 880px;
