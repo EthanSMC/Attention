@@ -47,6 +47,10 @@
 }
 
 /* Standalone, unlinked administrator surface. */
+body:has(.admin-users-shell) > main {
+  margin-left: 0;
+}
+
 .admin-users-shell {
   width: calc(100% - clamp(32px, 4vw, 80px));
   max-width: none;

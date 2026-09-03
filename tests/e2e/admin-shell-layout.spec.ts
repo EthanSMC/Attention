@@ -10,29 +10,31 @@ const stylesheetUrl = new URL(
 function fixture(stylesheet: string): string {
   return `
     <style>${stylesheet}</style>
-    <main class="admin-users-shell">
-      <div class="admin-shell">
-        <aside class="admin-shell__sidebar">
-          <section class="admin-identity">
-            <span class="admin-identity__avatar">A</span>
-            <div class="admin-identity__copy"><strong>Admin</strong></div>
-          </section>
-        </aside>
-        <div class="admin-shell__content">
-          <section class="admin-users-list">
-            <div class="admin-users-table-wrap">
-              <table class="admin-users-table">
-                <tbody>
-                  <tr>
-                    <td>Account</td>
-                    <td>Created</td>
-                    <td>Tier</td>
-                    <td>Actions</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
+    <main id="main-content">
+      <div class="admin-users-shell">
+        <div class="admin-shell">
+          <aside class="admin-shell__sidebar">
+            <section class="admin-identity">
+              <span class="admin-identity__avatar">A</span>
+              <div class="admin-identity__copy"><strong>Admin</strong></div>
+            </section>
+          </aside>
+          <div class="admin-shell__content">
+            <section class="admin-users-list">
+              <div class="admin-users-table-wrap">
+                <table class="admin-users-table">
+                  <tbody>
+                    <tr>
+                      <td>Account</td>
+                      <td>Created</td>
+                      <td>Tier</td>
+                      <td>Actions</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
         </div>
       </div>
     </main>

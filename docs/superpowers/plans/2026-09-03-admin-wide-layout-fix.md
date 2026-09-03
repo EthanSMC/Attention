@@ -4,7 +4,7 @@
 
 **Goal:** Remove excessive left whitespace from `/admin/users` on wide desktop viewports while preserving safe gutters, table containment, and the existing mobile layout.
 
-**Architecture:** Keep the existing `AdminShell` markup and data flow unchanged. Add a Playwright geometry regression test that renders the real stylesheet, then replace the centered `1440px` cap with viewport-responsive safe gutters and tighten the desktop grid so the main column receives all remaining width.
+**Architecture:** Keep the existing `AdminShell` markup and data flow unchanged. Add a Playwright geometry regression test that renders the real root-layout nesting, clear the main-site sidebar offset when an admin shell is present, replace the centered `1440px` cap with viewport-responsive safe gutters, and tighten the desktop grid so the main column receives all remaining width.
 
 **Tech Stack:** Next.js, React, CSS, Vitest, Playwright/browser QA, Docker Compose staging deployment
 
@@ -27,7 +27,7 @@
 - Modify: `apps/web/src/app/globals.css:48-76,538-542`
 
 **Interfaces:**
-- Consumes: CSS selectors `.admin-users-shell`, `.admin-shell`, and `.admin-users-table-wrap`.
+- Consumes: the root-layout `<main>` wrapper and CSS selectors `.admin-users-shell`, `.admin-shell`, and `.admin-users-table-wrap`.
 - Produces: a browser-tested layout contract with viewport-responsive safe gutters, a bounded sidebar, a flexible main column, and table-local horizontal overflow.
 
 - [ ] **Step 1: Write the failing CSS regression test**
@@ -45,7 +45,7 @@ test("uses balanced safe gutters and contains overflow across admin breakpoints"
   page,
 }) => {
   const stylesheet = await readFile(stylesheetUrl, "utf8");
-  await page.setContent(`<style>${stylesheet}</style><main class="admin-users-shell"><div class="admin-shell"><aside class="admin-shell__sidebar"><section class="admin-identity">Admin</section></aside><div class="admin-shell__content"><section class="admin-users-list"><div class="admin-users-table-wrap"><table class="admin-users-table"><tbody><tr><td>Account</td><td>Created</td><td>Tier</td><td>Actions</td></tr></tbody></table></div></section></div></div></main>`);
+  await page.setContent(`<style>${stylesheet}</style><main id="main-content"><div class="admin-users-shell"><div class="admin-shell"><aside class="admin-shell__sidebar"><section class="admin-identity">Admin</section></aside><div class="admin-shell__content"><section class="admin-users-list"><div class="admin-users-table-wrap"><table class="admin-users-table"><tbody><tr><td>Account</td><td>Created</td><td>Tier</td><td>Actions</td></tr></tbody></table></div></section></div></div></div></main>`);
 
   for (const width of [1280, 1440, 1800]) {
     await page.setViewportSize({ height: 900, width });
@@ -91,11 +91,15 @@ test("uses balanced safe gutters and contains overflow across admin breakpoints"
 
 Run: `pnpm exec playwright test tests/e2e/admin-shell-layout.spec.ts`
 
-Expected: FAIL at `1800px` because the centered `1440px` shell leaves `180px` on each side instead of at most `40px`.
+Expected: FAIL because the real root `<main>` retains the absent main-site sidebar's desktop left offset; before the outer-width change, the centered `1440px` cap also leaves `180px` on each side at `1800px`.
 
 - [ ] **Step 3: Implement the responsive gutter and grid rules**
 
 ```css
+body:has(.admin-users-shell) > main {
+  margin-left: 0;
+}
+
 .admin-users-shell {
   width: calc(100% - clamp(32px, 4vw, 80px));
   max-width: none;
