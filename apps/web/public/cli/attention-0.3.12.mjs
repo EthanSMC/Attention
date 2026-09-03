@@ -17820,7 +17820,7 @@ var init_src = __esm({
 });
 
 // src/channel/limits.ts
-var ILINK_LONG_POLL_TIMEOUT_MS, ILINK_MAXIMUM_QR_REFRESH, BRAIN_MAXIMUM_INPUT_CHARS, BRAIN_TIMEOUT_MS, CODEX_RESTART_BACKOFF_MS, CLAUDE_RESTART_BACKOFF_MS, BRAIN_HISTORY_TURNS, MAXIMUM_REPLY_CHARS, PROCESSED_MESSAGE_RING_SIZE, MAXIMUM_PENDING_MESSAGES, PROCESSING_ACK_REPLY, NON_TEXT_REPLY, RESET_REPLY, RESET_CONFIRMATION_REPLY, CONTROL_HELP_REPLY, CONTROL_RETRY_REPLY, CONTROL_CONTINUE_REPLY, BRAIN_FAILURE_REPLY;
+var ILINK_LONG_POLL_TIMEOUT_MS, ILINK_MAXIMUM_QR_REFRESH, BRAIN_MAXIMUM_INPUT_CHARS, BRAIN_TIMEOUT_MS, CODEX_RESTART_BACKOFF_MS, CLAUDE_RESTART_BACKOFF_MS, BRAIN_HISTORY_TURNS, MAXIMUM_REPLY_CHARS, PROCESSED_MESSAGE_RING_SIZE, MAXIMUM_PENDING_MESSAGES, PROCESSING_ACK_REPLY, NON_TEXT_REPLY, RESET_REPLY, RESET_CONFIRMATION_REPLY, CONTROL_HELP_REPLY, CONTROL_CONTINUE_REPLY, BRAIN_FAILURE_REPLY;
 var init_limits = __esm({
   "src/channel/limits.ts"() {
     "use strict";
@@ -17851,9 +17851,73 @@ var init_limits = __esm({
     RESET_REPLY = "\u5BF9\u8BDD\u5386\u53F2\u5DF2\u91CD\u7F6E\u3002";
     RESET_CONFIRMATION_REPLY = "\u5982\u9700\u6E05\u7A7A\u672C\u5730\u5BF9\u8BDD\u5386\u53F2\uFF0C\u8BF7\u53D1\u9001 /reset \u660E\u786E\u786E\u8BA4\u3002";
     CONTROL_HELP_REPLY = "\u53EF\u7528\u547D\u4EE4\uFF1A\u72B6\u6001\u3001\u5E2E\u52A9\u3001\u91CD\u8BD5\u3001\u91CD\u65B0\u8FDE\u63A5\uFF1B\u5904\u7406\u4E2D\u65AD\u65F6\u53EF\u53D1\u9001\u7EE7\u7EED\u3002\u6E05\u7A7A\u5BF9\u8BDD\u8BF7\u53D1\u9001 /reset\u3002";
-    CONTROL_RETRY_REPLY = "\u5DF2\u8BF7\u6C42\u91CD\u65B0\u8FDE\u63A5\u672C\u5730 Agent\uFF1B\u6062\u590D\u540E\u4F1A\u4ECE\u672C\u5730\u65AD\u70B9\u7EE7\u7EED\u3002";
     CONTROL_CONTINUE_REPLY = "\u5DF2\u8BF7\u6C42\u4ECE\u672C\u5730\u65AD\u70B9\u7EE7\u7EED\u5904\u7406\u3002";
     BRAIN_FAILURE_REPLY = "\u5904\u7406\u5931\u8D25\u4E86\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5\u3002";
+  }
+});
+
+// src/channel/mcp-readiness.ts
+function defaultAttentionMcpCheckpoint() {
+  return {
+    lastCheckedAt: null,
+    lastErrorCode: null,
+    lastReadyAt: null,
+    nextRetryAt: null,
+    retryAttempt: 0,
+    status: "unknown"
+  };
+}
+function parseAttentionAccountProbe(value) {
+  const parsed = AttentionToolSuccessOutputSchemas.attention_get_my_account.safeParse(value);
+  if (!parsed.success) return null;
+  return {
+    attentionId: parsed.data.profile.attention_id,
+    displayName: parsed.data.profile.display_name,
+    isFilter: parsed.data.capabilities.is_filter,
+    isMember: parsed.data.capabilities.is_member
+  };
+}
+function classifyAttentionMcpFailure(value) {
+  const structured = AttentionToolStructuredErrorSchema.safeParse(value);
+  const structuredCode = structured.success ? structured.data.error.code : "";
+  const message = failureText(value);
+  const evidence = `${structuredCode} ${message}`.toLowerCase();
+  if (/invalid_grant|refresh[ _-]?token|token refresh/u.test(evidence)) {
+    return { errorCode: "mcp_token_refresh_failed", retryable: false };
+  }
+  if (/invalid[ _-]?token|oauth.{0,32}required|authorization required|authentication required|unauthori[sz]ed|missing oauth|\b401\b/u.test(
+    evidence
+  )) {
+    return { errorCode: "mcp_auth_required", retryable: false };
+  }
+  if (/econnrefused|econnreset|enotfound|dns|network|fetch failed|connection (?:closed|failed|refused|reset)|service unavailable|bad gateway|gateway timeout|\b50[234]\b/u.test(
+    evidence
+  )) {
+    return { errorCode: "mcp_server_unreachable", retryable: true };
+  }
+  if (/initialize|initialization|handshake|protocol|tool discovery|tools\/list|timed? out|timeout/u.test(
+    evidence
+  )) {
+    return { errorCode: "mcp_protocol_failed", retryable: true };
+  }
+  return { errorCode: "mcp_account_probe_failed", retryable: false };
+}
+function failureText(value) {
+  if (typeof value === "string") return value;
+  if (value === null || typeof value !== "object") return "";
+  const record3 = value;
+  const direct = [record3.code, record3.message, record3.error].filter((item) => typeof item === "string").join(" ");
+  if (direct) return direct;
+  if (record3.error !== null && typeof record3.error === "object") {
+    const error51 = record3.error;
+    return [error51.code, error51.message, error51.guidance].filter((item) => typeof item === "string").join(" ");
+  }
+  return "";
+}
+var init_mcp_readiness = __esm({
+  "src/channel/mcp-readiness.ts"() {
+    "use strict";
+    init_src();
   }
 });
 
@@ -17947,6 +18011,7 @@ function defaultChannelState() {
   return {
     accountVerification: null,
     accountId: "",
+    attentionMcp: defaultAttentionMcpCheckpoint(),
     baseUrl: ILINK_BASE_URL,
     brainSession: null,
     contextTokens: {},
@@ -17982,6 +18047,7 @@ function normalizeState(raw) {
       record3.accountVerification
     ),
     accountId: typeof record3.accountId === "string" ? record3.accountId : "",
+    attentionMcp: normalizeAttentionMcpCheckpoint(record3.attentionMcp),
     baseUrl: normalizeBaseUrl(record3.baseUrl),
     brainSession: record3.brainSession !== null && typeof record3.brainSession === "object" && typeof record3.brainSession.sessionId === "string" && (record3.brainSession.hostId === "codex" || record3.brainSession.hostId === "claude-code") ? record3.brainSession : null,
     contextTokens: record3.contextTokens !== null && typeof record3.contextTokens === "object" ? Object.fromEntries(
@@ -18003,6 +18069,7 @@ function normalizeState(raw) {
         {
           acknowledged: candidate.acknowledged === true,
           attempts: typeof candidate.attempts === "number" && Number.isSafeInteger(candidate.attempts) && candidate.attempts >= 0 ? candidate.attempts : 0,
+          blockedBy: candidate.blockedBy === "attention_mcp" || candidate.blockedBy === "runtime" ? candidate.blockedBy : null,
           id: candidate.id,
           message: candidate.message
         }
@@ -18057,6 +18124,24 @@ function normalizeRuntimeReporterState(raw) {
     bindingId: typeof record3.bindingId === "string" && UUID_PATTERN.test(record3.bindingId) ? record3.bindingId : null,
     installationId: typeof record3.installationId === "string" && UUID_PATTERN.test(record3.installationId) ? record3.installationId : null,
     runtimeClientFingerprint: typeof record3.runtimeClientFingerprint === "string" && /^[a-f0-9]{64}$/u.test(record3.runtimeClientFingerprint) ? record3.runtimeClientFingerprint : null
+  };
+}
+function normalizeAttentionMcpCheckpoint(raw) {
+  const fallback = defaultAttentionMcpCheckpoint();
+  if (raw === null || typeof raw !== "object") return fallback;
+  const record3 = raw;
+  if (typeof record3.status !== "string" || !ATTENTION_MCP_STATUSES.has(record3.status)) {
+    return fallback;
+  }
+  return {
+    lastCheckedAt: nullableIsoTimestamp(record3.lastCheckedAt),
+    lastErrorCode: typeof record3.lastErrorCode === "string" && ATTENTION_MCP_ERROR_CODES.has(
+      record3.lastErrorCode
+    ) ? record3.lastErrorCode : null,
+    lastReadyAt: nullableIsoTimestamp(record3.lastReadyAt),
+    nextRetryAt: nullableIsoTimestamp(record3.nextRetryAt),
+    retryAttempt: typeof record3.retryAttempt === "number" && Number.isSafeInteger(record3.retryAttempt) && record3.retryAttempt >= 0 ? record3.retryAttempt : 0,
+    status: record3.status
   };
 }
 function normalizeRuntimeCheckpoint(raw) {
@@ -18122,6 +18207,7 @@ async function saveChannelState(state, baseDirectory) {
     JSON.stringify(
       {
         ...state,
+        attentionMcp: normalizeAttentionMcpCheckpoint(state.attentionMcp),
         runtimeState: normalizeRuntimeCheckpoint(state.runtimeState)
       },
       null,
@@ -18161,13 +18247,14 @@ function appendHistory(state, userContent, assistantContent) {
     state.history.splice(0, state.history.length - maximumEntries);
   }
 }
-var UUID_PATTERN, RUNTIME_PHASES2, ISO_TIMESTAMP_PATTERN;
+var UUID_PATTERN, RUNTIME_PHASES2, ATTENTION_MCP_STATUSES, ATTENTION_MCP_ERROR_CODES, ISO_TIMESTAMP_PATTERN;
 var init_state = __esm({
   "src/channel/state.ts"() {
     "use strict";
     init_src();
     init_ilink_protocol();
     init_limits();
+    init_mcp_readiness();
     UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
     RUNTIME_PHASES2 = /* @__PURE__ */ new Set([
       "starting",
@@ -18178,6 +18265,22 @@ var init_state = __esm({
       "degraded_auth",
       "degraded_runtime",
       "stopped"
+    ]);
+    ATTENTION_MCP_STATUSES = /* @__PURE__ */ new Set([
+      "unknown",
+      "checking",
+      "ready",
+      "reconnecting",
+      "auth_required",
+      "unreachable",
+      "tool_error"
+    ]);
+    ATTENTION_MCP_ERROR_CODES = /* @__PURE__ */ new Set([
+      "mcp_auth_required",
+      "mcp_token_refresh_failed",
+      "mcp_server_unreachable",
+      "mcp_protocol_failed",
+      "mcp_account_probe_failed"
     ]);
     ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/u;
   }
@@ -18447,7 +18550,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 // src/version.ts
-var ATTENTION_CLI_VERSION = "0.3.11";
+var ATTENTION_CLI_VERSION = "0.3.12";
 
 // src/runtime-oauth.ts
 var RUNTIME_CREDENTIAL_VERSION = 1;
@@ -19371,6 +19474,41 @@ message_ref: ${input.messageRef}
 ${input.userMessage}`;
 }
 
+// src/codex-mcp-credential-policy.ts
+var ATTENTION_MCP_CREDENTIAL_OVERRIDES = [
+  'mcp_oauth_credentials_store="keyring"',
+  "features.secret_auth_storage=false"
+];
+function configArguments(overrides) {
+  return overrides.flatMap((override) => ["-c", override]);
+}
+function codexAttentionMcpOverrideArgs(mcpUrl) {
+  return configArguments([
+    ...ATTENTION_MCP_CREDENTIAL_OVERRIDES,
+    `mcp_servers.attention.url=${JSON.stringify(mcpUrl)}`
+  ]);
+}
+function withCodexAttentionMcpPolicy(command2, mcpUrl) {
+  return {
+    args: [...codexAttentionMcpOverrideArgs(mcpUrl), ...command2.args],
+    executable: command2.executable
+  };
+}
+function codexAttentionMcpPolicyCheckCommand() {
+  return {
+    args: [
+      ...configArguments(ATTENTION_MCP_CREDENTIAL_OVERRIDES),
+      "--version"
+    ],
+    executable: "codex"
+  };
+}
+function parseCodexCliVersion(output) {
+  return output.match(
+    /\bcodex(?:-cli)?\s+v?(\d+\.\d+\.\d+(?:-[0-9a-z.-]+)?)/iu
+  )?.[1] ?? null;
+}
+
 // src/channel/codex-app-server-rpc.ts
 import {
   spawn as spawn3
@@ -19778,6 +19916,7 @@ function safeCollectionReply(control) {
 }
 
 // src/channel/brains/codex-resident.ts
+init_mcp_readiness();
 var CODEX_MODEL = "gpt-5.6-luna";
 var CODEX_REASONING_EFFORT = "medium";
 var DEFAULT_HEALTH_CHECK_INTERVAL_MS = 1e3;
@@ -19869,11 +20008,31 @@ function createCodexResidentBrain(options) {
     if (event.method === "item/completed") {
       const item = notificationRecord(params.item);
       if (item?.type === "mcpToolCall" && item.server === "attention" && (item.status === "completed" || item.status === "failed") && typeof item.tool === "string") {
+        const toolName = item.tool.replace(/^mcp__attention__/u, "");
+        const payload = item.status === "failed" ? null : mcpResultPayload(item.result);
         pending.collectionReplyControl = applyAttentionToolResult(
           pending.collectionReplyControl,
-          item.tool,
-          item.status === "failed" ? null : mcpResultPayload(item.result)
+          toolName,
+          payload
         );
+        if (item.status === "failed") {
+          const failure = classifyAttentionMcpFailure(
+            item.error ?? item.result ?? item
+          );
+          pending.attentionMcpFailure = failure;
+          if (toolName === "attention_get_my_account") {
+            pending.attentionMcpProbe = { ...failure, ok: false };
+          }
+        } else if (toolName === "attention_get_my_account") {
+          const account = parseAttentionAccountProbe(payload);
+          if (account) {
+            pending.attentionMcpProbe = { account, ok: true };
+          } else {
+            const failure = classifyAttentionMcpFailure(payload);
+            pending.attentionMcpFailure = failure;
+            pending.attentionMcpProbe = { ...failure, ok: false };
+          }
+        }
       }
       if (item?.type === "agentMessage" && typeof item.text === "string" && item.text.trim().length > 0) {
         pending.reply = item.text.trim();
@@ -19884,8 +20043,10 @@ function createCodexResidentBrain(options) {
     const turn = notificationRecord(params.turn);
     const completedSuccessfully = turn?.status === "completed";
     finishActiveTurn({
-      ok: completedSuccessfully && (pending.reply.length > 0 || pending.collectionReplyControl !== null),
+      ok: completedSuccessfully && (pending.reply.length > 0 || pending.collectionReplyControl !== null || pending.attentionMcpProbe?.ok === true),
       reply: completedSuccessfully ? pending.reply : "",
+      ...pending.attentionMcpFailure ? { attentionMcpFailure: pending.attentionMcpFailure } : {},
+      ...pending.attentionMcpProbe ? { attentionMcpProbe: pending.attentionMcpProbe } : {},
       ...pending.collectionReplyControl ? { collectionReplyControl: pending.collectionReplyControl } : {},
       resumeFailed: false,
       sessionId: pending.threadId,
@@ -20095,6 +20256,8 @@ function createCodexResidentBrain(options) {
         );
       }, turnTimeout);
       activeTurn = {
+        attentionMcpFailure: null,
+        attentionMcpProbe: null,
         collectionReplyControl: null,
         reply: "",
         resolve: resolve4,
@@ -20200,8 +20363,7 @@ function createCodexBrain(options) {
         "--disable",
         feature
       ]),
-      "-c",
-      `mcp_servers.attention.url=${JSON.stringify(options.mcpUrl)}`,
+      ...codexAttentionMcpOverrideArgs(options.mcpUrl),
       "-c",
       `mcp_servers.attention.enabled_tools=${JSON.stringify(ATTENTION_CHANNEL_MCP_TOOL_NAMES)}`,
       "-c",
@@ -20228,6 +20390,7 @@ function createCodexBrain(options) {
 }
 
 // src/channel/brains/claude-resident.ts
+init_mcp_readiness();
 var DEFAULT_HEALTH_CHECK_INTERVAL_MS2 = 1e3;
 function emptyFailure2(overrides = {}) {
   return {
@@ -20255,34 +20418,55 @@ function assistantText(message) {
     return block?.type === "text" && typeof block.text === "string" ? block.text : "";
   }).join("").trim();
 }
-function observeClaudeAttentionTools(message, current, pendingToolNames) {
+function observeClaudeAttentionTools(message, pending) {
   const content = objectRecord(message.message)?.content;
-  if (!Array.isArray(content)) return current;
-  let next = current;
+  if (!Array.isArray(content)) return;
   for (const entry of content) {
     const block = objectRecord(entry);
     if (!block) continue;
     if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string" && block.name.startsWith("mcp__attention__")) {
-      pendingToolNames.set(block.id, block.name);
+      pending.pendingToolNames.set(block.id, block.name);
       continue;
     }
     if (block.type !== "tool_result" || typeof block.tool_use_id !== "string") {
       continue;
     }
-    const toolName = pendingToolNames.get(block.tool_use_id);
+    const toolName = pending.pendingToolNames.get(block.tool_use_id);
     if (!toolName) continue;
-    pendingToolNames.delete(block.tool_use_id);
+    pending.pendingToolNames.delete(block.tool_use_id);
+    const normalizedToolName = toolName.replace(/^mcp__attention__/u, "");
     if (block.is_error === true) {
-      next = applyAttentionToolResult(next, toolName, null);
+      const failure = classifyAttentionMcpFailure(block.content);
+      pending.attentionMcpFailure = failure;
+      if (normalizedToolName === "attention_get_my_account") {
+        pending.attentionMcpProbe = { ...failure, ok: false };
+      }
+      pending.collectionReplyControl = applyAttentionToolResult(
+        pending.collectionReplyControl,
+        toolName,
+        null
+      );
       continue;
     }
-    next = applyAttentionToolResult(
-      next,
+    const payload = mcpResultPayload(block.content);
+    pending.collectionReplyControl = applyAttentionToolResult(
+      pending.collectionReplyControl,
       toolName,
-      mcpResultPayload(block.content)
+      payload
     );
+    if (normalizedToolName === "attention_get_my_account") {
+      const account = parseAttentionAccountProbe(payload);
+      if (account) {
+        pending.attentionMcpProbe = { account, ok: true };
+      } else {
+        const failure = classifyAttentionMcpFailure(
+          payload ?? block.content
+        );
+        pending.attentionMcpFailure = failure;
+        pending.attentionMcpProbe = { ...failure, ok: false };
+      }
+    }
   }
-  return next;
 }
 function unresolvedCollectionTool(pendingToolNames) {
   return [...pendingToolNames.values()].some(
@@ -20371,11 +20555,7 @@ function createClaudeResidentBrain(options) {
     const sessionId = stringField(message, "session_id");
     if (sessionId) currentSessionId = sessionId;
     if (activeTurn) {
-      activeTurn.collectionReplyControl = observeClaudeAttentionTools(
-        message,
-        activeTurn.collectionReplyControl,
-        activeTurn.pendingToolNames
-      );
+      observeClaudeAttentionTools(message, activeTurn);
     }
     if (message.type === "assistant" && activeTurn) {
       const text = assistantText(message);
@@ -20419,8 +20599,10 @@ function createClaudeResidentBrain(options) {
     }
     transition("healthy", null, 0);
     finishActiveTurn({
-      ok: resultText.trim().length > 0 || pending.collectionReplyControl !== null,
+      ok: resultText.trim().length > 0 || pending.collectionReplyControl !== null || pending.attentionMcpProbe?.ok === true,
       reply: resultText.trim(),
+      ...pending.attentionMcpFailure ? { attentionMcpFailure: pending.attentionMcpFailure } : {},
+      ...pending.attentionMcpProbe ? { attentionMcpProbe: pending.attentionMcpProbe } : {},
       ...pending.collectionReplyControl ? { collectionReplyControl: pending.collectionReplyControl } : {},
       resumeFailed: false,
       sessionId: resolvedSessionId,
@@ -20562,6 +20744,8 @@ function createClaudeResidentBrain(options) {
         );
       }, turnTimeout);
       activeTurn = {
+        attentionMcpFailure: null,
+        attentionMcpProbe: null,
         collectionReplyControl: null,
         pendingToolNames: /* @__PURE__ */ new Map(),
         reply: "",
@@ -21124,6 +21308,18 @@ async function existingDestinationMatches(destination, source) {
     throw error51;
   }
 }
+async function rejectHomeScopedMcpCredentials(destinationHome) {
+  for (const name of [".credentials.json", "secrets"]) {
+    try {
+      await lstat2(join5(destinationHome, name));
+      throw new Error(
+        `Attention found home-scoped MCP credentials in the isolated Codex home (${name}); refusing to use or overwrite them. Reauthorize through attention configure codex --apply --login after upgrading Codex.`
+      );
+    } catch (error51) {
+      if (error51.code !== "ENOENT") throw error51;
+    }
+  }
+}
 async function prepareChannelCodexHome(options = {}) {
   const sourceHome = resolve(sourceCodexHome(options));
   const sourceAuthPath = join5(sourceHome, "auth.json");
@@ -21139,6 +21335,7 @@ async function prepareChannelCodexHome(options = {}) {
   );
   await mkdir5(destinationHome, { mode: 448, recursive: true });
   await chmod5(destinationHome, 448);
+  await rejectHomeScopedMcpCredentials(destinationHome);
   const destinationAuthPath = join5(destinationHome, "auth.json");
   if (sourceAuthPath === destinationAuthPath) return destinationHome;
   if (await existingDestinationMatches(destinationAuthPath, sourceAuthPath)) {
@@ -21158,6 +21355,128 @@ async function prepareChannelCodexHome(options = {}) {
     await symlink(sourceAuthPath, destinationAuthPath, "file");
   }
   return destinationHome;
+}
+
+// src/channel/mcp-recovery-supervisor.ts
+var ATTENTION_MCP_RETRY_DELAYS_MS = [
+  1e3,
+  3e3,
+  1e4,
+  3e4,
+  6e4
+];
+var ATTENTION_MCP_MANUAL_RETRY_COOLDOWN_MS = 3e3;
+var ATTENTION_MCP_PROTOCOL_MAX_ATTEMPTS = 5;
+function createMcpRecoverySupervisor(dependencies) {
+  const setTimer = dependencies.setTimer ?? ((callback, delayMs) => globalThis.setTimeout(callback, delayMs));
+  const clearTimer = dependencies.clearTimer ?? ((handle) => globalThis.clearTimeout(handle));
+  let inFlight = null;
+  let lastManualRetryAt = null;
+  let retryTimer = null;
+  let stopped = false;
+  const cancelRetryTimer = () => {
+    if (retryTimer !== null) clearTimer(retryTimer);
+    retryTimer = null;
+  };
+  const markReady = async (account) => {
+    cancelRetryTimer();
+    const checkedAt = dependencies.now().toISOString();
+    Object.assign(dependencies.checkpoint, {
+      lastCheckedAt: checkedAt,
+      lastErrorCode: null,
+      lastReadyAt: checkedAt,
+      nextRetryAt: null,
+      retryAttempt: 0,
+      status: "ready"
+    });
+    await dependencies.persist();
+    return { account, kind: "ready" };
+  };
+  const applyFailure = async (result) => {
+    cancelRetryTimer();
+    const checkedAt = dependencies.now().toISOString();
+    dependencies.checkpoint.lastCheckedAt = checkedAt;
+    dependencies.checkpoint.lastErrorCode = result.errorCode;
+    dependencies.checkpoint.nextRetryAt = null;
+    if (result.errorCode === "mcp_auth_required" || result.errorCode === "mcp_token_refresh_failed") {
+      dependencies.checkpoint.retryAttempt = 0;
+      dependencies.checkpoint.status = "auth_required";
+      await dependencies.persist();
+      return { kind: "auth_required" };
+    }
+    const nextAttempt = dependencies.checkpoint.retryAttempt + 1;
+    dependencies.checkpoint.retryAttempt = nextAttempt;
+    const protocolLimitReached = result.errorCode === "mcp_protocol_failed" && nextAttempt >= ATTENTION_MCP_PROTOCOL_MAX_ATTEMPTS;
+    if (!result.retryable || protocolLimitReached || stopped) {
+      dependencies.checkpoint.status = "tool_error";
+      await dependencies.persist();
+      return { errorCode: result.errorCode, kind: "failed" };
+    }
+    dependencies.checkpoint.status = result.errorCode === "mcp_server_unreachable" ? "unreachable" : "tool_error";
+    const delay = ATTENTION_MCP_RETRY_DELAYS_MS[Math.min(nextAttempt - 1, ATTENTION_MCP_RETRY_DELAYS_MS.length - 1)] ?? ATTENTION_MCP_RETRY_DELAYS_MS.at(-1);
+    const nextRetryAt = new Date(
+      dependencies.now().getTime() + delay
+    ).toISOString();
+    dependencies.checkpoint.nextRetryAt = nextRetryAt;
+    await dependencies.persist();
+    if (!stopped) {
+      retryTimer = setTimer(() => {
+        retryTimer = null;
+        void beginRecovery();
+      }, delay);
+    }
+    return { errorCode: result.errorCode, kind: "scheduled", nextRetryAt };
+  };
+  const applyProbe = async (result) => result.ok ? await markReady(result.account) : await applyFailure(result);
+  const recover = async () => {
+    cancelRetryTimer();
+    dependencies.checkpoint.status = "reconnecting";
+    dependencies.checkpoint.nextRetryAt = null;
+    await dependencies.persist();
+    try {
+      await dependencies.restart();
+      return await applyProbe(await dependencies.probe());
+    } catch {
+      return await applyFailure({
+        errorCode: "mcp_protocol_failed",
+        ok: false,
+        retryable: true
+      });
+    }
+  };
+  const beginRecovery = () => {
+    if (inFlight) return inFlight;
+    const task = recover();
+    inFlight = task;
+    void task.finally(() => {
+      if (inFlight === task) inFlight = null;
+    });
+    return task;
+  };
+  return {
+    async recordProbe(result) {
+      return await applyProbe(result);
+    },
+    retryNow() {
+      if (inFlight) return inFlight;
+      const now = dependencies.now().getTime();
+      if (lastManualRetryAt !== null && now - lastManualRetryAt < ATTENTION_MCP_MANUAL_RETRY_COOLDOWN_MS) {
+        return Promise.resolve({
+          kind: "cooldown",
+          retryAt: new Date(
+            lastManualRetryAt + ATTENTION_MCP_MANUAL_RETRY_COOLDOWN_MS
+          ).toISOString()
+        });
+      }
+      lastManualRetryAt = now;
+      return beginRecovery();
+    },
+    stop() {
+      stopped = true;
+      cancelRetryTimer();
+      dependencies.checkpoint.nextRetryAt = null;
+    }
+  };
 }
 
 // src/channel/ilink-client.ts
@@ -21521,6 +21840,7 @@ function enqueueInbound(state, messages) {
     state.pendingInbound.push({
       acknowledged: false,
       attempts: 0,
+      blockedBy: null,
       id,
       message
     });
@@ -22109,12 +22429,24 @@ var ALWAYS_LOCAL_COMMANDS = {
   "\u91CD\u8BD5": "retry",
   "\u91CD\u7F6E\u4F1A\u8BDD": "reset_confirmation"
 };
+var RETRY_COMMANDS = /* @__PURE__ */ new Set([
+  "/retry",
+  "\u518D\u8BD5\u4E00\u6B21",
+  "\u5E2E\u6211\u91CD\u8FDE\u4E00\u4E0B",
+  "\u5E2E\u6211\u91CD\u8BD5\u4E00\u4E0B",
+  "\u91CD\u65B0\u8FDE\u63A5",
+  "\u91CD\u65B0\u8FDE\u63A5\u4E00\u4E0B",
+  "\u91CD\u8FDE",
+  "\u91CD\u8BD5",
+  "\u91CD\u8BD5\u4E00\u4E0B"
+]);
 function buildMessageRef(messageId) {
   const digest = createHash6("sha256").update(messageId).digest("hex");
   return `msg-${digest.slice(0, 48)}`;
 }
 function matchControlCommand(text, context) {
-  const commandText = text.trim();
+  const commandText = text.normalize("NFKC").trim().replace(/[。！？?!]+$/gu, "").trim();
+  if (RETRY_COMMANDS.has(commandText)) return "retry";
   const alwaysLocal = ALWAYS_LOCAL_COMMANDS[commandText];
   if (alwaysLocal) return alwaysLocal;
   if (context.degraded && (commandText === "\u7EE7\u7EED" || commandText === "/continue")) {
@@ -22166,6 +22498,15 @@ async function handleInboundMessage(input) {
       replies: [RESET_REPLY]
     };
   }
+  if (controlCommand === "retry") {
+    state.lastActivityAt = (/* @__PURE__ */ new Date()).toISOString();
+    return {
+      completed: false,
+      controlCommand,
+      processed: true,
+      replies: []
+    };
+  }
   if (controlCommand) {
     state.lastActivityAt = (/* @__PURE__ */ new Date()).toISOString();
     rememberProcessedMessage(state, messageId);
@@ -22177,9 +22518,18 @@ async function handleInboundMessage(input) {
     };
   }
   const messageRef = buildMessageRef(messageId);
+  const previousActiveTurnMessageRef = state.runtimeState.activeTurnMessageRef;
   state.runtimeState.activeTurnMessageRef = messageRef;
   const outcome = await invokeWithFallback(input, text, messageRef);
   state.lastActivityAt = (/* @__PURE__ */ new Date()).toISOString();
+  if (outcome.attentionMcpFailure) {
+    return {
+      attentionMcpFailure: outcome.attentionMcpFailure,
+      completed: false,
+      processed: true,
+      replies: [attentionMcpFailureReply(outcome.attentionMcpFailure)]
+    };
+  }
   if (!outcome.collectionReplyControl && (!outcome.ok || !outcome.reply.trim())) {
     return {
       completed: false,
@@ -22189,7 +22539,7 @@ async function handleInboundMessage(input) {
       ]
     };
   }
-  state.runtimeState.activeTurnMessageRef = null;
+  state.runtimeState.activeTurnMessageRef = previousActiveTurnMessageRef !== null && previousActiveTurnMessageRef !== messageRef ? previousActiveTurnMessageRef : null;
   state.runtimeState.lastSuccessfulMessageAt = state.lastActivityAt;
   const safeReply = outcome.collectionReplyControl ? safeCollectionReply(outcome.collectionReplyControl) : outcome.reply.trim();
   appendHistory(state, text, safeReply);
@@ -22199,6 +22549,18 @@ async function handleInboundMessage(input) {
     processed: true,
     replies: splitReply(safeReply)
   };
+}
+function attentionMcpFailureReply(failure) {
+  switch (failure.errorCode) {
+    case "mcp_auth_required":
+    case "mcp_token_refresh_failed":
+      return "Attention MCP \u9700\u8981\u91CD\u65B0\u6388\u6743\uFF1B\u8FD9\u6761\u64CD\u4F5C\u5DF2\u4FDD\u7559\u3002\u8BF7\u5728\u7535\u8111\u5B8C\u6210\u6388\u6743\u540E\u53D1\u9001\u201C\u91CD\u8BD5\u201D\u3002";
+    case "mcp_server_unreachable":
+      return "Attention MCP \u6682\u65F6\u4E0D\u53EF\u8FBE\uFF1B\u8FD9\u6761\u64CD\u4F5C\u5DF2\u4FDD\u7559\u5E76\u4F1A\u5728\u6062\u590D\u540E\u91CD\u8BD5\u3002";
+    case "mcp_account_probe_failed":
+    case "mcp_protocol_failed":
+      return "Attention MCP \u5DE5\u5177\u5F02\u5E38\uFF1B\u8FD9\u6761\u64CD\u4F5C\u5DF2\u4FDD\u7559\uFF0C\u8BF7\u7A0D\u540E\u53D1\u9001\u201C\u91CD\u8BD5\u201D\u3002";
+  }
 }
 function canResumeInterruptedTurn(state) {
   if (state.runtimeState.activeTurnMessageRef === null) return false;
@@ -22210,25 +22572,27 @@ function buildControlReply(command2, state, hostId) {
       return CONTROL_HELP_REPLY;
     case "pairing_verification":
       return "\u6B63\u5728\u9A8C\u8BC1\u8BBE\u5907\u7ED1\u5B9A\u2026";
-    case "retry":
-      return CONTROL_RETRY_REPLY;
     case "continue":
       return CONTROL_CONTINUE_REPLY;
     case "reset_confirmation":
       return RESET_CONFIRMATION_REPLY;
     case "status": {
       const runtime = state.runtimeState;
-      const wechat = state.token ? "\u672C\u5730\u5B58\u5728\u5FAE\u4FE1\u767B\u5F55\u6001" : "\u672C\u5730\u672A\u4FDD\u5B58\u5FAE\u4FE1\u767B\u5F55\u6001";
+      const wechat = state.token ? "\u5DF2\u767B\u5F55" : "\u672A\u767B\u5F55";
       const lastSuccess = runtime.lastSuccessfulMessageAt ?? "\u65E0";
-      const retry = runtime.nextRetryAt ? `\u4E0B\u6B21\u81EA\u52A8\u91CD\u8BD5\uFF1A${runtime.nextRetryAt}\u3002` : "";
+      const runtimeRetry = runtime.nextRetryAt ? `\uFF08\u4E0B\u6B21\u81EA\u52A8\u91CD\u8BD5\uFF1A${runtime.nextRetryAt}\uFF09` : "";
+      const mcpRetry = state.attentionMcp.nextRetryAt ? `\uFF0C\u4E0B\u6B21\u81EA\u52A8\u91CD\u8BD5\uFF1A${state.attentionMcp.nextRetryAt}` : "";
+      const mcpAvailability = state.attentionMcp.status === "ready" ? "" : "\uFF08\u5FAE\u4FE1\u5BF9\u8BDD\u4ECD\u53EF\u7528\uFF09";
+      const reporterEnabled = state.runtimeReporter.installationId !== null || state.runtimeReporter.bindingId !== null;
       const runtimeName = hostId === "claude-code" ? "Claude Code" : "Codex";
       return [
-        `${wechat}\u3002`,
-        `${runtimeName} Runtime\uFF1A${runtime.phase}\u3002`,
-        `\u6700\u8FD1\u6210\u529F\u5904\u7406\uFF1A${lastSuccess}\u3002`,
-        `${state.pendingInbound.length} \u6761\u6D88\u606F\u7B49\u5F85\u5904\u7406\uFF0C${state.pendingOutbound.length} \u6761\u5F85\u53D1\u9001\u3002`,
-        retry
-      ].join("");
+        `iLink\uFF1A${wechat}`,
+        `${runtimeName} Runtime\uFF1A${runtime.phase}${runtimeRetry}`,
+        `Attention MCP\uFF1A${state.attentionMcp.status}${mcpAvailability}${mcpRetry}`,
+        `Reporter\uFF1A${reporterEnabled ? "\u5DF2\u542F\u7528" : "\u672A\u542F\u7528"}`,
+        `\u6700\u8FD1\u6210\u529F\u5904\u7406\uFF1A${lastSuccess}`,
+        `\u961F\u5217\uFF1A${state.pendingInbound.length} \u6761\u5F85\u5904\u7406\uFF0C${state.pendingOutbound.length} \u6761\u5F85\u53D1\u9001`
+      ].join("\n");
     }
   }
 }
@@ -23285,7 +23649,6 @@ async function isChannelServiceConfigured(input) {
 // src/channel/channel-command.ts
 init_state();
 var CHANNEL_BRIDGE_HOSTS = ["codex", "claude-code"];
-var ACCOUNT_VERIFICATION_CACHE_MS = 24 * 60 * 60 * 1e3;
 var SUMMARY_NOTIFICATION_POLL_INTERVAL_MS = 3e4;
 function runtimeReporterDegradedMessage(lastErrorCode) {
   switch (lastErrorCode) {
@@ -23439,6 +23802,7 @@ async function channelStart(hostId, options = {}) {
     return 1;
   }
   let brain = null;
+  let mcpSupervisor = null;
   let persistedState = null;
   const reporterSlot = { current: null };
   let flushPendingPersistence = async () => void 0;
@@ -23476,35 +23840,6 @@ async function channelStart(hostId, options = {}) {
     }
     syncRuntimeCheckpoint(state, activeBrain);
     await saveChannelState(state, options.baseDirectory);
-    const accountVerifiedAt = state.accountVerification ? Date.parse(state.accountVerification.verifiedAt) : Number.NaN;
-    const now = Date.now();
-    const cachedAccountVerification = options.service === true && state.accountVerification?.hostId === hostId && state.accountVerification.mcpUrl === mcpUrl && accountVerifiedAt <= now + 6e4 && accountVerifiedAt >= now - ACCOUNT_VERIFICATION_CACHE_MS;
-    const account = cachedAccountVerification ? null : await (options.accountVerifier ?? verifyAttentionAccount)(
-      activeBrain,
-      cwd
-    );
-    if (!cachedAccountVerification && !account) {
-      state.accountVerification = null;
-      await saveChannelState(state, options.baseDirectory);
-      write(
-        `Attention \u8D26\u53F7\u9A8C\u6536\u5931\u8D25\uFF1AAgent \u672A\u80FD\u771F\u5B9E\u8C03\u7528 attention_get_my_account\u3002
-Attention MCP \u6682\u4E0D\u53EF\u7528\uFF1B\u5FAE\u4FE1\u6865\u7EE7\u7EED\u8FD0\u884C\u3002\u8BF7\u8FD0\u884C attention configure ${hostId} --apply --login \u5B8C\u6210 OAuth\uFF0C\u4E4B\u540E\u53EF\u5728\u5FAE\u4FE1\u4E2D\u53D1\u9001\u201C\u91CD\u8BD5\u201D\u3002
-`
-      );
-    } else if (account) {
-      state.accountVerification = {
-        hostId,
-        mcpUrl,
-        verifiedAt: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      await saveChannelState(state, options.baseDirectory);
-      write(
-        `Attention \u5DF2\u8FDE\u63A5\uFF1A${account.displayName}${account.attentionId ? ` (@${account.attentionId})` : ""}\uFF0CFilter=${account.isFilter ? "\u662F" : "\u5426"}\uFF0CMember=${account.isMember ? "\u662F" : "\u5426"}\u3002
-`
-      );
-    } else {
-      write("Attention \u8D26\u53F7\u6700\u8FD1\u5DF2\u9A8C\u6536\uFF1B\u540E\u53F0\u670D\u52A1\u76F4\u63A5\u6062\u590D\u5FAE\u4FE1\u6865\u3002\n");
-    }
     const client = new ILinkClient({
       baseUrl: state.baseUrl || ILINK_BASE_URL,
       ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {},
@@ -23530,6 +23865,39 @@ Attention MCP \u6682\u4E0D\u53EF\u7528\uFF1B\u5FAE\u4FE1\u6865\u7EE7\u7EED\u8FD0
       return pending;
     };
     flushPendingPersistence = async () => await persistTail;
+    const probeAttentionAccount = async () => {
+      const probe = await (options.accountVerifier ?? verifyAttentionAccount)(activeBrain, cwd);
+      state.accountVerification = probe.ok ? {
+        hostId,
+        mcpUrl,
+        verifiedAt: (/* @__PURE__ */ new Date()).toISOString()
+      } : null;
+      return probe;
+    };
+    const activeMcpSupervisor = createMcpRecoverySupervisor({
+      checkpoint: state.attentionMcp,
+      now: () => /* @__PURE__ */ new Date(),
+      persist,
+      probe: probeAttentionAccount,
+      restart: async () => {
+        await activeBrain.shutdown();
+        syncRuntimeCheckpoint(state, activeBrain);
+        await activeBrain.start();
+        syncRuntimeCheckpoint(state, activeBrain);
+      }
+    });
+    mcpSupervisor = activeMcpSupervisor;
+    const accountProbe = await probeAttentionAccount();
+    const startupRecovery = await activeMcpSupervisor.recordProbe(accountProbe);
+    if (!accountProbe.ok) {
+      write(startupMcpFailureMessage(hostId, accountProbe, startupRecovery));
+    } else {
+      const account = accountProbe.account;
+      write(
+        `Attention \u5DF2\u8FDE\u63A5\uFF1A${account.displayName}${account.attentionId ? ` (@${account.attentionId})` : ""}\uFF0CFilter=${account.isFilter ? "\u662F" : "\u5426"}\uFF0CMember=${account.isMember ? "\u662F" : "\u5426"}\u3002
+`
+      );
+    }
     let reporterCredentialWarningLogged = false;
     let reporterNextAttemptAt = 0;
     let reporterIdentityDirty = false;
@@ -23861,6 +24229,7 @@ Attention MCP \u6682\u4E0D\u53EF\u7528\uFF1B\u5FAE\u4FE1\u6865\u7EE7\u7EED\u8FD0
     const shutdown = () => {
       if (shutdownStarted) return;
       shutdownStarted = true;
+      mcpSupervisor?.stop();
       runtime.log("\u6B63\u5728\u9000\u51FA\uFF0C\u4FDD\u5B58\u672C\u5730\u72B6\u6001\u2026");
       void settleReporterRetirement().then(() => reporterSlot.current?.reporter.stop() ?? Promise.resolve()).then(() => activeBrain.shutdown()).catch(() => void 0).then(() => {
         syncRuntimeCheckpoint(runtime.state, activeBrain);
@@ -23904,6 +24273,7 @@ Attention MCP \u6682\u4E0D\u53EF\u7528\uFF1B\u5FAE\u4FE1\u6865\u7EE7\u7EED\u8FD0
           activeBrain,
           cwd,
           persist,
+          activeMcpSupervisor,
           reporterSlot.current
         );
         if (!client.token) continue;
@@ -23960,6 +24330,7 @@ Attention MCP \u6682\u4E0D\u53EF\u7528\uFF1B\u5FAE\u4FE1\u6865\u7EE7\u7EED\u8FD0
           activeBrain,
           cwd,
           persist,
+          activeMcpSupervisor,
           reporterSlot.current
         );
         await flushPendingOutbound(runtime, persist);
@@ -23969,6 +24340,7 @@ Attention MCP \u6682\u4E0D\u53EF\u7528\uFF1B\u5FAE\u4FE1\u6865\u7EE7\u7EED\u8FD0
       process.removeListener("SIGTERM", shutdown);
     }
   } finally {
+    mcpSupervisor?.stop();
     await settleReporterRetirement();
     if (reporterSlot.current) {
       await reporterSlot.current.reporter.stop();
@@ -23987,12 +24359,15 @@ Attention MCP \u6682\u4E0D\u53EF\u7528\uFF1B\u5FAE\u4FE1\u6865\u7EE7\u7EED\u8FD0
     await lock.release();
   }
 }
-async function processPendingInbound(runtime, brain, cwd, persist, reporterRuntime = null) {
+async function processPendingInbound(runtime, brain, cwd, persist, mcpSupervisor, reporterRuntime = null) {
   const batch = runtime.state.pendingInbound.slice(0, MAXIMUM_PENDING_MESSAGES);
   let businessQueueBlocked = Boolean(
     batch[0] && inboundRetryIsCoolingDown(batch[0], runtime.state)
   );
   for (const pending of batch) {
+    if (pending.blockedBy === "attention_mcp" && runtime.state.attentionMcp.status !== "ready") {
+      continue;
+    }
     const pairingCode = reporterRuntime?.pairing.challenge?.pairing_code ?? null;
     const bypassingBlockedBusiness = businessQueueBlocked;
     if (businessQueueBlocked && !isLocalControlMessage(pending.message, runtime.state, pairingCode)) {
@@ -24044,6 +24419,41 @@ async function processPendingInbound(runtime, brain, cwd, persist, reporterRunti
     }
     syncRuntimeCheckpoint(runtime.state, brain);
     let outcomeReplies = [...outcome.replies];
+    if (outcome.controlCommand === "retry") {
+      enqueueOutbound(runtime.state, {
+        contextToken: runtime.state.contextTokens[message.fromUserId] ?? message.contextToken,
+        id: outboundIdentifier({
+          inboundId: pending.id,
+          kind: "result",
+          index: 0
+        }),
+        text: "\u6B63\u5728\u91CD\u65B0\u8FDE\u63A5 Attention MCP\uFF0C\u5FAE\u4FE1\u767B\u5F55\u4E0D\u4F1A\u4E2D\u65AD\u3002",
+        toUserId: message.fromUserId
+      });
+      await persist();
+      await flushPendingOutbound(runtime, persist);
+      if (!runtime.client.token) return;
+      const recovery = await mcpSupervisor.retryNow();
+      syncRuntimeCheckpoint(runtime.state, brain);
+      enqueueOutbound(runtime.state, {
+        contextToken: runtime.state.contextTokens[message.fromUserId] ?? message.contextToken,
+        id: outboundIdentifier({
+          inboundId: pending.id,
+          kind: "result",
+          index: 1
+        }),
+        text: mcpRecoveryReply(recovery, brain.hostId),
+        toUserId: message.fromUserId
+      });
+      completeInbound(runtime.state, pending.id);
+      await persist();
+      reporterRuntime?.reporter.transition(
+        buildReporterSnapshot(runtime, brain)
+      );
+      await flushPendingOutbound(runtime, persist);
+      if (!runtime.client.token) return;
+      continue;
+    }
     if (outcome.controlCommand) {
       if (outcome.controlCommand === "pairing_verification" && reporterRuntime?.pairing.challenge) {
         const challenge = reporterRuntime.pairing.challenge;
@@ -24071,9 +24481,18 @@ async function processPendingInbound(runtime, brain, cwd, persist, reporterRunti
       if (controlFailure) outcomeReplies = [controlFailure];
     }
     if (!outcome.completed) {
-      businessQueueBlocked = true;
       pending.attempts += 1;
-      scheduleInboundRetry(runtime.state, pending.attempts);
+      if (outcome.attentionMcpFailure) {
+        pending.blockedBy = "attention_mcp";
+        await mcpSupervisor.recordProbe({
+          ...outcome.attentionMcpFailure,
+          ok: false
+        });
+      } else {
+        pending.blockedBy = "runtime";
+        businessQueueBlocked = true;
+        scheduleInboundRetry(runtime.state, pending.attempts);
+      }
       if (pending.attempts === 1) {
         outcomeReplies.forEach((reply, index) => {
           enqueueOutbound(runtime.state, {
@@ -24095,6 +24514,7 @@ async function processPendingInbound(runtime, brain, cwd, persist, reporterRunti
       await flushPendingOutbound(runtime, persist);
       continue;
     }
+    pending.blockedBy = null;
     if (!bypassingBlockedBusiness) {
       runtime.state.runtimeState.nextRetryAt = null;
       runtime.state.runtimeState.retryAttempt = 0;
@@ -24121,6 +24541,20 @@ async function processPendingInbound(runtime, brain, cwd, persist, reporterRunti
     );
     await flushPendingOutbound(runtime, persist);
     if (!runtime.client.token) return;
+  }
+}
+function mcpRecoveryReply(outcome, hostId) {
+  switch (outcome.kind) {
+    case "ready":
+      return "Attention MCP \u5DF2\u6062\u590D\uFF0C\u5E76\u5DF2\u9A8C\u8BC1\u5F53\u524D\u8D26\u53F7\u3002";
+    case "auth_required":
+      return `Attention MCP \u9700\u8981\u91CD\u65B0\u6388\u6743\uFF1B\u5FAE\u4FE1\u5BF9\u8BDD\u4ECD\u53EF\u7528\u3002\u8BF7\u5728\u672C\u673A\u8FD0\u884C attention configure ${hostId} --apply --login\uFF0C\u5B8C\u6210\u540E\u56DE\u590D\u201C\u91CD\u8BD5\u201D\u3002`;
+    case "cooldown":
+      return `Attention MCP \u6B63\u5728\u9650\u5236\u9891\u7E41\u91CD\u8BD5\uFF1B\u5FAE\u4FE1\u5BF9\u8BDD\u4ECD\u53EF\u7528\u3002\u53EF\u5728 ${outcome.retryAt} \u540E\u518D\u8BD5\u3002`;
+    case "scheduled":
+      return `Attention MCP \u6682\u672A\u6062\u590D\uFF08${outcome.errorCode}\uFF09\uFF1B\u5FAE\u4FE1\u5BF9\u8BDD\u4ECD\u53EF\u7528\uFF0C\u5DF2\u5B89\u6392\u5728 ${outcome.nextRetryAt} \u81EA\u52A8\u91CD\u8BD5\u3002`;
+    case "failed":
+      return `Attention MCP \u6682\u672A\u6062\u590D\uFF08${outcome.errorCode}\uFF09\uFF1B\u5FAE\u4FE1\u5BF9\u8BDD\u4ECD\u53EF\u7528\uFF0C\u8BF7\u68C0\u67E5\u672C\u673A\u914D\u7F6E\u540E\u518D\u53D1\u9001\u201C\u91CD\u8BD5\u201D\u3002`;
   }
 }
 function inboundRetryIsCoolingDown(pending, state) {
@@ -24219,14 +24653,12 @@ async function pollAndQueueSummaryNotifications(runtime, options, persist) {
     await persist();
   }
 }
-var ACCOUNT_VERIFICATION_PREFIX = "ATTENTION_ACCOUNT_OK ";
 async function verifyAttentionAccount(brain, cwd) {
   const verificationPrompt = [
     "\u8FD9\u662F Attention \u5FAE\u4FE1\u6865\u63A5\u542F\u52A8\u524D\u7684\u8D26\u53F7\u9A8C\u6536\u3002",
     "\u5FC5\u987B\u73B0\u5728\u771F\u5B9E\u8C03\u7528 attention_get_my_account\uFF1B\u4E0D\u8981\u4F9D\u636E\u914D\u7F6E\u3001\u5386\u53F2\u6216\u731C\u6D4B\u56DE\u7B54\u3002",
-    "\u5DE5\u5177\u6210\u529F\u540E\uFF0C\u53EA\u8F93\u51FA\u4E00\u884C\uFF1A",
-    'ATTENTION_ACCOUNT_OK {"display_name":"<\u8FD4\u56DE\u503C>","attention_id":"<\u8FD4\u56DE\u503C\u6216null>","is_filter":<true|false>,"is_member":<true|false>}',
-    "\u5DE5\u5177\u5931\u8D25\u3001\u672A\u6388\u6743\u6216\u4E0D\u53EF\u7528\u65F6\uFF0C\u4E0D\u8981\u8F93\u51FA ATTENTION_ACCOUNT_OK\u3002"
+    "\u5DE5\u5177\u6210\u529F\u540E\u53EF\u4EE5\u7528\u4E00\u53E5\u4E2D\u6587\u7B80\u8FF0\u7ED3\u679C\uFF1B\u6A21\u578B\u6587\u5B57\u4E0D\u4F5C\u4E3A\u9A8C\u6536\u8BC1\u636E\u3002",
+    "\u5DE5\u5177\u5931\u8D25\u3001\u672A\u6388\u6743\u6216\u4E0D\u53EF\u7528\u65F6\uFF0C\u5982\u5B9E\u7B80\u77ED\u8BF4\u660E\u3002"
   ].join("\n");
   const outcome = await brain.invoke({
     cwd,
@@ -24235,25 +24667,26 @@ async function verifyAttentionAccount(brain, cwd) {
     // or create the designated Channel conversation.
     sessionId: null
   });
-  if (!outcome.ok) return null;
-  const marker = outcome.reply.split("\n").map((line) => line.trim()).find((line) => line.startsWith(ACCOUNT_VERIFICATION_PREFIX));
-  if (!marker) return null;
-  try {
-    const parsed = JSON.parse(
-      marker.slice(ACCOUNT_VERIFICATION_PREFIX.length)
-    );
-    if (typeof parsed.display_name !== "string" || parsed.display_name.trim().length === 0 || !(parsed.attention_id === null || typeof parsed.attention_id === "string") || typeof parsed.is_filter !== "boolean" || typeof parsed.is_member !== "boolean") {
-      return null;
-    }
-    return {
-      attentionId: parsed.attention_id,
-      displayName: parsed.display_name.trim(),
-      isFilter: parsed.is_filter,
-      isMember: parsed.is_member
-    };
-  } catch {
-    return null;
+  return outcome.attentionMcpProbe ?? {
+    errorCode: "mcp_account_probe_failed",
+    ok: false,
+    retryable: false
+  };
+}
+function startupMcpFailureMessage(hostId, probe, recovery) {
+  if (recovery.kind === "auth_required") {
+    return `Attention MCP \u9700\u8981\u91CD\u65B0\u6388\u6743\uFF1B\u5FAE\u4FE1\u6865\u548C\u666E\u901A\u5BF9\u8BDD\u4ECD\u53EF\u7528\u3002
+\u8BF7\u5728\u7535\u8111\u8FD0\u884C attention configure ${hostId} --apply --login\uFF0C\u5B8C\u6210\u540E\u5728\u5FAE\u4FE1\u53D1\u9001\u201C\u91CD\u8BD5\u201D\u3002
+`;
   }
+  if (recovery.kind === "scheduled") {
+    return `Attention MCP \u6682\u4E0D\u53EF\u7528\uFF08${probe.errorCode}\uFF09\uFF0C\u5FAE\u4FE1\u6865\u548C\u666E\u901A\u5BF9\u8BDD\u4ECD\u53EF\u7528\u3002
+\u5DF2\u8FDB\u5165\u81EA\u52A8\u91CD\u8BD5\uFF1B\u4E0B\u4E00\u6B21\u5C1D\u8BD5\u65F6\u95F4 ${recovery.nextRetryAt}\u3002
+`;
+  }
+  return `Attention MCP \u8D26\u53F7\u5B9E\u6D4B\u5931\u8D25\uFF08${probe.errorCode}\uFF09\uFF0C\u5FAE\u4FE1\u6865\u548C\u666E\u901A\u5BF9\u8BDD\u4ECD\u53EF\u7528\u3002
+\u53EF\u5728\u5FAE\u4FE1\u53D1\u9001\u201C\u91CD\u8BD5\u201D\uFF0C\u6216\u5728\u7535\u8111\u8FD0\u884C attention channel status \u67E5\u770B\u5206\u5C42\u72B6\u6001\u3002
+`;
 }
 async function channelStatus(options = {}) {
   const write = options.writeOutput ?? ((text) => process.stdout.write(text));
@@ -24667,23 +25100,29 @@ function describeInboundBoundary(profile) {
 }
 function buildConfigurePlan(input) {
   const profile = getAgentInstallationProfile(input.hostId);
+  const origin = normalizeAttentionOrigin(input.origin);
   const skillDirectory = resolve3(
     input.skillDirectory ?? defaultSkillDirectory(profile.id)
   );
-  const mcpUrl = resolveAttentionPublicUrl(input.origin, profile.mcp.url_template);
+  const mcpUrl = resolveAttentionPublicUrl(origin, profile.mcp.url_template);
   const skillSourceUrl = resolveAttentionPublicUrl(
-    input.origin,
+    origin,
     profile.skill.source_path
   );
-  const skillBundleUrl = profile.skill.bundle_path ? resolveAttentionPublicUrl(input.origin, profile.skill.bundle_path) : null;
+  const skillBundleUrl = profile.skill.bundle_path ? resolveAttentionPublicUrl(origin, profile.skill.bundle_path) : null;
   const replacements = {
-    attention_origin: input.origin,
+    attention_origin: origin,
     attention_skill_directory: skillDirectory,
     mcp_url: mcpUrl,
     skill_bundle_url: skillBundleUrl ?? "",
     skill_url: skillSourceUrl
   };
   const stageSkill = profile.skill.delivery === "host_import_directory" || profile.skill.delivery === "host_user_directory";
+  const renderedLoginCommand = renderCommandTemplate(
+    profile.mcp.login_command_template,
+    replacements
+  );
+  const loginCommand = profile.id === "codex" && renderedLoginCommand ? withCodexAttentionMcpPolicy(renderedLoginCommand, mcpUrl) : renderedLoginCommand;
   return {
     channelCommands: profile.channel.setup_command_templates.map((template) => {
       const command2 = renderCommandTemplate(template, replacements);
@@ -24703,10 +25142,7 @@ function buildConfigurePlan(input) {
     downloadSkillBundle: profile.skill.delivery === "host_upload_bundle",
     hostId: profile.id,
     inboundBoundary: describeInboundBoundary(profile),
-    loginCommand: renderCommandTemplate(
-      profile.mcp.login_command_template,
-      replacements
-    ),
+    loginCommand,
     mcpAddCommand: renderCommandTemplate(
       profile.mcp.add_command_template,
       replacements
@@ -24717,7 +25153,7 @@ function buildConfigurePlan(input) {
       replacements
     ),
     mcpUrl,
-    origin: input.origin,
+    origin,
     profile,
     skillDirectory,
     skillDocumentSha256: profile.skill.document_sha256,
@@ -24946,6 +25382,29 @@ async function applyCommand(id, command2, runner) {
 async function applyConfigurePlan(plan, options) {
   const results = [];
   const runner = options.runner ?? runCommand;
+  if (plan.hostId === "codex") {
+    const command2 = codexAttentionMcpPolicyCheckCommand();
+    const checked = await runner(command2, { timeoutMs: 45e3 });
+    const version2 = parseCodexCliVersion(
+      `${checked.stdout}
+${checked.stderr}`
+    );
+    if (checked.exitCode !== 0) {
+      results.push({
+        command: command2,
+        detail: `Codex ${version2 ?? "version unknown"} cannot use Attention's shared keyring credential policy. Please upgrade Codex. The Bridge can continue chat, but Attention MCP cannot be safely auto-recovered on this Codex build.`,
+        id: "codex_mcp_credential_compatibility",
+        status: "failed"
+      });
+      return results;
+    }
+    results.push({
+      command: command2,
+      detail: `Codex ${version2 ?? "version unknown"} accepts the shared keyring credential policy.`,
+      id: "codex_mcp_credential_compatibility",
+      status: "applied"
+    });
+  }
   for (const [index, command2] of plan.compatibilityCheckCommands.entries()) {
     const compatibility = await applyCommand(
       `compatibility_check_${String(index + 1)}`,
