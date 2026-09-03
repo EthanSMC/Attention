@@ -39,8 +39,12 @@ import {
 import { prepareChannelCodexHome } from "./codex-home";
 import type {
   AttentionMcpProbeResult,
-  VerifiedAttentionAccount,
 } from "./mcp-readiness";
+import {
+  createMcpRecoverySupervisor,
+  type McpRecoveryOutcome,
+  type McpRecoverySupervisor,
+} from "./mcp-recovery-supervisor";
 import {
   ILinkClient,
   ILinkQrProtocolError,
@@ -381,6 +385,7 @@ export async function channelStart(
   }
 
   let brain: BrainAdapter | null = null;
+  let mcpSupervisor: McpRecoverySupervisor | null = null;
   let persistedState: ChannelState | null = null;
   const reporterSlot: { current: ReporterRuntime | null } = { current: null };
   let flushPendingPersistence = async (): Promise<void> => undefined;
@@ -424,31 +429,6 @@ export async function channelStart(
     }
     syncRuntimeCheckpoint(state, activeBrain);
     await saveChannelState(state, options.baseDirectory);
-    const accountProbe = await (
-      options.accountVerifier ?? verifyAttentionAccount
-    )(activeBrain, cwd);
-    applyAttentionMcpProbe(state, accountProbe);
-    if (!accountProbe.ok) {
-      state.accountVerification = null;
-      await saveChannelState(state, options.baseDirectory);
-      write(
-        "Attention 账号验收失败：Agent 未能真实调用 attention_get_my_account。\n" +
-          `Attention MCP 暂不可用；微信桥继续运行。请运行 attention configure ${hostId} --apply --login 完成 OAuth，之后可在微信中发送“重试”。\n`,
-      );
-    } else {
-      const account = accountProbe.account;
-      state.accountVerification = {
-        hostId,
-        mcpUrl,
-        verifiedAt: new Date().toISOString(),
-      };
-      await saveChannelState(state, options.baseDirectory);
-      write(
-        `Attention 已连接：${account.displayName}` +
-          `${account.attentionId ? ` (@${account.attentionId})` : ""}` +
-          `，Filter=${account.isFilter ? "是" : "否"}，Member=${account.isMember ? "是" : "否"}。\n`,
-      );
-    }
 
     const client = new ILinkClient({
       baseUrl: state.baseUrl || ILINK_BASE_URL,
@@ -475,6 +455,45 @@ export async function channelStart(
       return pending;
     };
     flushPendingPersistence = async () => await persistTail;
+
+    const probeAttentionAccount = async (): Promise<AttentionMcpProbeResult> => {
+      const probe = await (
+        options.accountVerifier ?? verifyAttentionAccount
+      )(activeBrain, cwd);
+      state.accountVerification = probe.ok
+        ? {
+            hostId,
+            mcpUrl,
+            verifiedAt: new Date().toISOString(),
+          }
+        : null;
+      return probe;
+    };
+    const activeMcpSupervisor = createMcpRecoverySupervisor({
+      checkpoint: state.attentionMcp,
+      now: () => new Date(),
+      persist,
+      probe: probeAttentionAccount,
+      restart: async () => {
+        await activeBrain.shutdown();
+        syncRuntimeCheckpoint(state, activeBrain);
+        await activeBrain.start();
+        syncRuntimeCheckpoint(state, activeBrain);
+      },
+    });
+    mcpSupervisor = activeMcpSupervisor;
+    const accountProbe = await probeAttentionAccount();
+    const startupRecovery = await activeMcpSupervisor.recordProbe(accountProbe);
+    if (!accountProbe.ok) {
+      write(startupMcpFailureMessage(hostId, accountProbe, startupRecovery));
+    } else {
+      const account = accountProbe.account;
+      write(
+        `Attention 已连接：${account.displayName}` +
+          `${account.attentionId ? ` (@${account.attentionId})` : ""}` +
+          `，Filter=${account.isFilter ? "是" : "否"}，Member=${account.isMember ? "是" : "否"}。\n`,
+      );
+    }
 
     let reporterCredentialWarningLogged = false;
     let reporterNextAttemptAt = 0;
@@ -867,6 +886,7 @@ export async function channelStart(
     const shutdown = () => {
       if (shutdownStarted) return;
       shutdownStarted = true;
+      mcpSupervisor?.stop();
       runtime.log("正在退出，保存本地状态…");
       void settleReporterRetirement()
         .then(() => reporterSlot.current?.reporter.stop() ?? Promise.resolve())
@@ -992,6 +1012,7 @@ export async function channelStart(
       process.removeListener("SIGTERM", shutdown);
     }
   } finally {
+    mcpSupervisor?.stop();
     await settleReporterRetirement();
     if (reporterSlot.current) {
       await reporterSlot.current.reporter.stop();
@@ -1350,28 +1371,27 @@ export async function verifyAttentionAccount(
   );
 }
 
-function applyAttentionMcpProbe(
-  state: ChannelState,
-  probe: AttentionMcpProbeResult,
-): void {
-  const checkedAt = new Date().toISOString();
-  state.attentionMcp.lastCheckedAt = checkedAt;
-  state.attentionMcp.nextRetryAt = null;
-  state.attentionMcp.retryAttempt = 0;
-  if (probe.ok) {
-    state.attentionMcp.lastErrorCode = null;
-    state.attentionMcp.lastReadyAt = checkedAt;
-    state.attentionMcp.status = "ready";
-    return;
+function startupMcpFailureMessage(
+  hostId: ChannelBridgeHost,
+  probe: Extract<AttentionMcpProbeResult, { ok: false }>,
+  recovery: McpRecoveryOutcome,
+): string {
+  if (recovery.kind === "auth_required") {
+    return (
+      "Attention MCP 需要重新授权；微信桥和普通对话仍可用。\n" +
+      `请在电脑运行 attention configure ${hostId} --apply --login，完成后在微信发送“重试”。\n`
+    );
   }
-  state.attentionMcp.lastErrorCode = probe.errorCode;
-  state.attentionMcp.status =
-    probe.errorCode === "mcp_auth_required" ||
-    probe.errorCode === "mcp_token_refresh_failed"
-      ? "auth_required"
-      : probe.errorCode === "mcp_server_unreachable"
-        ? "unreachable"
-        : "tool_error";
+  if (recovery.kind === "scheduled") {
+    return (
+      `Attention MCP 暂不可用（${probe.errorCode}），微信桥和普通对话仍可用。\n` +
+      `已进入自动重试；下一次尝试时间 ${recovery.nextRetryAt}。\n`
+    );
+  }
+  return (
+    `Attention MCP 账号实测失败（${probe.errorCode}），微信桥和普通对话仍可用。\n` +
+    "可在微信发送“重试”，或在电脑运行 attention channel status 查看分层状态。\n"
+  );
 }
 
 export async function channelStatus(

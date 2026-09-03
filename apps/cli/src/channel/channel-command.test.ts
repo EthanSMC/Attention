@@ -147,8 +147,55 @@ describe("channel subcommands", () => {
 
     expect(exitCode).toBe(0);
     expect(updatePollAttempted).toBe(true);
-    expect(lines.join("")).toContain("attention_get_my_account");
-    expect(lines.join("")).toContain("微信桥继续运行");
+    expect(lines.join("")).toContain("需要重新授权");
+    expect(lines.join("")).toContain("普通对话仍可用");
+  });
+
+  it("records a bounded recovery attempt for a transient startup probe failure", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    state.token = "local-ilink-token";
+    state.accountId = "local-account";
+    await saveChannelState(state, base);
+
+    expect(
+      await channelStart("codex", {
+        accountVerifier: async () => ({
+          errorCode: "mcp_server_unreachable",
+          ok: false,
+          retryable: true,
+        }),
+        baseDirectory: base,
+        brainFactory: () => ({
+          ...brainLifecycle(),
+          hostId: "codex",
+          invoke: async () => ({
+            ok: true,
+            reply: "普通对话仍可用",
+            resumeFailed: false,
+            sessionId: "thread-1",
+            timedOut: false,
+          }),
+        }),
+        bridgeUpdateChecker: async () => ({
+          status: "current",
+          version: "0.3.8",
+        }),
+        fetchImpl: async () =>
+          new Response(JSON.stringify({ errcode: -14, ret: 0 })),
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        runtimeCredentialLoader: async () => false,
+        service: true,
+        writeOutput: () => undefined,
+      }),
+    ).toBe(0);
+
+    expect((await loadChannelState(base)).attentionMcp).toMatchObject({
+      lastErrorCode: "mcp_server_unreachable",
+      retryAttempt: 1,
+      status: "unreachable",
+    });
   });
 
   it("installs a background bridge without starting a duplicate Agent preflight", async () => {
