@@ -15,18 +15,63 @@ const actionLabels: Record<AdminEntitlementAction, string> = {
   set_member: "设为 Member",
 };
 
+function normalizeAdminEntitlementReason(value: string): string {
+  return value.normalize("NFKC").trim();
+}
+
 export function isValidAdminEntitlementReason(value: string): boolean {
-  const normalized = value.normalize("NFKC").trim();
+  const normalized = normalizeAdminEntitlementReason(value);
   return normalized.length >= 3 && normalized.length <= 500;
 }
 
-function actionAlreadySatisfied(
+export function adminEntitlementReasonMessage(value: string): string {
+  const normalized = normalizeAdminEntitlementReason(value);
+  if (normalized.length === 0) {
+    return "先填写至少 3 个字符的变更原因。";
+  }
+  if (normalized.length < 3) {
+    return `还需填写 ${3 - normalized.length} 个字符，才能选择操作。`;
+  }
+  if (normalized.length > 500) {
+    return "变更原因不能超过 500 个字符。";
+  }
+  return "原因已满足要求，请选择操作。";
+}
+
+function currentTierDisabledReason(
   action: AdminEntitlementAction,
   tier: AdminEntitlementTier,
-): boolean {
-  if (action === "set_member") return tier === "member";
-  if (action === "set_filter") return tier === "filter";
-  return tier !== "filter";
+): string | null {
+  if (action === "set_member" && tier === "member") {
+    return "当前已是 Member。";
+  }
+  if (action === "set_filter" && tier === "filter") {
+    return "当前已是 Filter。";
+  }
+  if (action === "revoke_filter" && tier !== "filter") {
+    return "仅当前为 Filter 时可撤销。";
+  }
+  return null;
+}
+
+export function adminEntitlementActionDisabledReason({
+  action,
+  currentTier,
+  pending,
+  reason,
+}: {
+  action: AdminEntitlementAction;
+  currentTier: AdminEntitlementTier;
+  pending: boolean;
+  reason: string;
+}): string | null {
+  if (pending) return "正在执行权益变更。";
+  const tierReason = currentTierDisabledReason(action, currentTier);
+  if (tierReason) return tierReason;
+  if (!isValidAdminEntitlementReason(reason)) {
+    return adminEntitlementReasonMessage(reason);
+  }
+  return null;
 }
 
 function safeErrorMessage(code: unknown): string {
@@ -115,6 +160,16 @@ export function AdminUserEntitlementControl({
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const validReason = isValidAdminEntitlementReason(reason);
+  const reasonFieldId = `admin-entitlement-reason-${targetAccountId}`;
+  const reasonHelpId = `admin-entitlement-reason-help-${targetAccountId}`;
+  const actionStateId = `admin-entitlement-action-state-${targetAccountId}`;
+  const currentTierNotes = (
+    ["set_member", "set_filter", "revoke_filter"] as const
+  )
+    .map((action) => currentTierDisabledReason(action, currentTier))
+    .filter((message): message is string => message !== null)
+    .map((message) => message.replace(/。$/u, ""))
+    .join("；");
 
   async function confirmChange(): Promise<void> {
     if (!confirmation || !validReason || pending) return;
@@ -127,7 +182,7 @@ export function AdminUserEntitlementControl({
           body: JSON.stringify({
             action: confirmation,
             confirmed: true,
-            reason: reason.normalize("NFKC").trim(),
+            reason: normalizeAdminEntitlementReason(reason),
           }),
           headers: { "Content-Type": "application/json" },
           method: "POST",
@@ -153,9 +208,12 @@ export function AdminUserEntitlementControl({
 
   return (
     <div className="admin-entitlement-control">
-      <label>
+      <label htmlFor={reasonFieldId}>
         <span>变更原因</span>
         <textarea
+          aria-describedby={reasonHelpId}
+          aria-invalid={reason.length > 0 && !validReason}
+          id={reasonFieldId}
           maxLength={500}
           onChange={(event) => {
             setReason(event.target.value);
@@ -166,25 +224,44 @@ export function AdminUserEntitlementControl({
           value={reason}
         />
       </label>
+      <p
+        aria-live="polite"
+        className="admin-entitlement-control__reason-help"
+        id={reasonHelpId}
+      >
+        {adminEntitlementReasonMessage(reason)}
+      </p>
       <div className="admin-entitlement-control__actions">
         {(
           ["set_member", "set_filter", "revoke_filter"] as const
-        ).map((action) => (
-          <button
-            className="button button--secondary"
-            disabled={
-              pending ||
-              !validReason ||
-              actionAlreadySatisfied(action, currentTier)
-            }
-            key={action}
-            onClick={() => setConfirmation(action)}
-            type="button"
-          >
-            {actionLabels[action]}
-          </button>
-        ))}
+        ).map((action) => {
+          const disabledReason = adminEntitlementActionDisabledReason({
+            action,
+            currentTier,
+            pending,
+            reason,
+          });
+          return (
+            <button
+              aria-describedby={`${reasonHelpId} ${actionStateId}`}
+              className="button button--secondary"
+              disabled={disabledReason !== null}
+              key={action}
+              onClick={() => setConfirmation(action)}
+              title={disabledReason ?? undefined}
+              type="button"
+            >
+              {actionLabels[action]}
+            </button>
+          );
+        })}
       </div>
+      <p
+        className="admin-entitlement-control__action-state"
+        id={actionStateId}
+      >
+        当前不可用：{currentTierNotes}。
+      </p>
       <p aria-live="polite" className="admin-entitlement-control__feedback">
         {feedback}
       </p>
@@ -194,7 +271,7 @@ export function AdminUserEntitlementControl({
           onCancel={() => setConfirmation(null)}
           onConfirm={() => void confirmChange()}
           pending={pending}
-          reason={reason.normalize("NFKC").trim()}
+          reason={normalizeAdminEntitlementReason(reason)}
           targetLabel={targetLabel}
         />
       ) : null}
