@@ -18371,7 +18371,7 @@ var MAXIMUM_CAPTURE_BYTES = 65536;
 var runCommand = async (invocation, options = {}) => {
   const timeoutMs = options.timeoutMs ?? 15e3;
   const executable = await resolveHostExecutable(invocation.executable);
-  return await new Promise((resolve4) => {
+  return await new Promise((resolve5) => {
     const child = spawn(executable, [...invocation.args], {
       env: {
         ...process.env,
@@ -18411,7 +18411,7 @@ var runCommand = async (invocation, options = {}) => {
     child.on("close", (exitCode2, signal) => {
       clearTimeout(timer);
       if (forceKillTimer) clearTimeout(forceKillTimer);
-      resolve4({
+      resolve5({
         exitCode: exitCode2,
         signal,
         stderr: boundedDiagnosticOutput(Buffer.concat(stderr).toString("utf8")),
@@ -18601,7 +18601,7 @@ import { homedir as homedir2 } from "node:os";
 import { dirname, join as join2 } from "node:path";
 
 // src/version.ts
-var ATTENTION_CLI_VERSION = "0.3.12";
+var ATTENTION_CLI_VERSION = "0.3.13";
 
 // src/runtime-oauth.ts
 var RUNTIME_CREDENTIAL_VERSION = 1;
@@ -18980,8 +18980,8 @@ async function defaultOpenBrowser(url2) {
 }
 function closeServer(server) {
   if (!server.listening) return Promise.resolve();
-  return new Promise((resolve4, reject) => {
-    server.close((error51) => error51 ? reject(error51) : resolve4());
+  return new Promise((resolve5, reject) => {
+    server.close((error51) => error51 ? reject(error51) : resolve5());
   });
 }
 var CALLBACK_PAGE_COPY = {
@@ -19052,8 +19052,8 @@ function runtimeOAuthCallbackHeaders() {
 async function createLoopbackCallbackServer(expectedState) {
   let resolveCallback = () => void 0;
   let rejectCallback = () => void 0;
-  const callback = new Promise((resolve4, reject) => {
-    resolveCallback = resolve4;
+  const callback = new Promise((resolve5, reject) => {
+    resolveCallback = resolve5;
     rejectCallback = reject;
   });
   let redirectUri = "";
@@ -19081,9 +19081,9 @@ async function createLoopbackCallbackServer(expectedState) {
     resolveCallback(callbackUrl);
   });
   server.once("error", (error51) => rejectCallback(error51));
-  await new Promise((resolve4, reject) => {
+  await new Promise((resolve5, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve4());
+    server.listen(0, "127.0.0.1", () => resolve5());
   }).catch(() => runtimeError("runtime_oauth_callback_failed"));
   const address = server.address();
   if (!address || typeof address === "string") {
@@ -19304,8 +19304,8 @@ var ClaudeStreamRpc = class {
     this.#signal = null;
     this.#stderr = "";
     this.#stdoutBuffer = "";
-    this.#exitPromise = new Promise((resolve4) => {
-      this.#resolveExit = resolve4;
+    this.#exitPromise = new Promise((resolve5) => {
+      this.#resolveExit = resolve5;
     });
     const child = spawnImpl(
       this.#options.executable ?? "claude",
@@ -19378,11 +19378,11 @@ var ClaudeStreamRpc = class {
     const child = this.#child;
     if (!child || this.#phase !== "running") return;
     this.#closeRequested = true;
-    await new Promise((resolve4) => {
+    await new Promise((resolve5) => {
       const forceTimer = setTimeout(() => child.kill("SIGKILL"), 2e3);
       child.once("close", () => {
         clearTimeout(forceTimer);
-        resolve4();
+        resolve5();
       });
       child.kill("SIGTERM");
     });
@@ -19648,7 +19648,7 @@ var CodexAppServerRpc = class {
       );
     }
     const id = this.#nextRequestId++;
-    return new Promise((resolve4, reject) => {
+    return new Promise((resolve5, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(id);
         reject(
@@ -19660,7 +19660,7 @@ var CodexAppServerRpc = class {
       }, timeoutMs);
       this.#pending.set(id, {
         reject,
-        resolve: (value) => resolve4(value),
+        resolve: (value) => resolve5(value),
         timer
       });
       try {
@@ -19689,11 +19689,11 @@ var CodexAppServerRpc = class {
   async close() {
     const child = this.#child;
     if (!child || this.#phase !== "running") return;
-    await new Promise((resolve4) => {
+    await new Promise((resolve5) => {
       const forceTimer = setTimeout(() => child.kill("SIGKILL"), 2e3);
       const finished = () => {
         clearTimeout(forceTimer);
-        resolve4();
+        resolve5();
       };
       child.once("close", finished);
       child.kill("SIGTERM");
@@ -20296,13 +20296,13 @@ function createCodexResidentBrain(options) {
       }
       return emptyFailure({ sessionId: threadId });
     }
-    return await new Promise((resolve4) => {
+    return await new Promise((resolve5) => {
       const timer = setTimeout(() => {
         const pending = activeTurn;
         if (!pending || pending.turnId !== turnId) return;
         activeTurn = null;
         void rpc.request("turn/interrupt", { threadId, turnId }).catch(() => void 0);
-        resolve4(
+        resolve5(
           emptyFailure({ sessionId: threadId, timedOut: true })
         );
       }, turnTimeout);
@@ -20311,7 +20311,7 @@ function createCodexResidentBrain(options) {
         attentionMcpProbe: null,
         collectionReplyControl: null,
         reply: "",
-        resolve: resolve4,
+        resolve: resolve5,
         threadId,
         timer,
         turnId
@@ -20329,8 +20329,8 @@ function createCodexResidentBrain(options) {
       if (!acceptingInvocations) return emptyFailure();
       const invocationGeneration = lifecycleGeneration;
       let resolveQueued;
-      const outcome = new Promise((resolve4) => {
-        resolveQueued = resolve4;
+      const outcome = new Promise((resolve5) => {
+        resolveQueued = resolve5;
       });
       const task = invokeTail.then(async () => {
         if (!acceptingInvocations || invocationGeneration !== lifecycleGeneration) {
@@ -20782,7 +20782,7 @@ function createClaudeResidentBrain(options) {
     if (input.sessionId) {
       transition("recovering_thread", null, snapshot.retryAttempt);
     }
-    return await new Promise((resolve4) => {
+    return await new Promise((resolve5) => {
       const timer = setTimeout(() => {
         const pending = activeTurn;
         if (!pending) return;
@@ -20801,7 +20801,7 @@ function createClaudeResidentBrain(options) {
         pendingToolNames: /* @__PURE__ */ new Map(),
         reply: "",
         requestedSessionId: input.sessionId,
-        resolve: resolve4,
+        resolve: resolve5,
         timer
       };
       try {
@@ -20818,7 +20818,7 @@ function createClaudeResidentBrain(options) {
         if (error51 instanceof ClaudeStreamRpcError) {
           transition("degraded_runtime", "claude_runtime_write_failed", 0);
         }
-        resolve4(emptyFailure2({ sessionId: currentSessionId }));
+        resolve5(emptyFailure2({ sessionId: currentSessionId }));
       }
     });
   };
@@ -20828,8 +20828,8 @@ function createClaudeResidentBrain(options) {
       if (!acceptingInvocations) return emptyFailure2();
       const invocationGeneration = lifecycleGeneration;
       let resolveQueued;
-      const outcome = new Promise((resolve4) => {
-        resolveQueued = resolve4;
+      const outcome = new Promise((resolve5) => {
+        resolveQueued = resolve5;
       });
       const task = invokeTail.then(async () => {
         if (!acceptingInvocations || invocationGeneration !== lifecycleGeneration) {
@@ -20888,9 +20888,124 @@ function createBrainAdapter(hostId, options) {
 }
 
 // src/channel/bridge-updater.ts
-import { createHash as createHash3, randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 import { chmod as chmod3, mkdir as mkdir3, readFile as readFile3, rename as rename3, rm as rm3, writeFile as writeFile3 } from "node:fs/promises";
 import { dirname as dirname3, join as join4 } from "node:path";
+
+// src/release-client.ts
+import { createHash as createHash3 } from "node:crypto";
+var MANIFEST_MAXIMUM_BYTES = 16384;
+var ARTIFACT_MAXIMUM_BYTES = 16 * 1024 * 1024;
+var AttentionReleaseError = class extends Error {
+  constructor(code) {
+    super(code);
+    this.code = code;
+  }
+  code;
+};
+function nodeRuntimeSatisfies(version2, range) {
+  const current = /^(\d+)\.(\d+)\.(\d+)/u.exec(version2);
+  const minimum = /^>=(\d+)\.(\d+)\.(\d+)$/u.exec(range);
+  if (!current || !minimum) return false;
+  for (let index = 1; index <= 3; index += 1) {
+    const difference = Number(current[index]) - Number(minimum[index]);
+    if (difference !== 0) return difference > 0;
+  }
+  return true;
+}
+function responseMatches(response, expectedUrl) {
+  if (!response.url) return true;
+  try {
+    const actual = new URL(response.url);
+    const expected = new URL(expectedUrl);
+    return actual.origin === expected.origin && actual.pathname === expected.pathname && !actual.search && !actual.hash && !actual.username && !actual.password;
+  } catch {
+    return false;
+  }
+}
+async function boundedResponseBytes(response, maximumBytes, errorCode2) {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength) {
+    const parsed = Number(contentLength);
+    if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > maximumBytes) {
+      throw new AttentionReleaseError(errorCode2);
+    }
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.byteLength > maximumBytes) {
+    throw new AttentionReleaseError(errorCode2);
+  }
+  return bytes;
+}
+async function fetchExact(fetchImpl, url2, maximumBytes, errorCode2, timeoutMs) {
+  let response;
+  try {
+    response = await fetchImpl(url2, {
+      headers: { accept: "application/json, text/javascript;q=0.9" },
+      redirect: "error",
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+  } catch {
+    throw new AttentionReleaseError(`${errorCode2}_fetch_failed`);
+  }
+  if (response.status !== 200) {
+    throw new AttentionReleaseError(`${errorCode2}_http_status`);
+  }
+  if (!responseMatches(response, url2)) {
+    throw new AttentionReleaseError(`${errorCode2}_redirected`);
+  }
+  return {
+    bytes: await boundedResponseBytes(
+      response,
+      maximumBytes,
+      `${errorCode2}_too_large`
+    ),
+    response
+  };
+}
+async function fetchAttentionReleaseManifest(options) {
+  const origin = normalizeAttentionOrigin(options.origin);
+  const manifestUrl = new URL("/cli/manifest.json", `${origin}/`).toString();
+  const result = await fetchExact(
+    options.fetchImpl ?? fetch,
+    manifestUrl,
+    MANIFEST_MAXIMUM_BYTES,
+    "manifest",
+    options.timeoutMs
+  );
+  const contentType = result.response.headers.get("content-type") ?? "";
+  if (!/^application\/(?:[a-z0-9.+-]*\+)?json(?:\s*;|$)/iu.test(contentType)) {
+    throw new AttentionReleaseError("manifest_content_type");
+  }
+  let value;
+  try {
+    value = JSON.parse(result.bytes.toString("utf8"));
+  } catch {
+    throw new AttentionReleaseError("manifest_invalid_json");
+  }
+  const manifest = parseBridgeUpdateManifest(value);
+  if (!manifest) throw new AttentionReleaseError("manifest_invalid");
+  return manifest;
+}
+async function fetchAttentionReleaseArtifact(options) {
+  const origin = normalizeAttentionOrigin(options.origin);
+  const artifactUrl = resolveBridgeUpdateArtifactUrl(
+    origin,
+    options.manifest.artifact_path
+  );
+  const result = await fetchExact(
+    options.fetchImpl ?? fetch,
+    artifactUrl,
+    ARTIFACT_MAXIMUM_BYTES,
+    "artifact",
+    options.timeoutMs
+  );
+  const digest = createHash3("sha256").update(result.bytes).digest("hex");
+  if (digest !== options.manifest.sha256) {
+    throw new AttentionReleaseError("artifact_digest_mismatch");
+  }
+  return result.bytes;
+}
 
 // src/channel/managed-bridge.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
@@ -20954,10 +21069,10 @@ async function loadManagedBridgeUpdateState(homeDirectory = homedir3()) {
 }
 async function saveManagedBridgeUpdateState(state, homeDirectory = homedir3()) {
   const normalized = parseManagedBridgeUpdateState(state);
-  const { stateDirectory, statePath } = managedBridgePaths(homeDirectory);
+  const { stateDirectory, statePath: statePath2 } = managedBridgePaths(homeDirectory);
   await mkdir2(stateDirectory, { mode: 448, recursive: true });
   await chmod2(stateDirectory, 448);
-  await atomicWrite(statePath, `${JSON.stringify(normalized, null, 2)}
+  await atomicWrite(statePath2, `${JSON.stringify(normalized, null, 2)}
 `, 384);
 }
 async function bootstrapManagedBridge(input) {
@@ -21109,20 +21224,8 @@ for (;;) {
 }
 
 // src/channel/bridge-updater.ts
-var MANIFEST_MAXIMUM_BYTES = 16384;
-var ARTIFACT_MAXIMUM_BYTES = 16 * 1024 * 1024;
 var FETCH_TIMEOUT_MS = 15e3;
 var PROBE_TIMEOUT_MS = 1e4;
-function nodeRuntimeSatisfies(version2, range) {
-  const current = /^(\d+)\.(\d+)\.(\d+)/u.exec(version2);
-  const minimum = /^>=(\d+)\.(\d+)\.(\d+)$/u.exec(range);
-  if (!current || !minimum) return false;
-  for (let index = 1; index <= 3; index += 1) {
-    const difference = Number(current[index]) - Number(minimum[index]);
-    if (difference !== 0) return difference > 0;
-  }
-  return true;
-}
 var BridgeUpdateError = class extends Error {
   constructor(code) {
     super(code);
@@ -21132,50 +21235,6 @@ var BridgeUpdateError = class extends Error {
 };
 function exactKeys(value, keys) {
   return Object.keys(value).sort().join("\n") === [...keys].sort().join("\n");
-}
-function responseMatches(response, expectedUrl) {
-  if (!response.url) return true;
-  try {
-    const actual = new URL(response.url);
-    const expected = new URL(expectedUrl);
-    return actual.origin === expected.origin && actual.pathname === expected.pathname && !actual.search && !actual.hash && !actual.username && !actual.password;
-  } catch {
-    return false;
-  }
-}
-async function boundedResponseBytes(response, maximumBytes, errorCode) {
-  const contentLength = response.headers.get("content-length");
-  if (contentLength) {
-    const parsed = Number(contentLength);
-    if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > maximumBytes) {
-      throw new BridgeUpdateError(errorCode);
-    }
-  }
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.byteLength > maximumBytes) throw new BridgeUpdateError(errorCode);
-  return bytes;
-}
-async function fetchExact(fetchImpl, url2, maximumBytes, errorCode) {
-  let response;
-  try {
-    response = await fetchImpl(url2, {
-      headers: { accept: "application/json, text/javascript;q=0.9" },
-      redirect: "error",
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
-    });
-  } catch {
-    throw new BridgeUpdateError(`${errorCode}_fetch_failed`);
-  }
-  if (response.status !== 200) {
-    throw new BridgeUpdateError(`${errorCode}_http_status`);
-  }
-  if (!responseMatches(response, url2)) {
-    throw new BridgeUpdateError(`${errorCode}_redirected`);
-  }
-  return {
-    bytes: await boundedResponseBytes(response, maximumBytes, `${errorCode}_too_large`),
-    response
-  };
 }
 function parseProbeOutput(stdout) {
   try {
@@ -21204,39 +21263,24 @@ async function atomicWrite2(path, contents) {
   }
 }
 function stableErrorCode(error51) {
-  return error51 instanceof BridgeUpdateError ? error51.code : "bridge_update_unexpected";
+  return error51 instanceof BridgeUpdateError || error51 instanceof AttentionReleaseError ? error51.code : "bridge_update_unexpected";
 }
 async function checkAndStageBridgeUpdate(options) {
   const now = options.now?.() ?? /* @__PURE__ */ new Date();
   const checkedAt = now.toISOString();
   let state = await loadManagedBridgeUpdateState(options.homeDirectory);
   const originalCurrent = state.current;
-  const fetchImpl = options.fetchImpl ?? fetch;
   const origin = normalizeAttentionOrigin(options.origin);
-  const manifestUrl = new URL("/cli/manifest.json", `${origin}/`).toString();
   try {
     state.status = "checking";
     state.lastCheckAt = checkedAt;
     state.lastErrorCode = null;
     await saveManagedBridgeUpdateState(state, options.homeDirectory);
-    const manifestResponse = await fetchExact(
-      fetchImpl,
-      manifestUrl,
-      MANIFEST_MAXIMUM_BYTES,
-      "manifest"
-    );
-    const contentType = manifestResponse.response.headers.get("content-type") ?? "";
-    if (!/^application\/(?:[a-z0-9.+-]*\+)?json(?:\s*;|$)/iu.test(contentType)) {
-      throw new BridgeUpdateError("manifest_content_type");
-    }
-    let manifestValue;
-    try {
-      manifestValue = JSON.parse(manifestResponse.bytes.toString("utf8"));
-    } catch {
-      throw new BridgeUpdateError("manifest_invalid_json");
-    }
-    const manifest = parseBridgeUpdateManifest(manifestValue);
-    if (!manifest) throw new BridgeUpdateError("manifest_invalid");
+    const manifest = await fetchAttentionReleaseManifest({
+      ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {},
+      origin,
+      timeoutMs: FETCH_TIMEOUT_MS
+    });
     state.latestVersion = manifest.version;
     if (!nodeRuntimeSatisfies(options.nodeVersion ?? process.versions.node, manifest.node)) {
       throw new BridgeUpdateError("node_version_unsupported");
@@ -21259,26 +21303,23 @@ async function checkAndStageBridgeUpdate(options) {
     }
     state.status = decision;
     await saveManagedBridgeUpdateState(state, options.homeDirectory);
-    const artifactUrl = resolveBridgeUpdateArtifactUrl(origin, manifest.artifact_path);
-    const artifactResponse = await fetchExact(
-      fetchImpl,
-      artifactUrl,
-      ARTIFACT_MAXIMUM_BYTES,
-      "artifact"
-    );
-    const digest = createHash3("sha256").update(artifactResponse.bytes).digest("hex");
-    if (digest !== manifest.sha256) throw new BridgeUpdateError("artifact_digest_mismatch");
+    const artifact = await fetchAttentionReleaseArtifact({
+      ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {},
+      manifest,
+      origin,
+      timeoutMs: FETCH_TIMEOUT_MS
+    });
     const paths = managedBridgePaths(options.homeDirectory);
     const candidatePath = join4(paths.versionsDirectory, `attention-${manifest.version}.mjs`);
     try {
       const existing = await readFile3(candidatePath);
-      if (!existing.equals(artifactResponse.bytes)) {
+      if (!existing.equals(artifact)) {
         throw new BridgeUpdateError("artifact_version_collision");
       }
       await chmod3(candidatePath, 448);
     } catch (error51) {
       if (error51.code !== "ENOENT") throw error51;
-      await atomicWrite2(candidatePath, artifactResponse.bytes);
+      await atomicWrite2(candidatePath, artifact);
     }
     const runner = options.runner ?? runCommand;
     const probe = await runner(
@@ -22368,23 +22409,23 @@ function runtimeBindingErrorCode(body) {
   }
 }
 async function defaultSleep(milliseconds) {
-  await new Promise((resolve4) => {
-    const timer = setTimeout(resolve4, milliseconds);
+  await new Promise((resolve5) => {
+    const timer = setTimeout(resolve5, milliseconds);
     timer.unref?.();
   });
 }
 async function boundedWait(pending, timeoutMs) {
-  return await new Promise((resolve4) => {
-    const timer = setTimeout(() => resolve4(false), timeoutMs);
+  return await new Promise((resolve5) => {
+    const timer = setTimeout(() => resolve5(false), timeoutMs);
     timer.unref?.();
     void pending.then(
       () => {
         clearTimeout(timer);
-        resolve4(true);
+        resolve5(true);
       },
       () => {
         clearTimeout(timer);
-        resolve4(true);
+        resolve5(true);
       }
     );
   });
@@ -23619,7 +23660,7 @@ function buildChannelServiceRemovalPlan(input) {
   }
   throw new Error(`Background channel service is unsupported on ${input.platform}.`);
 }
-async function executeCommands(commands, label, runner, sleep = async (milliseconds) => await new Promise((resolve4) => setTimeout(resolve4, milliseconds))) {
+async function executeCommands(commands, label, runner, sleep = async (milliseconds) => await new Promise((resolve5) => setTimeout(resolve5, milliseconds))) {
   for (const command2 of commands) {
     const maximumAttempts = Math.max(1, command2.retryAttempts ?? 1);
     for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
@@ -23739,7 +23780,7 @@ async function loadRuntimeRegistrationIdentity(baseDirectory) {
   };
 }
 function defaultSleep2(ms) {
-  return new Promise((resolve4) => setTimeout(resolve4, ms));
+  return new Promise((resolve5) => setTimeout(resolve5, ms));
 }
 async function readTerminalLine() {
   const terminal = createInterface({ input: process.stdin, output: process.stdout });
@@ -26161,6 +26202,7 @@ var HELP = `Attention local Agent installer and diagnostics
 
 Usage:
   attention integrations [list] [--json]
+  attention update [--origin <https-origin>] [--json]
   attention configure <host> --origin <https-origin> [--skill-dir <path>]
                       [--apply] [--login] [--force-skill] [--json]
   attention doctor <host> --origin <https-origin> [--probe] [--json]
@@ -26194,6 +26236,8 @@ Safety:
   Local iLink tokens are never requested, uploaded, or printed: the channel
   bridge stores them under ~/.attention/channel/ and reports only bounded,
   privacy-safe health checkpoints through the dedicated Runtime credential.
+  update explicitly downloads, verifies, probes, and atomically selects a new
+  Attention-managed standalone CLI. Package-manager installations are not overwritten.
 
 Origin:
   Pass --origin or set ATTENTION_ORIGIN. Non-loopback origins must use HTTPS.
@@ -26260,6 +26304,11 @@ function parseHost(value) {
     );
   }
   return parsed.data;
+}
+function explicitOriginArgument(args) {
+  const index = args.indexOf("--origin");
+  const value = index >= 0 ? args[index + 1] : void 0;
+  return value && !value.startsWith("--") ? value : void 0;
 }
 function rejectConfigureOnlyOptions(options, command2) {
   if (options.apply || options.background || options.forceSkill || options.login || options.service || options.skillDirectory) {
@@ -26423,6 +26472,21 @@ function formatDoctor(checks, json2) {
   if (json2) return JSON.stringify(checks, null, 2);
   return checks.map((check2) => `[${check2.status}] ${check2.title}: ${check2.detail}`).join("\n");
 }
+function formatCliUpdateResult(result) {
+  if (result.status === "current") {
+    return `Attention CLI ${result.version} \u5DF2\u662F\u6700\u65B0\u7248\u672C\u3002`;
+  }
+  if (result.status === "updated") {
+    return `Attention CLI \u5DF2\u4ECE ${result.fromVersion} \u5347\u7EA7\u5230 ${result.toVersion}\u3002`;
+  }
+  if (result.errorCode === "unsupported_installation") {
+    return "\u5F53\u524D attention \u547D\u4EE4\u4E0D\u5C5E\u4E8E Attention \u7BA1\u7406\u7684\u7248\u672C\u5316\u5B89\u88C5\uFF1B\u8BF7\u4F7F\u7528\u539F\u5B89\u88C5\u65B9\u5F0F\u5347\u7EA7\u3002";
+  }
+  if (result.errorCode === "missing_origin") {
+    return "\u7F3A\u5C11 Attention origin\u3002\u8BF7\u4F20\u5165 --origin <https-origin>\uFF0C\u6216\u8BBE\u7F6E ATTENTION_ORIGIN\u3002";
+  }
+  return `Attention CLI \u5347\u7EA7\u5931\u8D25\uFF08${result.errorCode}\uFF09\uFF1B\u5F53\u524D\u7248\u672C\u4FDD\u6301\u4E0D\u53D8\u3002`;
+}
 function defaultOutput() {
   return {
     error: (value) => process.stderr.write(`${value}
@@ -26442,6 +26506,19 @@ async function runAttentionCli(args, dependencies = {}) {
     );
     return 0;
   }
+  if (args[0] !== "update" && dependencies.checkCliUpdate) {
+    try {
+      const notice = await dependencies.checkCliUpdate(
+        explicitOriginArgument(args)
+      );
+      if (notice) {
+        output.error(
+          `[update] Attention CLI ${notice.latestVersion} \u53EF\u7528\uFF08\u5F53\u524D ${notice.currentVersion}\uFF09\u3002\u8FD0\u884C \`attention update\` \u5347\u7EA7\u3002`
+        );
+      }
+    } catch {
+    }
+  }
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     output.log(HELP.trimEnd());
     return 0;
@@ -26453,6 +26530,21 @@ async function runAttentionCli(args, dependencies = {}) {
   try {
     const command2 = args[0];
     const options = parseOptions(args.slice(1));
+    if (command2 === "update") {
+      if (options.apply || options.background || options.forceSkill || options.login || options.probe || options.service || options.skillDirectory || options.positionals.length > 0) {
+        throw new Error(
+          "Usage: attention update [--origin <https-origin>] [--json]"
+        );
+      }
+      if (!dependencies.runCliUpdate) {
+        throw new Error("CLI update runtime is unavailable.");
+      }
+      const result = await dependencies.runCliUpdate(options.origin);
+      if (options.json) output.log(JSON.stringify(result, null, 2));
+      else if (result.status === "error") output.error(formatCliUpdateResult(result));
+      else output.log(formatCliUpdateResult(result));
+      return result.status === "error" ? 1 : 0;
+    }
     if (command2 === "integrations") {
       rejectConfigureOnlyOptions(options, "integrations");
       if (options.origin || options.probe) {
@@ -26626,6 +26718,386 @@ async function defaultRunChannel(input) {
   return await channelLogout();
 }
 
+// src/cli-updater.ts
+import { randomUUID as randomUUID9 } from "node:crypto";
+import {
+  chmod as chmod7,
+  lstat as lstat4,
+  mkdir as mkdir10,
+  readFile as readFile7,
+  readlink as readlink2,
+  rename as rename7,
+  rm as rm8,
+  symlink as symlink2,
+  writeFile as writeFile7
+} from "node:fs/promises";
+import { homedir as homedir9 } from "node:os";
+import { basename as basename2, dirname as dirname8, join as join9, relative, resolve as resolve4 } from "node:path";
+var CLI_UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1e3;
+var STARTUP_FETCH_TIMEOUT_MS = 1500;
+var UPDATE_FETCH_TIMEOUT_MS = 15e3;
+var CANDIDATE_PROBE_TIMEOUT_MS = 1e4;
+var MAXIMUM_ORIGIN_RECORDS = 4;
+function defaultState() {
+  return { origins: [], schemaVersion: 1, trustedOrigin: null };
+}
+function exactKeys2(value, keys) {
+  return Object.keys(value).sort().join("\n") === [...keys].sort().join("\n");
+}
+function nullableString(value) {
+  return value === null || typeof value === "string";
+}
+function parseOriginRecord(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record3 = value;
+  if (!exactKeys2(record3, [
+    "lastAttemptAt",
+    "lastErrorCode",
+    "lastValidatedAt",
+    "latestVersion",
+    "origin"
+  ]) || typeof record3.origin !== "string" || !nullableString(record3.lastAttemptAt) || !nullableString(record3.lastErrorCode) || !nullableString(record3.lastValidatedAt) || !nullableString(record3.latestVersion)) {
+    return null;
+  }
+  try {
+    if (normalizeAttentionOrigin(record3.origin) !== record3.origin) return null;
+  } catch {
+    return null;
+  }
+  return record3;
+}
+function parseState(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record3 = value;
+  if (!exactKeys2(record3, ["origins", "schemaVersion", "trustedOrigin"]) || record3.schemaVersion !== 1 || !nullableString(record3.trustedOrigin) || !Array.isArray(record3.origins) || record3.origins.length > MAXIMUM_ORIGIN_RECORDS) {
+    return null;
+  }
+  const origins = record3.origins.map(parseOriginRecord);
+  if (origins.some((origin) => origin === null)) return null;
+  if (record3.trustedOrigin !== null && !origins.some((origin) => origin?.origin === record3.trustedOrigin)) {
+    return null;
+  }
+  return {
+    origins,
+    schemaVersion: 1,
+    trustedOrigin: record3.trustedOrigin
+  };
+}
+function statePath(homeDirectory) {
+  return join9(homeDirectory, ".attention", "cli-update", "state.json");
+}
+async function loadState(homeDirectory) {
+  try {
+    const value = JSON.parse(await readFile7(statePath(homeDirectory), "utf8"));
+    return parseState(value) ?? defaultState();
+  } catch {
+    return defaultState();
+  }
+}
+async function saveState(state, homeDirectory) {
+  const path = statePath(homeDirectory);
+  const directory = dirname8(path);
+  await mkdir10(directory, { mode: 448, recursive: true });
+  await chmod7(directory, 448);
+  const temporary = `${path}.${process.pid}.${randomUUID9()}.tmp`;
+  try {
+    await writeFile7(temporary, `${JSON.stringify(state, null, 2)}
+`, {
+      flag: "wx",
+      mode: 384
+    });
+    await rename7(temporary, path);
+    await chmod7(path, 384);
+  } finally {
+    await rm8(temporary, { force: true });
+  }
+}
+function selectedOrigin(options, state) {
+  const raw = options.explicitOrigin ?? (options.environment ?? process.env)[ATTENTION_ORIGIN_ENV] ?? state.trustedOrigin;
+  return raw ? normalizeAttentionOrigin(raw) : null;
+}
+function errorCode(error51) {
+  return error51 instanceof AttentionReleaseError ? error51.code : error51 instanceof Error && error51.message === "node_version_unsupported" ? error51.message : "cli_update_unexpected";
+}
+var CliUpdateError = class extends Error {
+  constructor(code) {
+    super(code);
+    this.code = code;
+  }
+  code;
+};
+function explicitErrorCode(error51) {
+  if (error51 instanceof AttentionReleaseError || error51 instanceof CliUpdateError) {
+    return error51.code;
+  }
+  return "cli_update_unexpected";
+}
+function noticeFor(record3, currentVersion) {
+  if (!record3?.latestVersion || compareSemanticVersions(record3.latestVersion, currentVersion) <= 0) {
+    return null;
+  }
+  return { currentVersion, latestVersion: record3.latestVersion };
+}
+function replaceOriginRecord(state, updated, trustedOrigin = state.trustedOrigin) {
+  return {
+    origins: [
+      updated,
+      ...state.origins.filter((record3) => record3.origin !== updated.origin)
+    ].slice(0, MAXIMUM_ORIGIN_RECORDS),
+    schemaVersion: 1,
+    trustedOrigin
+  };
+}
+async function checkCliUpdateAtStartup(options) {
+  const homeDirectory = options.homeDirectory ?? homedir9();
+  const now = options.now?.() ?? /* @__PURE__ */ new Date();
+  let state = await loadState(homeDirectory);
+  let origin;
+  try {
+    origin = selectedOrigin(options, state);
+  } catch {
+    return null;
+  }
+  if (!origin) return null;
+  const existing = state.origins.find((record3) => record3.origin === origin);
+  const lastAttemptAt = existing?.lastAttemptAt ? Date.parse(existing.lastAttemptAt) : Number.NaN;
+  if (Number.isFinite(lastAttemptAt) && now.getTime() - lastAttemptAt < CLI_UPDATE_INTERVAL_MS) {
+    return noticeFor(existing, options.currentVersion);
+  }
+  try {
+    const manifest = await fetchAttentionReleaseManifest({
+      ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {},
+      origin,
+      timeoutMs: STARTUP_FETCH_TIMEOUT_MS
+    });
+    if (!nodeRuntimeSatisfies(options.nodeVersion ?? process.versions.node, manifest.node)) {
+      throw new Error("node_version_unsupported");
+    }
+    const checkedAt = now.toISOString();
+    const updated = {
+      lastAttemptAt: checkedAt,
+      lastErrorCode: null,
+      lastValidatedAt: checkedAt,
+      latestVersion: manifest.version,
+      origin
+    };
+    state = replaceOriginRecord(state, updated, origin);
+    await saveState(state, homeDirectory);
+    return noticeFor(updated, options.currentVersion);
+  } catch (error51) {
+    const updated = {
+      lastAttemptAt: now.toISOString(),
+      lastErrorCode: errorCode(error51),
+      lastValidatedAt: existing?.lastValidatedAt ?? null,
+      latestVersion: existing?.latestVersion ?? null,
+      origin
+    };
+    try {
+      await saveState(replaceOriginRecord(state, updated), homeDirectory);
+    } catch {
+    }
+    return noticeFor(updated, options.currentVersion);
+  }
+}
+async function managedInstallation(commandPathValue, homeDirectory) {
+  try {
+    const commandPath = commandPathValue ? resolve4(commandPathValue) : join9(homeDirectory, ".local", "bin", "attention");
+    if (commandPath !== join9(homeDirectory, ".local", "bin", "attention")) {
+      throw new CliUpdateError("unsupported_installation");
+    }
+    const commandStat = await lstat4(commandPath);
+    if (!commandStat.isSymbolicLink()) {
+      throw new CliUpdateError("unsupported_installation");
+    }
+    const originalTarget = await readlink2(commandPath);
+    const currentArtifactPath = resolve4(dirname8(commandPath), originalTarget);
+    const releasesDirectory = join9(homeDirectory, ".local", "share", "attention");
+    if (dirname8(currentArtifactPath) !== releasesDirectory || !/^attention-(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.mjs$/u.test(
+      basename2(currentArtifactPath)
+    ) || !(await lstat4(currentArtifactPath)).isFile()) {
+      throw new CliUpdateError("unsupported_installation");
+    }
+    return {
+      commandPath,
+      currentArtifactPath,
+      originalTarget,
+      releasesDirectory
+    };
+  } catch (error51) {
+    if (error51 instanceof CliUpdateError) throw error51;
+    if (["EINVAL", "ENOENT", "ENOTDIR"].includes(
+      String(error51.code)
+    )) {
+      throw new CliUpdateError("unsupported_installation");
+    }
+    throw error51;
+  }
+}
+async function atomicWriteArtifact(path, contents) {
+  await mkdir10(dirname8(path), { mode: 448, recursive: true });
+  await chmod7(dirname8(path), 448);
+  const temporary = `${path}.${process.pid}.${randomUUID9()}.tmp`;
+  try {
+    await writeFile7(temporary, contents, { flag: "wx", mode: 448 });
+    await rename7(temporary, path);
+    await chmod7(path, 448);
+  } finally {
+    await rm8(temporary, { force: true });
+  }
+}
+function parseProbeOutput2(stdout) {
+  try {
+    const value = JSON.parse(stdout.trim());
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      return null;
+    }
+    const record3 = value;
+    if (!exactKeys2(record3, ["permission_profile_sha256", "version"])) {
+      return null;
+    }
+    return typeof record3.permission_profile_sha256 === "string" && typeof record3.version === "string" ? {
+      permissionProfileSha256: record3.permission_profile_sha256,
+      version: record3.version
+    } : null;
+  } catch {
+    return null;
+  }
+}
+async function saveValidatedManifest(state, origin, version2, checkedAt, homeDirectory) {
+  const updated = replaceOriginRecord(
+    state,
+    {
+      lastAttemptAt: checkedAt,
+      lastErrorCode: null,
+      lastValidatedAt: checkedAt,
+      latestVersion: version2,
+      origin
+    },
+    origin
+  );
+  try {
+    await saveState(updated, homeDirectory);
+  } catch {
+  }
+  return updated;
+}
+async function updateAttentionCli(options) {
+  const homeDirectory = options.homeDirectory ?? homedir9();
+  const currentVersion = options.currentVersion;
+  let installationKind = "unsupported";
+  let createdCandidatePath = null;
+  try {
+    let state = await loadState(homeDirectory);
+    let origin;
+    try {
+      origin = selectedOrigin(options, state);
+    } catch {
+      throw new CliUpdateError("invalid_origin");
+    }
+    if (!origin) throw new CliUpdateError("missing_origin");
+    const manifest = await fetchAttentionReleaseManifest({
+      ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {},
+      origin,
+      timeoutMs: UPDATE_FETCH_TIMEOUT_MS
+    });
+    if (!nodeRuntimeSatisfies(options.nodeVersion ?? process.versions.node, manifest.node)) {
+      throw new CliUpdateError("node_version_unsupported");
+    }
+    const checkedAt = (options.now?.() ?? /* @__PURE__ */ new Date()).toISOString();
+    state = await saveValidatedManifest(
+      state,
+      origin,
+      manifest.version,
+      checkedAt,
+      homeDirectory
+    );
+    if (compareSemanticVersions(manifest.version, currentVersion) <= 0) {
+      return { status: "current", version: currentVersion };
+    }
+    const installation = await managedInstallation(
+      options.commandPath ?? process.argv[1],
+      homeDirectory
+    );
+    installationKind = "managed_symlink";
+    const artifact = await fetchAttentionReleaseArtifact({
+      ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {},
+      manifest,
+      origin,
+      timeoutMs: UPDATE_FETCH_TIMEOUT_MS
+    });
+    const candidatePath = join9(
+      installation.releasesDirectory,
+      basename2(manifest.artifact_path)
+    );
+    try {
+      const existing = await readFile7(candidatePath);
+      if (!existing.equals(artifact)) {
+        throw new CliUpdateError("artifact_version_collision");
+      }
+      await chmod7(candidatePath, 448);
+    } catch (error51) {
+      if (error51.code !== "ENOENT") throw error51;
+      await atomicWriteArtifact(candidatePath, artifact);
+      createdCandidatePath = candidatePath;
+    }
+    const runner = options.runner ?? runCommand;
+    const probe = await runner(
+      {
+        args: [candidatePath, "--bridge-update-probe"],
+        executable: options.nodeExecutable ?? process.execPath
+      },
+      { timeoutMs: CANDIDATE_PROBE_TIMEOUT_MS }
+    );
+    const identity = parseProbeOutput2(probe.stdout);
+    if (probe.exitCode !== 0 || probe.timedOut || !identity || identity.version !== manifest.version || identity.permissionProfileSha256 !== manifest.permission_profile_sha256) {
+      throw new CliUpdateError("candidate_probe_failed");
+    }
+    if (!(await lstat4(installation.commandPath)).isSymbolicLink() || await readlink2(installation.commandPath) !== installation.originalTarget) {
+      throw new CliUpdateError("cli_installation_changed");
+    }
+    const nextTarget = relative(dirname8(installation.commandPath), candidatePath);
+    const temporaryLink = `${installation.commandPath}.${process.pid}.${randomUUID9()}.tmp`;
+    try {
+      await symlink2(nextTarget, temporaryLink);
+      await rename7(temporaryLink, installation.commandPath);
+    } finally {
+      await rm8(temporaryLink, { force: true });
+    }
+    createdCandidatePath = null;
+    return {
+      fromVersion: currentVersion,
+      installationKind: "managed_symlink",
+      status: "updated",
+      toVersion: manifest.version
+    };
+  } catch (error51) {
+    if (createdCandidatePath) {
+      await rm8(createdCandidatePath, { force: true });
+    }
+    return {
+      errorCode: explicitErrorCode(error51),
+      installationKind,
+      status: "error"
+    };
+  }
+}
+
 // src/index.ts
-var exitCode = await runAttentionCli(process.argv.slice(2));
+var exitCode = await runAttentionCli(process.argv.slice(2), {
+  checkCliUpdate: async (explicitOrigin) => await checkCliUpdateAtStartup({
+    currentVersion: ATTENTION_CLI_VERSION,
+    environment: process.env,
+    ...explicitOrigin ? { explicitOrigin } : {}
+  }),
+  runCliUpdate: async (explicitOrigin) => await updateAttentionCli({
+    ...process.argv[1] ? { commandPath: process.argv[1] } : {},
+    currentVersion: ATTENTION_CLI_VERSION,
+    environment: process.env,
+    ...explicitOrigin ? { explicitOrigin } : {}
+  })
+});
 process.exitCode = exitCode;
