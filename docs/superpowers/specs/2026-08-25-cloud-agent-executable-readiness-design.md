@@ -4,12 +4,18 @@
 
 日期：2026-08-25
 
+2026-09-05 讨论更新：Bridge 与 Hosted 的共同体验方向已确认，具体任务对话合同见 [两端任务对话设计](./2026-09-05-attention-agent-task-conversation-design.md)。本稿调整固定模板回复和禁止任务多轮追问的旧约束；Hosted Agent 的执行器、真实渠道验证与生产接入仍未交付。本文的外部平台证据为原审阅时点记录，接入时需重新核验。
+
+Hosted 下一阶段以 [2026-09-05 完整方案](./2026-09-05-attention-hosted-agent-complete-design.md) 为主设计；本稿保留历史决策与 G0 清单。新稿明确匿名内测先行、登录态私有结果隔离及当前平台核验，冲突处以新稿为准。
+
 ## 1. 结论
 
 云端 Agent 可以进入受门控的验证阶段，但当前不能进入真实用户开发或生产接入。
-最先要通过的不是模型或 Browser 验证，而是企业微信“微信客服”（下文简称
+真实渠道接入首先要通过企业微信“微信客服”（下文简称
 `wxkf`）G0：用真实企业、真实客服账号和真实微信测试用户证明加密回调、消息拉取、
 会话状态与异步回复形成可恢复的闭环。
+
+任务对话的离线合同和 Fake Channel 验证可独立推进；它们不能代替 G0 的真实渠道证据。
 
 推荐新增一条独立的 Hosted Agent 控制面：
 
@@ -42,6 +48,7 @@ wxkf Channel Adapter
 - 只有已绑定 Attention 账号的用户可以创建任务。
 - 未绑定用户只收到绑定入口；不创建任务、不保留待执行任务，绑定后需要重新发送链接。
 - Web 只提供账号绑定、Agent 配置、登录态/Profile 与安全管理，不提供对话界面。
+- 微信内支持围绕已有任务追问进度、补摘要、重试和取消，并保留有界任务焦点与结果引用；状态查询及取消请求不等待长任务执行结束。
 - 同一 Attention `account_id` 的任务严格串行；同一账号绑定多个入口时仍共用一条 lane。
 - 不同账号在全局容量和平台限流内并行。
 
@@ -49,7 +56,7 @@ wxkf Channel Adapter
 
 - 接受一条消息中的一个 `http`/`https` 公众号文章或公开网页链接。
 - Agent 打开页面、读取正文、生成有依据的中文摘要并保存为该账号的收藏。
-- 多链接、无链接、文件、图片、语音、小程序、支付、发帖、评论和站内私信不进入任务。
+- 多链接、无链接、文件、图片、语音、小程序、支付、发帖、评论和站内私信不直接创建新的网页任务；无链接的追问、重试和取消可以作用于明确的已有任务。
 - 多链接返回“请一次发送一个链接”，不让模型选择。
 - 页面读取或摘要失败不能伪造成功；安全 URL 一旦被 Core 接受，收藏仍可保留为待整理或
   “暂时无法生成摘要”。
@@ -145,6 +152,10 @@ Adapter 还会诱导实现继续依赖错误的公众号协议。仅允许复用
 负责确定性状态机、预算、超时、重试、Pi 生命周期、工具装配、取消和 Core 调用。它从已验证
 的绑定记录取得 account_id；Pi 与模型不能提交或改写 account_id。
 
+任务对话层先解析用户意图并定位任务，再由 Orchestrator 校验目标归属与状态、执行受控动作，
+最后把已提交的结果快照交给 AI 组织回复。任务焦点和结果由工作流保存，不依赖某个 Pi
+实例的聊天记忆。状态查询和取消请求可独立处理；网页读取与 Core 写入仍遵守账号串行执行。
+
 ### 5.4 Pi Agent Core Runner
 
 每个任务创建一个新的 Agent 实例，只承担模型-工具循环和事件流。它不拥有多租户 session、
@@ -219,6 +230,9 @@ heartbeat；每次 Browser/Profile/Core 副作用前必须携带 fence generatio
 
 Core 收藏与 outbox 都使用由 `task_id` 派生的稳定幂等键。系统承诺内部 exactly-once effect，
 不承诺 wxkf 外部网络天然 exactly-once；外部不确定性在 G0 单独验证。
+
+任务进入等待重试或需要用户操作时释放执行 lane；同账号其他可执行任务可以继续。人工重试
+与自动重试重新领取同一任务的执行权。控制查询和取消请求不应排在 Browser 长任务之后。
 
 ## 7. 不可破坏的安全与数据不变量
 
@@ -317,14 +331,14 @@ pending
 - 专属 Agent 客服账号不得同时用于普通人工接待。
 - 收到 origin=3 的合法消息后查询/确认 state 0 或 1；状态 2/3 视为 drift，暂停 Agent reply。
 - 是否把每个任务置 1、完成后置 4 由 G0 真机结果决定；在此之前不固化状态转换。
-- `user_recall_msg` 或精确“取消/取消任务”映射到该账号最新 non-terminal task。
+- `user_recall_msg` 通过 `recall_msgid` 精确定位源消息对应的任务；自然语言“取消/取消任务”按共同任务对话合同定位目标，有歧义时澄清，不能误取消其他任务。
 - queued task 直接取消；running task 发 abort 并在 fence 点停止；Core 已提交后不自动删除收藏。
 - 精确“解绑”只签发短期 Web confirmation。Web 当前已登录账号确认后，撤销 binding、提升 lane
   fence、取消未提交任务、停止 Profile 使用；Profile 保留还是删除由用户在 Web 选择。
 
 ### 8.6 G0 验收门
 
-全部满足才进入 G1：
+全部满足才允许接入真实 wxkf 产品链路；G1 离线合同与 G2 Fake Channel 不以此伪装为已经通过真实渠道验收：
 
 1. 有一个真实企业主体、自建应用、专属 API 管理客服账号、HTTPS callback 和两个内部微信测试用户。
 2. 官方 GET 验证成功；真实 POST 可验签解密；错误签名、篡改密文、错误 receiveid 和重放策略
@@ -348,14 +362,14 @@ pending
 
 1. wxkf callback 验签/解密，durable 记录 wakeup 后立即 ack。
 2. puller 按 open_kfid cursor 拉消息，按 msgid 去重并原子推进 cursor。
-3. origin/type allowlist 过滤；raw message 规范化为一个安全 URL 或稳定拒绝。
+3. origin/type allowlist 过滤；规范化链接任务或已有任务的追问/控制意图，不支持的输入稳定拒绝。
 4. Binding Service 用渠道 HMAC 查 account_id。未绑定只创建一次性 bind intent 并发送绑定链接。
-5. 已绑定消息创建 account-local sequence task；Dispatcher 按 lane claim。
+5. 已绑定的新链接消息创建 account-local sequence task；Dispatcher 按 lane claim。追问查询现有任务，重试/取消在目标解析与权限检查后操作原任务，不重复创建收藏任务。
 6. Core 先用现有 Collector/Fetcher 做 URL 安全与确定性收藏，使用 task 幂等键。
 7. Credential Broker 启动 anonymous attempt；如页面不足，按策略启动全新的 shared/user attempt。
 8. Pi 只对受限 page tools 规划读取，提交带证据的正文/摘要候选；Orchestrator 校验 schema、来源和预算。
 9. Core Gateway 提交第一份 grounded enrichment；并发已存在摘要时复用现有结果。
-10. Orchestrator 生成固定模板回复，避免模型把隐藏指令或敏感数据带回渠道。
+10. 持久化实际执行结果及通知事件后，由 AI 根据最小任务快照自然组织回复；校验事实与输出安全，模型不可用或文本不合格时使用确定性兜底。摘要暂未完成时按共同合同安排有限重试，不能把 pending 描述成后台正在执行。
 11. outbox 在窗口/预算内发送；provider failure 事件异步修正状态。
 12. lane 释放并 claim 该账号下一任务；其他账号不受阻塞。
 
@@ -370,13 +384,14 @@ pending
 - anonymous 和批准的共享只读 Profile；
 - 受控内部用户的用户独享 Profile 登录试点；
 - accepted/final 两段式异步回复；
+- 已有任务的自然语言追问、重试、取消、有限自动恢复和结果通知；短对话不创建网页任务；
 - Web 绑定、Agent 开关、Profile 管理、安全活动和解绑；
 - per-account serial、多账号并行、崩溃恢复、审计和 kill switches。
 
 ### 10.2 不做
 
 - Web 对话、群聊、普通员工外部联系人私聊 Bot；
-- 多轮闲聊、开放式研究、多个链接自动选择；
+- 开放式闲聊产品、开放式研究、多个链接自动选择；已有任务的多轮追问和简短回应属于本阶段范围；
 - 写网页、任意表单、交易、社交互动；
 - 绕过验证码、付费墙、风控或平台条款；
 - 模型自主选择/导出 Profile；
@@ -388,7 +403,7 @@ pending
 
 ### G0 — wxkf 可行性与渠道合同
 
-执行第 8 节独立 harness。验收门即 8.6；失败时不开发真实 Channel 产品链路。
+执行第 8 节独立 harness。验收门即 8.6；失败时不接入真实 Channel 产品链路。允许先推进不连接真实渠道的离线合同和 Fake Channel 验证。
 
 ### G1 — 离线合同与威胁模型
 
