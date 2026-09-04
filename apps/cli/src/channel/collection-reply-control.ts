@@ -262,6 +262,7 @@ export type CollectionReplyRejectionReason =
   | "reply_missing_pause_state"
   | "reply_missing_retry_plan"
   | "reply_missing_terminal_state"
+  | "reply_retry_queue_full"
   | "reply_too_long"
   | "reply_unconfirmed_control";
 
@@ -276,6 +277,7 @@ export interface CollectionReplySafetyContext {
     | "initial_incomplete"
     | "ordinary"
     | "paused"
+    | "queue_full"
     | "terminal";
   readonly sensitiveFragments: readonly string[];
 }
@@ -292,6 +294,11 @@ function fallbackCollectionReply(
   }
   if (phase === "paused") {
     return "这轮自动重试仍未补全摘要，现已暂停；你可以随时再让我重试。";
+  }
+  if (phase === "queue_full") {
+    return control.kind === "established"
+      ? "已收藏，但本地重试队列已满，暂时无法安排自动重试。"
+      : "本地重试队列已满，暂时无法安排自动重试。";
   }
   if (phase === "terminal") {
     return "这项收藏当前已不再符合摘要补全条件，自动重试已停止。";
@@ -332,6 +339,7 @@ function rejectionReason(
   candidate: string,
   context: CollectionReplySafetyContext,
 ): CollectionReplyRejectionReason | null {
+  if (context.phase === "queue_full") return "reply_retry_queue_full";
   if (!candidate) return "reply_empty";
   if (candidate.length > MAXIMUM_REPLY_CHARS) return "reply_too_long";
   if (/https?:\/\//iu.test(candidate)) return "reply_contains_url";
@@ -387,20 +395,11 @@ function rejectionReason(
   return null;
 }
 
-export function safeCollectionReply(control: CollectionReplyControl): string;
 export function safeCollectionReply(
   control: CollectionReplyControl,
   candidateReply: string,
   context: CollectionReplySafetyContext,
-): SafeCollectionReplyResult;
-export function safeCollectionReply(
-  control: CollectionReplyControl,
-  candidateReply?: string,
-  context?: CollectionReplySafetyContext,
-): SafeCollectionReplyResult | string {
-  if (candidateReply === undefined || context === undefined) {
-    return fallbackCollectionReply(control, "ordinary");
-  }
+): SafeCollectionReplyResult {
   if (control.kind === "fixed") {
     return {
       accepted: false,

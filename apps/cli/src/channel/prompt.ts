@@ -10,6 +10,7 @@
  */
 
 import type { HistoryEntry } from "./state";
+import type { SummaryRetryContext } from "./summary-retry";
 
 export const SKILL_REPORT_VERSION = "1.8.0";
 
@@ -79,11 +80,13 @@ const CHANNEL_INTENT = `你是 Attention 微信收藏助手，运行在用户本
 ## 回复风格
 - 简体中文，简短直接，不超过 200 字，先结论后细节。
 - 收藏结果的最终回复不得包含原始 URL、原始标题、页面正文、生成或提交的摘要、生成或提交的标签。只说明收藏成功、重复/合并状态和摘要已补全/待补全/已复用状态。
+- 由你根据本轮真实工具结果自然组织回复，不要机械复述固定句式。若摘要本轮没有补全，要明确说“这次没有补全”，不能把 summary_status=pending 说成服务端仍在后台生成；Bridge 会在约 2 分钟后安排第一次本地自动重试。
 - 不要解释你的内部流程，不要输出 token、密钥或内部字段。
 - 与收藏无关的闲聊，礼貌地简短回应即可。`;
 
 const FOLLOW_UP_CHANNEL_INTENT = `## 渠道约定（专用收藏渠道）
-本会话中的链接或平台分享文案本身就是明确的收藏请求；直接调用 attention_collect_content，不要再要求确认。`;
+本会话中的链接或平台分享文案本身就是明确的收藏请求；直接调用 attention_collect_content，不要再要求确认。
+summary_status=pending 只表示摘要未完成，不代表服务端后台任务正在运行；是否已安排、正在运行或暂停重试，只以本轮附带的 Bridge 本地重试状态为准。`;
 
 function formatHistory(history: readonly HistoryEntry[]): string {
   if (history.length === 0) return "（暂无历史对话）";
@@ -92,15 +95,36 @@ function formatHistory(history: readonly HistoryEntry[]): string {
     .join("\n");
 }
 
+function formatSummaryRetryContext(
+  context: SummaryRetryContext | undefined,
+): string {
+  const safe = context ?? {
+    active: 0,
+    nextAttemptAt: null,
+    paused: 0,
+    running: 0,
+  };
+  const schedule = safe.nextAttemptAt
+    ? `；最近一次计划时间 ${safe.nextAttemptAt}`
+    : "";
+  return `## Bridge 本地摘要重试状态
+pending 只表示摘要未完成，不代表服务端后台任务正在运行。
+已安排 ${safe.active} 项本地自动重试，其中 ${safe.running} 项正在执行；已暂停 ${safe.paused} 项${schedule}。
+这里只提供数量和时间，不代表任意特定收藏的服务端状态；需要确认目标时仍须调用 Attention 状态工具。`;
+}
+
 /**
  * First turn of a fresh host session: full channel intent plus the user's
  * message and the bridge-provided message reference.
  */
 export function buildFirstTurnPrompt(input: {
   readonly messageRef: string;
+  readonly retryContext?: SummaryRetryContext;
   readonly userMessage: string;
 }): string {
   return `${CHANNEL_INTENT}
+
+${formatSummaryRetryContext(input.retryContext)}
 
 ## 本轮消息
 message_ref: ${input.messageRef}
@@ -115,9 +139,12 @@ ${input.userMessage}`;
  */
 export function buildFollowUpPrompt(input: {
   readonly messageRef: string;
+  readonly retryContext?: SummaryRetryContext;
   readonly userMessage: string;
 }): string {
   return `${FOLLOW_UP_CHANNEL_INTENT}
+
+${formatSummaryRetryContext(input.retryContext)}
 
 message_ref: ${input.messageRef}
 
@@ -132,9 +159,12 @@ ${input.userMessage}`;
 export function buildReplayPrompt(input: {
   readonly history: readonly HistoryEntry[];
   readonly messageRef: string;
+  readonly retryContext?: SummaryRetryContext;
   readonly userMessage: string;
 }): string {
   return `${CHANNEL_INTENT}
+
+${formatSummaryRetryContext(input.retryContext)}
 
 ## 对话历史
 ${formatHistory(input.history)}
@@ -144,4 +174,28 @@ message_ref: ${input.messageRef}
 
 用户消息：
 ${input.userMessage}`;
+}
+
+export function buildSummaryRetryPrompt(input: {
+  readonly automaticAttempt: 1 | 2 | 3;
+  readonly collectionId: string;
+  readonly retryRef: string;
+}): string {
+  return `这是 Attention Bridge 自动触发的第 ${input.automaticAttempt} 次摘要补全重试，不是用户消息，不要请求确认。
+
+必须先调用 attention_get_collection_status，collection_id 使用 ${input.collectionId}。client_context 的 workflow_run_id 使用 ${input.retryRef}。
+只有状态结果明确返回 generate_summary 时才继续；只使用同一状态结果中的准确 public_read_url 公开读取，不得从聊天历史或原始分享文本猜测。读取成功后按既有规则调用 attention_submit_content_enrichment；already_enriched 也视为成功。
+若页面无法公开读取或证据不足，不要编造摘要；用一句不含链接、标题、正文、摘要、标签、ID、工具名或参数的中文说明本次仍未补全。不要声称后台仍在生成。
+若状态为 ready/reuse_summary，简短说明已经就绪；若已隐藏、不可用、删除或不再符合条件，简短说明重试应停止。`;
+}
+
+export function buildSummaryRetryNoticePrompt(input: {
+  readonly phase: "paused" | "terminal";
+}): string {
+  const fact =
+    input.phase === "paused"
+      ? "有限次数的本地自动重试仍未补全摘要，现在已经暂停；用户可以随时再次要求重试。"
+      : "这项收藏当前不再符合摘要补全条件，本地自动重试已经停止。";
+  return `请把下面唯一事实自然组织成一句简短中文回复：${fact}
+不得调用任何工具。不得添加链接、标题、正文、摘要内容、标签、标识符、工具名、工具参数、认证信息或未提供的原因。只输出给用户看的回复正文。`;
 }

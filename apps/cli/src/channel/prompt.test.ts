@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { buildFirstTurnPrompt } from "./prompt";
+import {
+  buildFirstTurnPrompt,
+  buildFollowUpPrompt,
+  buildSummaryRetryNoticePrompt,
+  buildSummaryRetryPrompt,
+} from "./prompt";
 
 describe("channel intent", () => {
   it("uses the authenticated account role for the new-collection default", () => {
@@ -77,4 +82,50 @@ describe("channel intent", () => {
       /只使用[^\n]*public_read_url[\s\S]*attention_submit_content_enrichment/u,
     );
   });
+
+  it("explains local retry state without exposing collection identifiers", () => {
+    const prompt = buildFollowUpPrompt({
+      messageRef: "msg-status",
+      retryContext: {
+        active: 1,
+        nextAttemptAt: "2026-09-04T08:02:00.000Z",
+        paused: 0,
+        running: 0,
+      },
+      userMessage: "在做了吗",
+    });
+
+    expect(prompt).toContain(
+      "pending 只表示摘要未完成，不代表服务端后台任务正在运行",
+    );
+    expect(prompt).toContain("已安排 1 项本地自动重试");
+    expect(prompt).toContain("2026-09-04T08:02:00.000Z");
+    expect(prompt).not.toMatch(/[0-9a-f]{8}-[0-9a-f-]{27,}/iu);
+  });
+
+  it("builds an exact status-first prompt for an automatic retry", () => {
+    const prompt = buildSummaryRetryPrompt({
+      automaticAttempt: 1,
+      collectionId: "11111111-1111-4111-8111-111111111111",
+      retryRef:
+        "summary-retry-0123456789abcdef0123456789abcdef0123456789abcdef",
+    });
+
+    expect(prompt).toContain("先调用 attention_get_collection_status");
+    expect(prompt).toContain("11111111-1111-4111-8111-111111111111");
+    expect(prompt).toMatch(/只使用[^\n]*public_read_url/u);
+    expect(prompt).toContain("不得从聊天历史或原始分享文本猜测");
+    expect(prompt).toContain("不要声称后台仍在生成");
+  });
+
+  it.each(["paused", "terminal"] as const)(
+    "builds a content-free disposable %s notice prompt",
+    (phase) => {
+      const prompt = buildSummaryRetryNoticePrompt({ phase });
+      expect(prompt).toContain("不得调用任何工具");
+      expect(prompt).not.toContain("collection_id");
+      expect(prompt).not.toMatch(/https?:\/\//u);
+      expect(prompt).not.toMatch(/[0-9a-f]{8}-[0-9a-f-]{27,}/iu);
+    },
+  );
 });
