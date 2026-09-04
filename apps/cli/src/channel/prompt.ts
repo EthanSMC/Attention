@@ -12,7 +12,7 @@
 import type { HistoryEntry } from "./state";
 import type { SummaryRetryContext } from "./summary-retry";
 
-export const SKILL_REPORT_VERSION = "1.8.0";
+export const SKILL_REPORT_VERSION = "1.9.0";
 
 /**
  * Host-owned policy installed at developer/system priority. Public source text

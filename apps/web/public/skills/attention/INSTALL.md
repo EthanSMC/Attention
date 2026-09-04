@@ -205,8 +205,8 @@ If WorkBuddy cannot fetch or install the Skill from GitHub, Attention keeps an
 uploadable ZIP as a fallback:
 
 ```text
-{attention_origin}/skills/attention/bundles/attention-workbuddy-1.8.0.zip
-SHA-256: 0b1d5dfe2b9df2d13bc46bc26702fcb30e2c1afc308e8989aac8509a1eaa6356
+{attention_origin}/skills/attention/bundles/attention-workbuddy-1.9.0.zip
+SHA-256: 82c02bdb7672c85e74bdf8563ad2e07e58995389b442b8d899ce8d0e08fd954d
 ```
 
 The archive contains `SKILL.md` directly at its root, as required by Tencent's
@@ -662,6 +662,6 @@ from `2.2.0` should:
   does not inherit the user's normal working directory or session history;
 - keep treating `codex_sdk_companion` and `claude_channel_preview` as
   valid engine values for future or host-managed alternatives; and
-- read Skill `1.8.0` "Designated collection channels" for the conversation
+- read Skill `1.9.0` "Designated collection channels" for the conversation
   semantics and conditional shared enrichment workflow the bridge declares
   (tool contract version `1.6.0`).

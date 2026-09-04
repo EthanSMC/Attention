@@ -15,6 +15,7 @@ describe("channel intent", () => {
     });
 
     expect(prompt).toContain("attention_get_my_account");
+    expect(prompt).toContain('skill_version: "1.9.0"');
     expect(prompt).toContain("Filter");
     expect(prompt).toContain("默认 public");
     expect(prompt).toContain("Member");
