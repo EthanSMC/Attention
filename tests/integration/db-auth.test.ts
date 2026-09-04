@@ -770,6 +770,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     );
 
     const principal = await resolveSession(handle.db, first.session.token, {
+      now: firstSetAt,
       touch: false,
     });
     expect(principal?.attentionId).toBe("ethan_ai");
