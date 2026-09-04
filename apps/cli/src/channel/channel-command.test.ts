@@ -1974,7 +1974,7 @@ describe("channel subcommands", () => {
           checks += 1;
           return checks === 1
             ? { status: "current", version: ATTENTION_CLI_VERSION }
-            : { status: "staged", version: "0.3.14" };
+            : { status: "staged", version: "0.3.15" };
         },
         bridgeUpdateClock: () => new Date(now),
         fetchImpl: async (input) => {

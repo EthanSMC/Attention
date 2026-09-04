@@ -23,6 +23,10 @@ function captureOutput(): {
 }
 
 describe("Attention CLI", () => {
+  it("reports the 0.3.14 Bridge release identity", () => {
+    expect(ATTENTION_CLI_VERSION).toBe("0.3.14");
+  });
+
   it("reports the exact side-effect-free identity used to probe an update candidate", async () => {
     const capture = captureOutput();
 
@@ -387,7 +391,7 @@ describe("Attention CLI", () => {
       await runAttentionCli(["--version"], {
         checkCliUpdate: async () => ({
           currentVersion: ATTENTION_CLI_VERSION,
-          latestVersion: "0.3.14",
+          latestVersion: "0.3.15",
         }),
         output: capture.output,
       }),
@@ -395,7 +399,7 @@ describe("Attention CLI", () => {
 
     expect(capture.logs).toEqual([ATTENTION_CLI_VERSION]);
     expect(capture.errors).toEqual([
-      `[update] Attention CLI 0.3.14 可用（当前 ${ATTENTION_CLI_VERSION}）。运行 \`attention update\` 升级。`,
+      `[update] Attention CLI 0.3.15 可用（当前 ${ATTENTION_CLI_VERSION}）。运行 \`attention update\` 升级。`,
     ]);
   });
 
@@ -409,7 +413,7 @@ describe("Attention CLI", () => {
           checked = true;
           return {
             currentVersion: ATTENTION_CLI_VERSION,
-            latestVersion: "0.3.14",
+            latestVersion: "0.3.15",
           };
         },
         output: capture.output,

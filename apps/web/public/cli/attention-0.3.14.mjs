@@ -18049,7 +18049,7 @@ function normalizeState(raw) {
     accountId: typeof record3.accountId === "string" ? record3.accountId : "",
     attentionMcp: normalizeAttentionMcpCheckpoint(record3.attentionMcp),
     baseUrl: normalizeBaseUrl(record3.baseUrl),
-    brainSession: record3.brainSession !== null && typeof record3.brainSession === "object" && typeof record3.brainSession.sessionId === "string" && (record3.brainSession.hostId === "codex" || record3.brainSession.hostId === "claude-code") ? record3.brainSession : null,
+    brainSession: normalizeBrainSession(record3.brainSession),
     contextTokens: record3.contextTokens !== null && typeof record3.contextTokens === "object" ? Object.fromEntries(
       Object.entries(record3.contextTokens).filter(([, value]) => typeof value === "string").map(([key, value]) => [key, value])
     ) : {},
@@ -18085,6 +18085,37 @@ function normalizeState(raw) {
     runtimeState: normalizeRuntimeCheckpoint(record3.runtimeState),
     syncBuf: typeof record3.syncBuf === "string" ? record3.syncBuf : "",
     token: typeof record3.token === "string" && record3.token ? record3.token : null
+  };
+}
+function normalizeBrainSession(raw) {
+  if (raw === null || typeof raw !== "object") return null;
+  const record3 = raw;
+  const updatedAt = nullableIsoTimestamp(record3.updatedAt);
+  if (record3.hostId !== "codex" && record3.hostId !== "claude-code" || typeof record3.sessionId !== "string" || !record3.sessionId || !updatedAt) {
+    return null;
+  }
+  const hasBridgeVersion = record3.bridgeVersion !== void 0;
+  const hasPermissionProfile = record3.permissionProfileSha256 !== void 0;
+  if (!hasBridgeVersion && !hasPermissionProfile) {
+    return {
+      hostId: record3.hostId,
+      sessionId: record3.sessionId,
+      updatedAt
+    };
+  }
+  if (typeof record3.bridgeVersion !== "string" || !SEMVER_PATTERN2.test(record3.bridgeVersion) || typeof record3.permissionProfileSha256 !== "string" || !SHA256_PATTERN3.test(record3.permissionProfileSha256)) {
+    return {
+      hostId: record3.hostId,
+      sessionId: record3.sessionId,
+      updatedAt
+    };
+  }
+  return {
+    bridgeVersion: record3.bridgeVersion,
+    hostId: record3.hostId,
+    permissionProfileSha256: record3.permissionProfileSha256,
+    sessionId: record3.sessionId,
+    updatedAt
   };
 }
 function normalizeAccountVerification(raw) {
@@ -18247,7 +18278,7 @@ function appendHistory(state, userContent, assistantContent) {
     state.history.splice(0, state.history.length - maximumEntries);
   }
 }
-var UUID_PATTERN, RUNTIME_PHASES2, ATTENTION_MCP_STATUSES, ATTENTION_MCP_ERROR_CODES, ISO_TIMESTAMP_PATTERN;
+var SEMVER_PATTERN2, SHA256_PATTERN3, UUID_PATTERN, RUNTIME_PHASES2, ATTENTION_MCP_STATUSES, ATTENTION_MCP_ERROR_CODES, ISO_TIMESTAMP_PATTERN;
 var init_state = __esm({
   "src/channel/state.ts"() {
     "use strict";
@@ -18255,6 +18286,8 @@ var init_state = __esm({
     init_ilink_protocol();
     init_limits();
     init_mcp_readiness();
+    SEMVER_PATTERN2 = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
+    SHA256_PATTERN3 = /^[a-f0-9]{64}$/u;
     UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
     RUNTIME_PHASES2 = /* @__PURE__ */ new Set([
       "starting",
@@ -18291,7 +18324,7 @@ init_src();
 
 // src/channel/channel-command.ts
 init_src();
-import { createHash as createHash8, randomUUID as randomUUID8 } from "node:crypto";
+import { randomUUID as randomUUID8 } from "node:crypto";
 import { mkdir as mkdir8 } from "node:fs/promises";
 import { homedir as homedir7, hostname as hostname3 } from "node:os";
 import { resolve as resolve2 } from "node:path";
@@ -18601,7 +18634,7 @@ import { homedir as homedir2 } from "node:os";
 import { dirname, join as join2 } from "node:path";
 
 // src/version.ts
-var ATTENTION_CLI_VERSION = "0.3.13";
+var ATTENTION_CLI_VERSION = "0.3.14";
 
 // src/runtime-oauth.ts
 var RUNTIME_CREDENTIAL_VERSION = 1;
@@ -21363,6 +21396,15 @@ async function checkAndStageBridgeUpdate(options) {
   }
 }
 
+// src/channel/bridge-update-schedule.ts
+var BRIDGE_UPDATE_INTERVAL_MS = 60 * 60 * 1e3;
+function initialBridgeUpdateCheckAt() {
+  return 0;
+}
+function nextBridgeUpdateCheckAt(checkedAt) {
+  return checkedAt + BRIDGE_UPDATE_INTERVAL_MS;
+}
+
 // src/channel/codex-home.ts
 init_state();
 import {
@@ -22505,8 +22547,8 @@ ${item.summary}
 init_limits();
 
 // src/channel/pipeline.ts
-init_limits();
 import { createHash as createHash6 } from "node:crypto";
+init_limits();
 init_state();
 var TRUNCATION_NOTE = "\n\u2026\uFF08\u5185\u5BB9\u8FC7\u957F\u5DF2\u622A\u65AD\uFF09";
 var ALWAYS_LOCAL_COMMANDS = {
@@ -22691,7 +22733,13 @@ function buildControlReply(command2, state, hostId) {
 async function invokeWithFallback(input, text, messageRef) {
   const { brain, state } = input;
   const invoke = input.invokeBrain ?? ((brainInput) => brain.invoke({ ...brainInput, cwd: input.cwd }));
-  const storedSession = state.brainSession?.hostId === brain.hostId ? state.brainSession.sessionId : null;
+  const storedSession = sessionMatchesCurrentRelease(
+    state.brainSession,
+    brain.hostId
+  ) ? state.brainSession.sessionId : null;
+  if (state.brainSession && !storedSession) {
+    state.brainSession = null;
+  }
   if (storedSession) {
     const resumed = await invoke({
       prompt: buildFollowUpPrompt({ messageRef, userMessage: text }),
@@ -22717,10 +22765,15 @@ async function invokeWithFallback(input, text, messageRef) {
 function recordSession(state, hostId, sessionId) {
   if (!sessionId) return;
   state.brainSession = {
+    bridgeVersion: ATTENTION_CLI_VERSION,
     hostId,
+    permissionProfileSha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
     sessionId,
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
+}
+function sessionMatchesCurrentRelease(session, hostId) {
+  return session?.hostId === hostId && session.bridgeVersion === ATTENTION_CLI_VERSION && session.permissionProfileSha256 === ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256;
 }
 function splitReply(reply, maximumChars = MAXIMUM_REPLY_CHARS) {
   if (reply.length <= maximumChars) return [reply];
@@ -23757,12 +23810,6 @@ var HOST_EXECUTABLES = {
   codex: "codex"
 };
 var RUNTIME_REPORTER_CREDENTIAL_RETRY_MS = 6e4;
-var BRIDGE_UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1e3;
-var BRIDGE_UPDATE_MAXIMUM_JITTER_MS = 60 * 60 * 1e3;
-function deterministicBridgeUpdateJitter(seed) {
-  const prefix = createHash8("sha256").update(seed, "utf8").digest().readUInt32BE(0);
-  return prefix % BRIDGE_UPDATE_MAXIMUM_JITTER_MS;
-}
 function runtimeRegistrationDeviceName(source = hostname3()) {
   const normalized = source.normalize("NFKC").replace(/[\p{Cc}\p{Cf}]/gu, "").trim().replace(/\s+/gu, " ").slice(0, 80);
   return normalized || "Attention device";
@@ -24263,27 +24310,15 @@ async function channelStart(hostId, options = {}) {
     );
     const managedBridgeHome = options.baseDirectory ?? homedir7();
     const bridgeUpdateClock = options.bridgeUpdateClock ?? (() => /* @__PURE__ */ new Date());
-    const bridgeUpdateJitterMs = deterministicBridgeUpdateJitter(
-      runtime.state.runtimeReporter.installationId ?? hostname3()
-    );
-    let nextBridgeUpdateCheckAt = 0;
+    let bridgeUpdateDueAt = initialBridgeUpdateCheckAt();
     if (options.service) {
       await (options.bridgeHealthyMarker ?? (async () => await markManagedBridgeHealthy(
         ATTENTION_CLI_VERSION,
         managedBridgeHome
       )))();
-      if (!options.bridgeUpdateChecker) {
-        try {
-          const updateState = await loadManagedBridgeUpdateState(managedBridgeHome);
-          const lastCheckAt = updateState.lastCheckAt ? Date.parse(updateState.lastCheckAt) : Number.NaN;
-          nextBridgeUpdateCheckAt = Number.isFinite(lastCheckAt) ? lastCheckAt + BRIDGE_UPDATE_INTERVAL_MS + bridgeUpdateJitterMs : 0;
-        } catch {
-          nextBridgeUpdateCheckAt = Number.POSITIVE_INFINITY;
-        }
-      }
     }
     const maybeStageBridgeUpdate = async () => {
-      if (!options.service || runtime.state.pendingInbound.length > 0 || runtime.state.pendingOutbound.length > 0 || bridgeUpdateClock().getTime() < nextBridgeUpdateCheckAt) {
+      if (!options.service || runtime.state.pendingInbound.length > 0 || runtime.state.pendingOutbound.length > 0 || bridgeUpdateClock().getTime() < bridgeUpdateDueAt) {
         return false;
       }
       const checkedAt = bridgeUpdateClock().getTime();
@@ -24292,16 +24327,18 @@ async function channelStart(hostId, options = {}) {
         result = await (options.bridgeUpdateChecker ?? (async () => await checkAndStageBridgeUpdate({
           currentPermissionProfileSha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
           currentVersion: ATTENTION_CLI_VERSION,
+          ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {},
           homeDirectory: managedBridgeHome,
           nodeExecutable: process.execPath,
+          now: bridgeUpdateClock,
           origin: options.origin
         })))();
       } catch {
         runtime.log("Bridge \u81EA\u52A8\u66F4\u65B0\u68C0\u67E5\u6682\u65F6\u4E0D\u53EF\u7528\uFF1B\u5F53\u524D\u7248\u672C\u7EE7\u7EED\u8FD0\u884C\u3002");
-        nextBridgeUpdateCheckAt = checkedAt + BRIDGE_UPDATE_INTERVAL_MS + bridgeUpdateJitterMs;
+        bridgeUpdateDueAt = nextBridgeUpdateCheckAt(checkedAt);
         return false;
       }
-      nextBridgeUpdateCheckAt = checkedAt + BRIDGE_UPDATE_INTERVAL_MS + bridgeUpdateJitterMs;
+      bridgeUpdateDueAt = nextBridgeUpdateCheckAt(checkedAt);
       if (result.status === "staged") {
         runtime.log(`Bridge ${result.version} \u5DF2\u6821\u9A8C\uFF0C\u5C06\u5728\u7A7A\u95F2\u72B6\u6001\u91CD\u542F\u3002`);
         return true;
@@ -25110,7 +25147,7 @@ function isTimeoutError(error51) {
 
 // src/configure.ts
 init_src();
-import { createHash as createHash9 } from "node:crypto";
+import { createHash as createHash8 } from "node:crypto";
 import { mkdir as mkdir9, lstat as lstat3, readFile as readFile6, rename as rename6, rm as rm7, writeFile as writeFile6 } from "node:fs/promises";
 import { homedir as homedir8 } from "node:os";
 import { basename, dirname as dirname7, join as join8, resolve as resolve3 } from "node:path";
@@ -25261,7 +25298,7 @@ function buildConfigurePlan(input) {
   };
 }
 function sha256(value) {
-  return createHash9("sha256").update(value).digest("hex");
+  return createHash8("sha256").update(value).digest("hex");
 }
 function safeBundleFilename(sourceUrl) {
   const filename = basename(new URL(sourceUrl).pathname);
