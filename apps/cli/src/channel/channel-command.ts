@@ -11,7 +11,7 @@
  * publishes only privacy-safe health/checkpoint metadata.
  */
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { resolve } from "node:path";
@@ -36,6 +36,10 @@ import {
   type BridgeUpdateCheckResult,
   checkAndStageBridgeUpdate,
 } from "./bridge-updater";
+import {
+  initialBridgeUpdateCheckAt,
+  nextBridgeUpdateCheckAt,
+} from "./bridge-update-schedule";
 import { prepareChannelCodexHome } from "./codex-home";
 import type {
   AttentionMcpProbeResult,
@@ -208,13 +212,6 @@ const HOST_EXECUTABLES: Record<ChannelBridgeHost, string> = {
   codex: "codex",
 };
 const RUNTIME_REPORTER_CREDENTIAL_RETRY_MS = 60_000;
-const BRIDGE_UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1_000;
-const BRIDGE_UPDATE_MAXIMUM_JITTER_MS = 60 * 60 * 1_000;
-
-function deterministicBridgeUpdateJitter(seed: string): number {
-  const prefix = createHash("sha256").update(seed, "utf8").digest().readUInt32BE(0);
-  return prefix % BRIDGE_UPDATE_MAXIMUM_JITTER_MS;
-}
 
 export interface RuntimeRegistrationIdentity {
   readonly deviceName: string;
@@ -804,10 +801,7 @@ export async function channelStart(
 
     const managedBridgeHome = options.baseDirectory ?? homedir();
     const bridgeUpdateClock = options.bridgeUpdateClock ?? (() => new Date());
-    const bridgeUpdateJitterMs = deterministicBridgeUpdateJitter(
-      runtime.state.runtimeReporter.installationId ?? hostname(),
-    );
-    let nextBridgeUpdateCheckAt = 0;
+    let bridgeUpdateDueAt = initialBridgeUpdateCheckAt();
     if (options.service) {
       await (
         options.bridgeHealthyMarker ??
@@ -817,21 +811,6 @@ export async function channelStart(
             managedBridgeHome,
           ))
       )();
-      if (!options.bridgeUpdateChecker) {
-        try {
-          const updateState = await loadManagedBridgeUpdateState(managedBridgeHome);
-          const lastCheckAt = updateState.lastCheckAt
-            ? Date.parse(updateState.lastCheckAt)
-            : Number.NaN;
-          nextBridgeUpdateCheckAt = Number.isFinite(lastCheckAt)
-            ? lastCheckAt + BRIDGE_UPDATE_INTERVAL_MS + bridgeUpdateJitterMs
-            : 0;
-        } catch {
-          // A service installed before managed updates has no update state.
-          // It keeps running and can be upgraded once through the normal setup.
-          nextBridgeUpdateCheckAt = Number.POSITIVE_INFINITY;
-        }
-      }
     }
 
     const maybeStageBridgeUpdate = async (): Promise<boolean> => {
@@ -839,7 +818,7 @@ export async function channelStart(
         !options.service ||
         runtime.state.pendingInbound.length > 0 ||
         runtime.state.pendingOutbound.length > 0 ||
-        bridgeUpdateClock().getTime() < nextBridgeUpdateCheckAt
+        bridgeUpdateClock().getTime() < bridgeUpdateDueAt
       ) {
         return false;
       }
@@ -853,19 +832,19 @@ export async function channelStart(
               currentPermissionProfileSha256:
                 ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
               currentVersion: ATTENTION_CLI_VERSION,
+              ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
               homeDirectory: managedBridgeHome,
               nodeExecutable: process.execPath,
+              now: bridgeUpdateClock,
               origin: options.origin as string,
             }))
         )();
       } catch {
         runtime.log("Bridge 自动更新检查暂时不可用；当前版本继续运行。");
-        nextBridgeUpdateCheckAt =
-          checkedAt + BRIDGE_UPDATE_INTERVAL_MS + bridgeUpdateJitterMs;
+        bridgeUpdateDueAt = nextBridgeUpdateCheckAt(checkedAt);
         return false;
       }
-      nextBridgeUpdateCheckAt =
-        checkedAt + BRIDGE_UPDATE_INTERVAL_MS + bridgeUpdateJitterMs;
+      bridgeUpdateDueAt = nextBridgeUpdateCheckAt(checkedAt);
       if (result.status === "staged") {
         runtime.log(`Bridge ${result.version} 已校验，将在空闲状态重启。`);
         return true;

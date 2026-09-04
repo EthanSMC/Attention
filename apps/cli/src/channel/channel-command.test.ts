@@ -1,9 +1,11 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256 } from "../bridge-update-contract";
+import { ATTENTION_CLI_VERSION } from "../version";
 import type { BrainRuntimeSnapshot } from "./brain";
 import type {
   RuntimeReporter,
@@ -21,6 +23,11 @@ import {
 } from "./channel-command";
 import { defaultChannelState, loadChannelState, saveChannelState } from "./state";
 import { acquireChannelLock } from "./lock";
+import {
+  bootstrapManagedBridge,
+  loadManagedBridgeUpdateState,
+  saveManagedBridgeUpdateState,
+} from "./managed-bridge";
 import { buildMessageRef, handleInboundMessage } from "./pipeline";
 
 function brainLifecycle() {
@@ -1864,6 +1871,133 @@ describe("channel subcommands", () => {
       }),
     ).toBe(75);
     expect(events).toEqual(["healthy", "check"]);
+  });
+
+  it("checks the release manifest on startup even after a recent persisted check", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    state.token = "local-ilink-token";
+    state.accountId = "local-account";
+    await saveChannelState(state, base);
+    const currentArtifactPath = join(base, "attention-current.mjs");
+    await writeFile(currentArtifactPath, "#!/usr/bin/env node\n", "utf8");
+    await bootstrapManagedBridge({
+      currentArtifactPath,
+      homeDirectory: base,
+      permissionProfileSha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+      version: ATTENTION_CLI_VERSION,
+    });
+    const updateState = await loadManagedBridgeUpdateState(base);
+    updateState.lastCheckAt = "2026-09-04T04:59:30.000Z";
+    await saveManagedBridgeUpdateState(updateState, base);
+    const events: string[] = [];
+    const manifest = {
+      artifact_path: `/cli/attention-${ATTENTION_CLI_VERSION}.mjs`,
+      minimum_supported_version: "0.3.5",
+      node: ">=22.16.0",
+      permission_profile_sha256:
+        ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+      schema_version: 2,
+      sha256: "a".repeat(64),
+      version: ATTENTION_CLI_VERSION,
+    };
+
+    expect(
+      await channelStart("codex", {
+        accountVerifier: async () => verifiedAccountProbe(),
+        baseDirectory: base,
+        brainFactory: () => ({
+          ...brainLifecycle(),
+          hostId: "codex",
+          invoke: async () => ({
+            ok: true,
+            reply: "not reached",
+            resumeFailed: false,
+            sessionId: "thread-1",
+            timedOut: false,
+          }),
+        }),
+        bridgeUpdateClock: () => new Date("2026-09-04T05:00:00.000Z"),
+        fetchImpl: async (input) => {
+          const url = String(input);
+          if (url.endsWith("/cli/manifest.json")) {
+            events.push("manifest");
+            const response = new Response(JSON.stringify(manifest), {
+              headers: { "content-type": "application/json" },
+              status: 200,
+            });
+            Object.defineProperty(response, "url", { value: url });
+            return response;
+          }
+          if (url.endsWith("/getupdates")) {
+            events.push("getupdates");
+            return new Response(JSON.stringify({ errcode: -14, ret: 0 }));
+          }
+          throw new Error(`Unexpected request: ${url}`);
+        },
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        runtimeCredentialLoader: async () => false,
+        service: true,
+      }),
+    ).toBe(0);
+    expect(events).toEqual(["manifest", "getupdates"]);
+  });
+
+  it("checks again exactly one hour after the startup attempt", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    state.token = "local-ilink-token";
+    state.accountId = "local-account";
+    await saveChannelState(state, base);
+    let now = 0;
+    let checks = 0;
+    let polls = 0;
+
+    expect(
+      await channelStart("codex", {
+        accountVerifier: async () => verifiedAccountProbe(),
+        baseDirectory: base,
+        brainFactory: () => ({
+          ...brainLifecycle(),
+          hostId: "codex",
+          invoke: async () => ({
+            ok: true,
+            reply: "not reached",
+            resumeFailed: false,
+            sessionId: "thread-1",
+            timedOut: false,
+          }),
+        }),
+        bridgeHealthyMarker: async () => undefined,
+        bridgeUpdateChecker: async () => {
+          checks += 1;
+          return checks === 1
+            ? { status: "current", version: ATTENTION_CLI_VERSION }
+            : { status: "staged", version: "0.3.14" };
+        },
+        bridgeUpdateClock: () => new Date(now),
+        fetchImpl: async (input) => {
+          const path = new URL(String(input)).pathname;
+          if (!path.endsWith("/getupdates")) {
+            throw new Error(`Unexpected iLink path: ${path}`);
+          }
+          polls += 1;
+          if (polls === 1) now = 60 * 60 * 1_000 - 1;
+          else if (polls === 2) now = 60 * 60 * 1_000;
+          else return new Response(JSON.stringify({ errcode: -14, ret: 0 }));
+          return new Response(
+            JSON.stringify({ errcode: 0, get_updates_buf: "", msgs: [], ret: 0 }),
+          );
+        },
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        runtimeCredentialLoader: async () => false,
+        service: true,
+      }),
+    ).toBe(75);
+    expect(checks).toBe(2);
+    expect(polls).toBe(2);
   });
 
   it("defers a managed update while a durable reply remains unsent", async () => {
