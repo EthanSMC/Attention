@@ -20137,7 +20137,7 @@ function rejectionReason(candidate, context) {
   }
   if (UUID_IN_TEXT_PATTERN.test(candidate)) return "reply_contains_uuid";
   if (/```/u.test(candidate)) return "reply_contains_code_block";
-  if (/mcp__|attention_[a-z0-9_]+|(?:^|\n)\s*[\[{]|["']?(?:tool|tool_name)["']?\s*[:=]/iu.test(
+  if (/mcp__|attention_[a-z0-9_]+|(?:^|\n)\s*(?:\[|\{)|["']?(?:tool|tool_name)["']?\s*[:=]/iu.test(
     candidate
   )) {
     return "reply_contains_tool_shape";
