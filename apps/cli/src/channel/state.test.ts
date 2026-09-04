@@ -66,6 +66,68 @@ describe("channel state persistence", () => {
     });
   });
 
+  it("migrates state without summary retries to an empty queue", async () => {
+    const base = await makeTempBase();
+    await saveChannelState(defaultChannelState(), base);
+    const raw = JSON.parse(
+      await readFile(channelStatePath(base), "utf8"),
+    ) as Record<string, unknown>;
+    delete raw.summaryRetries;
+    await writeFile(channelStatePath(base), JSON.stringify(raw), "utf8");
+
+    expect(Reflect.get(await loadChannelState(base), "summaryRetries")).toEqual(
+      [],
+    );
+  });
+
+  it("normalizes running summary retries and drops duplicate or unsafe shapes", async () => {
+    const base = await makeTempBase();
+    await saveChannelState(defaultChannelState(), base);
+    const raw = JSON.parse(
+      await readFile(channelStatePath(base), "utf8"),
+    ) as Record<string, unknown>;
+    raw.summaryRetries = [
+      {
+        automaticAttempts: 1,
+        collectionId: "11111111-1111-4111-8111-111111111111",
+        cycleStartedAt: "2026-09-04T08:00:00.000Z",
+        lastFailureClass: "enrichment_incomplete",
+        nextAttemptAt: "2026-09-04T08:10:00.000Z",
+        status: "running",
+      },
+      {
+        automaticAttempts: 2,
+        collectionId: "11111111-1111-4111-8111-111111111111",
+        cycleStartedAt: "2026-09-04T07:00:00.000Z",
+        lastFailureClass: "enrichment_incomplete",
+        nextAttemptAt: "2026-09-04T07:30:00.000Z",
+        status: "scheduled",
+      },
+      {
+        automaticAttempts: 0,
+        collectionId: "not-a-uuid",
+        cycleStartedAt: "2026-09-04T08:00:00.000Z",
+        lastFailureClass: null,
+        nextAttemptAt: "2026-09-04T08:02:00.000Z",
+        publicReadUrl: "https://secret.example/raw",
+        status: "scheduled",
+      },
+      { publicReadUrl: "https://secret.example/raw" },
+    ];
+    await writeFile(channelStatePath(base), JSON.stringify(raw), "utf8");
+
+    expect((await loadChannelState(base)).summaryRetries).toEqual([
+      {
+        automaticAttempts: 1,
+        collectionId: "11111111-1111-4111-8111-111111111111",
+        cycleStartedAt: "2026-09-04T08:00:00.000Z",
+        lastFailureClass: "enrichment_incomplete",
+        nextAttemptAt: "2026-09-04T08:10:00.000Z",
+        status: "scheduled",
+      },
+    ]);
+  });
+
   it("migrates state without an Attention MCP checkpoint to unknown", async () => {
     const base = await makeTempBase();
     const state = defaultChannelState();
