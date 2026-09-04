@@ -55,6 +55,7 @@ const controlledOutcome = (
   ({
     ...okOutcome(reply),
     collectionReplyControl: {
+      collectionId: "11111111-1111-4111-8111-111111111111",
       kind: "established",
       ...control,
     },
@@ -69,7 +70,12 @@ const recoveryOutcome = (
   },
 ): BrainOutcome => ({
   ...okOutcome(reply),
-  collectionReplyControl: { kind: "recovery", ...input },
+  collectionReplyControl: {
+    collectionId: "11111111-1111-4111-8111-111111111111",
+    kind: "recovery",
+    ...input,
+  },
+  collectionReplySensitiveFragments: [],
 });
 
 const fakeBrain = (
@@ -88,6 +94,182 @@ const fakeBrain = (
 });
 
 describe("handleInboundMessage", () => {
+  it("queues an incomplete summary before returning the safe natural reply", async () => {
+    const state = defaultChannelState();
+    const output = await handleInboundMessage({
+      brain: fakeBrain("codex"),
+      cwd: "/tmp",
+      invokeBrain: async () =>
+        controlledOutcome(
+          "收藏成功，这次没补全摘要，约 2 分钟后会自动重试。",
+          {
+            collectionStatus: "accepted",
+            enrichmentAction: "generate_summary",
+            enrichmentCompleted: false,
+          },
+        ),
+      message: textMessage("请收藏这篇文章"),
+      now: () => new Date("2026-09-04T08:00:00.000Z"),
+      state,
+    });
+
+    expect(output.replies).toEqual([
+      "收藏成功，这次没补全摘要，约 2 分钟后会自动重试。",
+    ]);
+    expect(output.collectionReplyRejectionReason).toBeUndefined();
+    expect(state.summaryRetries).toEqual([
+      {
+        automaticAttempts: 0,
+        collectionId: "11111111-1111-4111-8111-111111111111",
+        cycleStartedAt: "2026-09-04T08:00:00.000Z",
+        lastFailureClass: null,
+        nextAttemptAt: "2026-09-04T08:02:00.000Z",
+        status: "scheduled",
+      },
+    ]);
+  });
+
+  it("reports a full local retry queue without claiming retry was scheduled", async () => {
+    const state = defaultChannelState();
+    for (let index = 0; index < 32; index += 1) {
+      state.summaryRetries.push({
+        automaticAttempts: 0,
+        collectionId: `aaaaaaaa-aaaa-4aaa-8aaa-${(index + 1)
+          .toString(16)
+          .padStart(12, "0")}`,
+        cycleStartedAt: "2026-09-04T07:00:00.000Z",
+        lastFailureClass: null,
+        nextAttemptAt: "2026-09-04T08:02:00.000Z",
+        status: "scheduled",
+      });
+    }
+    const output = await handleInboundMessage({
+      brain: fakeBrain("codex"),
+      cwd: "/tmp",
+      invokeBrain: async () =>
+        controlledOutcome(
+          "收藏成功，这次没补全摘要，约 2 分钟后会自动重试。",
+          {
+            collectionStatus: "accepted",
+            enrichmentAction: "generate_summary",
+            enrichmentCompleted: false,
+          },
+        ),
+      message: textMessage("请收藏"),
+      now: () => new Date("2026-09-04T08:00:00.000Z"),
+      state,
+    });
+
+    expect(output.replies).toEqual([
+      "已收藏，但本地重试队列已满，暂时无法安排自动重试。",
+    ]);
+    expect(output.collectionReplyRejectionReason).toBe(
+      "reply_retry_queue_full",
+    );
+    expect(state.summaryRetries).toHaveLength(32);
+  });
+
+  it("keeps an active retry schedule when a manual attempt remains incomplete", async () => {
+    const state = defaultChannelState();
+    state.summaryRetries.push({
+      automaticAttempts: 1,
+      collectionId: "11111111-1111-4111-8111-111111111111",
+      cycleStartedAt: "2026-09-04T07:00:00.000Z",
+      lastFailureClass: "enrichment_incomplete",
+      nextAttemptAt: "2026-09-04T08:10:00.000Z",
+      status: "scheduled",
+    });
+
+    await handleInboundMessage({
+      brain: fakeBrain("codex"),
+      cwd: "/tmp",
+      invokeBrain: async () =>
+        recoveryOutcome("这次仍没补全摘要，原定自动重试会继续。", {
+          enrichmentAction: "generate_summary",
+          enrichmentCompleted: false,
+          summaryStatus: "pending",
+        }),
+      message: textMessage("再补一下摘要"),
+      now: () => new Date("2026-09-04T08:01:00.000Z"),
+      state,
+    });
+
+    expect(state.summaryRetries[0]).toMatchObject({
+      automaticAttempts: 1,
+      cycleStartedAt: "2026-09-04T07:00:00.000Z",
+      nextAttemptAt: "2026-09-04T08:10:00.000Z",
+    });
+  });
+
+  it("starts a new automatic cycle when a manual attempt follows a pause", async () => {
+    const state = defaultChannelState();
+    state.summaryRetries.push({
+      automaticAttempts: 3,
+      collectionId: "11111111-1111-4111-8111-111111111111",
+      cycleStartedAt: "2026-09-04T07:00:00.000Z",
+      lastFailureClass: "enrichment_incomplete",
+      nextAttemptAt: null,
+      status: "paused",
+    });
+
+    await handleInboundMessage({
+      brain: fakeBrain("codex"),
+      cwd: "/tmp",
+      invokeBrain: async () =>
+        recoveryOutcome("这次仍没补全摘要，约 2 分钟后会重新自动重试。", {
+          enrichmentAction: "generate_summary",
+          enrichmentCompleted: false,
+          summaryStatus: "pending",
+        }),
+      message: textMessage("再试试补摘要"),
+      now: () => new Date("2026-09-04T08:00:00.000Z"),
+      state,
+    });
+
+    expect(state.summaryRetries[0]).toMatchObject({
+      automaticAttempts: 0,
+      cycleStartedAt: "2026-09-04T08:00:00.000Z",
+      nextAttemptAt: "2026-09-04T08:02:00.000Z",
+      status: "scheduled",
+    });
+  });
+
+  it.each([
+    ["completed", controlledOutcome("摘要已经补全。", {
+      collectionStatus: "accepted",
+      enrichmentAction: "generate_summary",
+      enrichmentCompleted: true,
+    })],
+    ["ready", recoveryOutcome("摘要已经就绪。", {
+      enrichmentAction: "reuse_summary",
+      enrichmentCompleted: false,
+      summaryStatus: "ready",
+    })],
+    ["terminal", recoveryOutcome("这项内容不再符合摘要补全条件。", {
+      enrichmentAction: "none",
+      enrichmentCompleted: false,
+      summaryStatus: "unavailable",
+    })],
+  ] as const)("cancels retry state after a %s inbound result", async (_label, outcome) => {
+    const state = defaultChannelState();
+    state.summaryRetries.push({
+      automaticAttempts: 1,
+      collectionId: "11111111-1111-4111-8111-111111111111",
+      cycleStartedAt: "2026-09-04T07:00:00.000Z",
+      lastFailureClass: "enrichment_incomplete",
+      nextAttemptAt: "2026-09-04T08:10:00.000Z",
+      status: "scheduled",
+    });
+    await handleInboundMessage({
+      brain: fakeBrain("codex"),
+      cwd: "/tmp",
+      invokeBrain: async () => outcome,
+      message: textMessage("看看摘要状态"),
+      state,
+    });
+    expect(state.summaryRetries).toEqual([]);
+  });
+
   it.each(["codex", "claude-code"] as const)(
     "replaces adversarial direct enrichment output with a fixed safe reply for %s",
     async (hostId) => {
@@ -108,6 +290,9 @@ describe("handleInboundMessage", () => {
       });
 
       expect(output.replies).toEqual(["已收藏，摘要已补全。"]);
+      expect(output.collectionReplyRejectionReason).toBe(
+        "reply_contains_url",
+      );
       expect(output.replies.join(" ")).not.toMatch(
         /RAW TITLE|https?:\/\/|BODY SENTINEL|SUMMARY SENTINEL|TAG_SENTINEL/u,
       );
@@ -117,13 +302,13 @@ describe("handleInboundMessage", () => {
 
   it.each([
     ["codex", "generate_summary", true, "已收藏，摘要已补全。"],
-    ["codex", "generate_summary", false, "已收藏，摘要待补全。"],
+    ["codex", "generate_summary", false, "已收藏，但这次没有补全摘要；约 2 分钟后会自动重试。"],
     ["codex", "reuse_summary", false, "已收藏，已使用现有摘要。"],
     ["claude-code", "generate_summary", true, "已收藏，摘要已补全。"],
-    ["claude-code", "generate_summary", false, "已收藏，摘要待补全。"],
+    ["claude-code", "generate_summary", false, "已收藏，但这次没有补全摘要；约 2 分钟后会自动重试。"],
     ["claude-code", "reuse_summary", false, "已收藏，已使用现有摘要。"],
   ] as const)(
-    "uses a fixed safe selected-result acknowledgment for %s %s completed=%s",
+    "falls back safely for adversarial selected-result prose on %s %s completed=%s",
     async (hostId, enrichmentAction, enrichmentCompleted, expected) => {
       const state = defaultChannelState();
       state.history = [
@@ -369,6 +554,41 @@ describe("handleInboundMessage", () => {
       "Attention MCP：auth_required（微信对话仍可用）",
     );
     expect(reply).toContain("Reporter：未启用");
+  });
+
+  it("reports local summary retry counts and the nearest planned attempt", async () => {
+    const state = defaultChannelState();
+    state.summaryRetries = [
+      {
+        automaticAttempts: 1,
+        collectionId: "11111111-1111-4111-8111-111111111111",
+        cycleStartedAt: "2026-09-04T08:00:00.000Z",
+        lastFailureClass: "enrichment_incomplete",
+        nextAttemptAt: "2026-09-04T08:10:00.000Z",
+        status: "scheduled",
+      },
+      {
+        automaticAttempts: 3,
+        collectionId: "22222222-2222-4222-8222-222222222222",
+        cycleStartedAt: "2026-09-04T07:00:00.000Z",
+        lastFailureClass: "enrichment_incomplete",
+        nextAttemptAt: null,
+        status: "paused",
+      },
+    ];
+    const output = await handleInboundMessage({
+      brain: fakeBrain("codex"),
+      cwd: "/tmp",
+      message: textMessage("状态"),
+      state,
+    });
+
+    expect(output.replies.join("\n")).toContain(
+      "摘要重试：1 项活动（0 项运行），1 项暂停；最近计划：2026-09-04T08:10:00.000Z",
+    );
+    expect(output.replies.join("\n")).not.toContain(
+      "11111111-1111-4111-8111-111111111111",
+    );
   });
 
   it("defers retry completion until the recovery result is known", async () => {

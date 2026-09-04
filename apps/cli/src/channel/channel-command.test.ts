@@ -6,7 +6,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256 } from "../bridge-update-contract";
 import { ATTENTION_CLI_VERSION } from "../version";
-import type { BrainRuntimeSnapshot } from "./brain";
+import type {
+  BrainAdapter,
+  BrainOutcome,
+  BrainRuntimeSnapshot,
+} from "./brain";
 import type {
   RuntimeReporter,
   RuntimeReporterOptions,
@@ -18,6 +22,7 @@ import {
   channelStatus,
   isBridgeHost,
   loadRuntimeRegistrationIdentity,
+  processDueSummaryRetry,
   runtimeReporterDegradedMessage,
   verifyAttentionAccount,
 } from "./channel-command";
@@ -29,6 +34,7 @@ import {
   saveManagedBridgeUpdateState,
 } from "./managed-bridge";
 import { buildMessageRef, handleInboundMessage } from "./pipeline";
+import { scheduleSummaryRetry } from "./summary-retry";
 
 function brainLifecycle() {
   return {
@@ -39,6 +45,68 @@ function brainLifecycle() {
     }),
     shutdown: async (): Promise<void> => undefined,
     start: async (): Promise<void> => undefined,
+  };
+}
+
+const SUMMARY_COLLECTION_ID = "11111111-1111-4111-8111-111111111111";
+
+function dueSummaryState(automaticAttempts: 0 | 1 | 2 = 0) {
+  const state = defaultChannelState();
+  state.token = "local-ilink-token";
+  state.ownerUserId = "owner";
+  state.contextTokens.owner = "ctx-owner";
+  state.attentionMcp.status = "ready";
+  state.runtimeState.phase = "healthy";
+  state.summaryRetries.push({
+    automaticAttempts,
+    collectionId: SUMMARY_COLLECTION_ID,
+    cycleStartedAt: "2026-09-04T08:00:00.000Z",
+    lastFailureClass:
+      automaticAttempts === 0 ? null : "enrichment_incomplete",
+    nextAttemptAt: "2026-09-04T08:02:00.000Z",
+    status: "scheduled",
+  });
+  return state;
+}
+
+function summaryBrain(
+  outcomes: readonly BrainOutcome[],
+  invocations: Array<{ prompt: string; sessionId: string | null }> = [],
+): BrainAdapter {
+  let index = 0;
+  return {
+    ...brainLifecycle(),
+    hostId: "codex",
+    invoke: async ({ prompt, sessionId }) => {
+      invocations.push({ prompt, sessionId });
+      const outcome = outcomes[index];
+      index += 1;
+      if (!outcome) throw new Error("unexpected summary brain invocation");
+      return outcome;
+    },
+  };
+}
+
+function summaryControlOutcome(input: {
+  readonly enrichmentAction: "generate_summary" | "none" | "reuse_summary";
+  readonly enrichmentCompleted: boolean;
+  readonly reply: string;
+  readonly summaryStatus: "hidden" | "pending" | "ready" | "unavailable";
+}): BrainOutcome {
+  return {
+    collectionReplyControl: {
+      collectionId: SUMMARY_COLLECTION_ID,
+      enrichmentAction: input.enrichmentAction,
+      enrichmentCompleted: input.enrichmentCompleted,
+      kind: "recovery",
+      summaryStatus: input.summaryStatus,
+    },
+    collectionReplySensitiveFragments: [],
+    ok: true,
+    reply: input.reply,
+    resumeFailed: false,
+    sessionId: "thread-1",
+    timedOut: false,
   };
 }
 
@@ -100,6 +168,311 @@ describe("channel subcommands", () => {
     expect(isBridgeHost("openclaw")).toBe(false);
     expect(isBridgeHost("workbuddy")).toBe(false);
     expect(isBridgeHost("nope")).toBe(false);
+  });
+
+  it("persists a due summary retry as running before a silent incomplete attempt", async () => {
+    const state = defaultChannelState();
+    state.token = "local-ilink-token";
+    state.attentionMcp.status = "ready";
+    state.runtimeState.phase = "healthy";
+    scheduleSummaryRetry(
+      state,
+      "11111111-1111-4111-8111-111111111111",
+      new Date("2026-09-04T08:00:00.000Z"),
+    );
+    const persisted: typeof state[] = [];
+    const brain = {
+      ...brainLifecycle(),
+      hostId: "codex" as const,
+      invoke: async () => ({
+        collectionReplyControl: {
+          collectionId: "11111111-1111-4111-8111-111111111111",
+          enrichmentAction: "generate_summary" as const,
+          enrichmentCompleted: false,
+          kind: "recovery" as const,
+          summaryStatus: "pending" as const,
+        },
+        collectionReplySensitiveFragments: [],
+        ok: true,
+        reply: "这次仍未补全摘要。",
+        resumeFailed: false,
+        sessionId: "thread-1",
+        timedOut: false,
+      }),
+    };
+
+    const result = await processDueSummaryRetry({
+      brain,
+      cwd: "/tmp/channel",
+      now: new Date("2026-09-04T08:02:00.000Z"),
+      persist: async () => {
+        persisted.push(structuredClone(state));
+      },
+      state,
+    });
+
+    expect(persisted[0]?.summaryRetries[0]?.status).toBe("running");
+    expect(result).toBe("scheduled");
+    expect(state.summaryRetries[0]).toMatchObject({
+      automaticAttempts: 1,
+      nextAttemptAt: "2026-09-04T08:12:00.000Z",
+      status: "scheduled",
+    });
+    expect(state.pendingOutbound).toEqual([]);
+    expect(state.brainSession?.sessionId).toBe("thread-1");
+    expect(state.history).toEqual([]);
+  });
+
+  it("cancels completed retry work without enqueueing a duplicate success reply", async () => {
+    const state = dueSummaryState();
+    const result = await processDueSummaryRetry({
+      brain: summaryBrain([
+        summaryControlOutcome({
+          enrichmentAction: "generate_summary",
+          enrichmentCompleted: true,
+          reply: "摘要已补全。",
+          summaryStatus: "pending",
+        }),
+      ]),
+      cwd: "/tmp/channel",
+      now: new Date("2026-09-04T08:02:00.000Z"),
+      persist: async () => undefined,
+      state,
+    });
+
+    expect(result).toBe("completed");
+    expect(state.summaryRetries).toEqual([]);
+    expect(state.pendingOutbound).toEqual([]);
+  });
+
+  it("defers an MCP dependency failure without consuming an attempt", async () => {
+    const state = dueSummaryState(1);
+    let recorded = false;
+    const result = await processDueSummaryRetry({
+      brain: summaryBrain([
+        {
+          attentionMcpFailure: {
+            errorCode: "mcp_server_unreachable",
+            retryable: true,
+          },
+          ok: false,
+          reply: "",
+          resumeFailed: false,
+          sessionId: "thread-1",
+          timedOut: false,
+        },
+      ]),
+      cwd: "/tmp/channel",
+      now: new Date("2026-09-04T08:02:00.000Z"),
+      onAttentionMcpFailure: async (failure) => {
+        expect(failure.errorCode).toBe("mcp_server_unreachable");
+        recorded = true;
+        state.attentionMcp.nextRetryAt = "2026-09-04T08:05:00.000Z";
+        state.attentionMcp.status = "unreachable";
+      },
+      persist: async () => undefined,
+      state,
+    });
+
+    expect(recorded).toBe(true);
+    expect(result).toBe("dependency_failure");
+    expect(state.summaryRetries[0]).toMatchObject({
+      automaticAttempts: 1,
+      nextAttemptAt: "2026-09-04T08:05:00.000Z",
+      status: "scheduled",
+    });
+  });
+
+  it("pauses after attempt three and composes one content-free notification in a disposable session", async () => {
+    const state = dueSummaryState(2);
+    state.brainSession = {
+      hostId: "codex",
+      sessionId: "conversation-1",
+      updatedAt: "2026-09-04T08:00:00.000Z",
+    };
+    const invocations: Array<{ prompt: string; sessionId: string | null }> = [];
+    const result = await processDueSummaryRetry({
+      brain: summaryBrain(
+        [
+          summaryControlOutcome({
+            enrichmentAction: "generate_summary",
+            enrichmentCompleted: false,
+            reply: "这次仍未补全摘要。",
+            summaryStatus: "pending",
+          }),
+          {
+            ok: true,
+            reply: "这轮自动重试还是没能补全摘要，已经暂停；需要时告诉我再重试。",
+            resumeFailed: false,
+            sessionId: "disposable-notice-thread",
+            timedOut: false,
+          },
+        ],
+        invocations,
+      ),
+      cwd: "/tmp/channel",
+      now: new Date("2026-09-04T08:02:00.000Z"),
+      persist: async () => undefined,
+      state,
+    });
+
+    expect(result).toBe("paused");
+    expect(state.summaryRetries[0]).toMatchObject({
+      automaticAttempts: 3,
+      nextAttemptAt: null,
+      status: "paused",
+    });
+    expect(invocations[0]).toMatchObject({ sessionId: "conversation-1" });
+    expect(invocations[0]?.prompt).toContain(SUMMARY_COLLECTION_ID);
+    expect(invocations[1]).toMatchObject({ sessionId: null });
+    expect(invocations[1]?.prompt).not.toContain(SUMMARY_COLLECTION_ID);
+    expect(invocations[1]?.prompt).toContain("不得调用任何工具");
+    expect(state.brainSession.sessionId).toBe("thread-1");
+    expect(state.brainSession.sessionId).not.toBe("disposable-notice-thread");
+    expect(state.pendingOutbound).toHaveLength(1);
+    expect(state.pendingOutbound[0]?.text).toBe(
+      "这轮自动重试还是没能补全摘要，已经暂停；需要时告诉我再重试。",
+    );
+    expect(state.pendingOutbound[0]?.id).not.toContain(SUMMARY_COLLECTION_ID);
+  });
+
+  it("uses a safe fallback when paused notice composition exposes content", async () => {
+    const state = dueSummaryState(2);
+    await processDueSummaryRetry({
+      brain: summaryBrain([
+        summaryControlOutcome({
+          enrichmentAction: "generate_summary",
+          enrichmentCompleted: false,
+          reply: "这次仍未补全摘要。",
+          summaryStatus: "pending",
+        }),
+        {
+          ok: true,
+          reply: "正文见 https://secret.example/raw",
+          resumeFailed: false,
+          sessionId: "disposable-notice-thread",
+          timedOut: false,
+        },
+      ]),
+      cwd: "/tmp/channel",
+      now: new Date("2026-09-04T08:02:00.000Z"),
+      persist: async () => undefined,
+      state,
+    });
+
+    expect(state.pendingOutbound[0]?.text).toBe(
+      "这轮自动重试仍未补全摘要，现已暂停；你可以随时再让我重试。",
+    );
+    expect(JSON.stringify(state.pendingOutbound)).not.toContain(
+      "https://secret.example/raw",
+    );
+  });
+
+  it("stops a terminal retry and sends one natural terminal notice", async () => {
+    const state = dueSummaryState(1);
+    const result = await processDueSummaryRetry({
+      brain: summaryBrain([
+        summaryControlOutcome({
+          enrichmentAction: "none",
+          enrichmentCompleted: false,
+          reply: "这项内容不可用。",
+          summaryStatus: "hidden",
+        }),
+        {
+          ok: true,
+          reply: "这项收藏现在不再符合摘要补全条件，自动重试已停止。",
+          resumeFailed: false,
+          sessionId: "disposable-notice-thread",
+          timedOut: false,
+        },
+      ]),
+      cwd: "/tmp/channel",
+      now: new Date("2026-09-04T08:02:00.000Z"),
+      persist: async () => undefined,
+      state,
+    });
+
+    expect(result).toBe("terminal");
+    expect(state.summaryRetries).toEqual([]);
+    expect(state.pendingOutbound[0]?.text).toContain("已停止");
+  });
+
+  it.each([
+    ["inbound", { pendingInbound: [{}] }],
+    ["outbound", { pendingOutbound: [{}] }],
+    ["mcp", { attentionMcp: { status: "unreachable" } }],
+    ["runtime", { runtimeState: { phase: "degraded_runtime" } }],
+    ["signed out", { token: null }],
+  ] as const)("does not run due retries while %s work blocks it", async (_label, patch) => {
+    const state = dueSummaryState();
+    Object.assign(state, patch);
+    let invoked = false;
+    const brain = summaryBrain([
+      summaryControlOutcome({
+        enrichmentAction: "generate_summary",
+        enrichmentCompleted: true,
+        reply: "摘要已补全。",
+        summaryStatus: "pending",
+      }),
+    ]);
+    const originalInvoke = brain.invoke.bind(brain);
+    brain.invoke = async (input) => {
+      invoked = true;
+      return await originalInvoke(input);
+    };
+    expect(
+      await processDueSummaryRetry({
+        brain,
+        cwd: "/tmp/channel",
+        now: new Date("2026-09-04T08:02:00.000Z"),
+        persist: async () => undefined,
+        state,
+      }),
+    ).toBe("idle");
+    expect(invoked).toBe(false);
+  });
+
+  it("runs a due summary retry from the idle service loop before long polling", async () => {
+    const base = await makeTempBase();
+    const state = dueSummaryState();
+    state.accountId = "local-account";
+    state.summaryRetries[0]!.nextAttemptAt = "2000-01-01T00:00:00.000Z";
+    await saveChannelState(state, base);
+    let invocations = 0;
+
+    expect(
+      await channelStart("codex", {
+        accountVerifier: async () => verifiedAccountProbe(),
+        baseDirectory: base,
+        brainFactory: () => ({
+          ...brainLifecycle(),
+          hostId: "codex",
+          invoke: async () => {
+            invocations += 1;
+            return summaryControlOutcome({
+              enrichmentAction: "generate_summary",
+              enrichmentCompleted: true,
+              reply: "摘要已补全。",
+              summaryStatus: "pending",
+            });
+          },
+        }),
+        bridgeHealthyMarker: async () => undefined,
+        bridgeUpdateChecker: async () => ({
+          status: "current",
+          version: ATTENTION_CLI_VERSION,
+        }),
+        fetchImpl: async () =>
+          new Response(JSON.stringify({ errcode: -14, ret: 0 })),
+        hostCliCheck: async () => true,
+        origin: "https://attention.example",
+        runtimeCredentialLoader: async () => false,
+        service: true,
+      }),
+    ).toBe(0);
+
+    expect(invocations).toBe(1);
+    expect((await loadChannelState(base)).summaryRetries).toEqual([]);
   });
 
   it("refuses to start the bridge for native-channel hosts", async () => {

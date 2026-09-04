@@ -6,6 +6,7 @@ import {
   AGENT_INSTALLATION_MANIFEST_SCHEMA_VERSION,
   ATTENTION_RESTRICTED_PROFILE_PUBLIC_PATH,
   ATTENTION_SKILL_DOCUMENT_SHA256,
+  ATTENTION_SKILL_PACKAGE_VERSION,
   ATTENTION_WORKBUDDY_SKILL_BUNDLE_PUBLIC_PATH,
   ATTENTION_WORKBUDDY_SKILL_BUNDLE_SHA256,
   AgentInstallationCatalogSchema,
@@ -20,6 +21,7 @@ import { CHANNEL_RUNTIME_SCOPES } from "./channel-runtime";
 
 describe("Agent installation manifests", () => {
   it("publishes a versioned infrastructure-only catalog for all v1 hosts", () => {
+    expect(ATTENTION_SKILL_PACKAGE_VERSION).toBe("1.9.0");
     expect(() =>
       AgentInstallationCatalogSchema.parse(agentInstallationCatalog),
     ).not.toThrow();

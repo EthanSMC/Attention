@@ -11,7 +11,7 @@
  * publishes only privacy-safe health/checkpoint metadata.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { resolve } from "node:path";
@@ -42,6 +42,7 @@ import {
 } from "./bridge-update-schedule";
 import { prepareChannelCodexHome } from "./codex-home";
 import type {
+  AttentionMcpFailure,
   AttentionMcpProbeResult,
 } from "./mcp-readiness";
 import {
@@ -75,6 +76,10 @@ import {
   PROCESSING_ACK_REPLY,
 } from "./limits";
 import { handleInboundMessage, matchControlCommand } from "./pipeline";
+import {
+  buildSummaryRetryNoticePrompt,
+  buildSummaryRetryPrompt,
+} from "./prompt";
 import {
   extractText,
   type InboundMessage,
@@ -112,6 +117,18 @@ import {
   saveChannelState,
   type ChannelState,
 } from "./state";
+import {
+  cancelSummaryRetry,
+  deferSummaryRetryAfterDependency,
+  markSummaryRetryRunning,
+  nextDueSummaryRetry,
+  settleSummaryRetryAttempt,
+} from "./summary-retry";
+import {
+  collectionControlResult,
+  safeCollectionReply,
+  type CollectionReplyControl,
+} from "./collection-reply-control";
 
 export const CHANNEL_BRIDGE_HOSTS = ["codex", "claude-code"] as const;
 export type ChannelBridgeHost = (typeof CHANNEL_BRIDGE_HOSTS)[number];
@@ -205,6 +222,179 @@ interface ReporterRetirement {
   readonly reporter: RuntimeReporter;
   statePersisted: boolean;
   stopped: boolean;
+}
+
+export type SummaryRetryProcessingResult =
+  | "completed"
+  | "dependency_failure"
+  | "idle"
+  | "paused"
+  | "scheduled"
+  | "terminal";
+
+export async function processDueSummaryRetry(input: {
+  readonly brain: BrainAdapter;
+  readonly cwd: string;
+  readonly now: Date;
+  readonly onAttentionMcpFailure?: (
+    failure: AttentionMcpFailure,
+  ) => Promise<void>;
+  readonly persist: () => Promise<void>;
+  readonly state: ChannelState;
+}): Promise<SummaryRetryProcessingResult> {
+  const { brain, now, state } = input;
+  if (
+    !state.token ||
+    state.pendingInbound.length > 0 ||
+    state.pendingOutbound.length > 0 ||
+    state.attentionMcp.status !== "ready" ||
+    state.runtimeState.phase !== "healthy"
+  ) {
+    return "idle";
+  }
+  const due = nextDueSummaryRetry(state, now);
+  if (!due) return "idle";
+  const running = markSummaryRetryRunning(state, due.collectionId);
+  if (!running) return "idle";
+  await input.persist();
+
+  const attempt = Math.min(3, running.automaticAttempts + 1) as 1 | 2 | 3;
+  const retryRef = `summary-retry-${createHash("sha256")
+    .update(`${running.collectionId}:${running.cycleStartedAt}:${attempt}`)
+    .digest("hex")
+    .slice(0, 48)}`;
+  const outcome = await brain.invoke({
+    cwd: input.cwd,
+    prompt: buildSummaryRetryPrompt({
+      automaticAttempt: attempt,
+      collectionId: running.collectionId,
+      retryRef,
+    }),
+    sessionId:
+      state.brainSession?.hostId === brain.hostId
+        ? state.brainSession.sessionId
+        : null,
+  });
+  if (outcome.sessionId && !outcome.resumeFailed) {
+    state.brainSession = {
+      bridgeVersion: ATTENTION_CLI_VERSION,
+      hostId: brain.hostId,
+      permissionProfileSha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+      sessionId: outcome.sessionId,
+      updatedAt: now.toISOString(),
+    };
+  }
+  syncRuntimeCheckpoint(state, brain);
+
+  const control = outcome.collectionReplyControl;
+  if (
+    outcome.attentionMcpFailure ||
+    !outcome.ok ||
+    !control ||
+    control.kind === "fixed" ||
+    control.collectionId !== running.collectionId
+  ) {
+    if (outcome.attentionMcpFailure && input.onAttentionMcpFailure) {
+      await input.onAttentionMcpFailure(outcome.attentionMcpFailure);
+    }
+    const dependencyRetryAt = [
+      state.attentionMcp.nextRetryAt,
+      state.runtimeState.nextRetryAt,
+    ].reduce(
+      (latest, value) => {
+        const parsed = value ? Date.parse(value) : Number.NaN;
+        return Number.isFinite(parsed) && parsed > latest ? parsed : latest;
+      },
+      now.getTime() + 60_000,
+    );
+    deferSummaryRetryAfterDependency(
+      state,
+      running.collectionId,
+      new Date(dependencyRetryAt),
+    );
+    await input.persist();
+    return "dependency_failure";
+  }
+
+  const result = collectionControlResult(control);
+  if (result === "retryable_incomplete") {
+    const settled = settleSummaryRetryAttempt(
+      state,
+      running.collectionId,
+      "incomplete",
+      now,
+    );
+    if (settled === "paused") {
+      await enqueueSummaryRetryNotice({
+        brain,
+        control,
+        cwd: input.cwd,
+        cycleStartedAt: running.cycleStartedAt,
+        phase: "paused",
+        state,
+      });
+    }
+    await input.persist();
+    return settled === "cancelled" ? "completed" : settled;
+  }
+  cancelSummaryRetry(state, running.collectionId);
+  if (result === "terminal") {
+    await enqueueSummaryRetryNotice({
+      brain,
+      control,
+      cwd: input.cwd,
+      cycleStartedAt: running.cycleStartedAt,
+      phase: "terminal",
+      state,
+    });
+  }
+  await input.persist();
+  return result === "completed" || result === "ready"
+    ? "completed"
+    : "terminal";
+}
+
+async function enqueueSummaryRetryNotice(input: {
+  readonly brain: BrainAdapter;
+  readonly control: Exclude<CollectionReplyControl, { readonly kind: "fixed" }>;
+  readonly cwd: string;
+  readonly cycleStartedAt: string;
+  readonly phase: "paused" | "terminal";
+  readonly state: ChannelState;
+}): Promise<void> {
+  const notice = await input.brain.invoke({
+    cwd: input.cwd,
+    prompt: buildSummaryRetryNoticePrompt({ phase: input.phase }),
+    sessionId: null,
+  });
+  syncRuntimeCheckpoint(input.state, input.brain);
+  const candidate =
+    notice.ok &&
+    !notice.attentionMcpFailure &&
+    !notice.collectionReplyControl
+      ? notice.reply
+      : "";
+  const checked = safeCollectionReply(input.control, candidate, {
+    phase: input.phase,
+    sensitiveFragments: [],
+  });
+  const toUserId = input.state.ownerUserId;
+  const contextToken = toUserId
+    ? input.state.contextTokens[toUserId]
+    : undefined;
+  if (!toUserId || !contextToken) return;
+  const identifier = createHash("sha256")
+    .update(
+      `${input.phase}:${input.control.collectionId}:${input.cycleStartedAt}`,
+    )
+    .digest("hex")
+    .slice(0, 32);
+  enqueueOutbound(input.state, {
+    contextToken,
+    id: `summary-retry-${input.phase}-${identifier}`,
+    text: checked.text,
+    toUserId,
+  });
 }
 
 const HOST_EXECUTABLES: Record<ChannelBridgeHost, string> = {
@@ -928,6 +1118,26 @@ export async function channelStart(
           reporterSlot.current,
         );
         if (!client.token) continue;
+        const summaryRetryResult = await processDueSummaryRetry({
+          brain: activeBrain,
+          cwd,
+          now: new Date(),
+          onAttentionMcpFailure: async (failure) => {
+            await activeMcpSupervisor.recordProbe({
+              ...failure,
+              ok: false,
+            });
+          },
+          persist,
+          state: runtime.state,
+        });
+        if (summaryRetryResult !== "idle") {
+          reporterSlot.current?.reporter.transition(
+            buildReporterSnapshot(runtime, activeBrain),
+          );
+          await flushPendingOutbound(runtime, persist);
+          if (!client.token) continue;
+        }
         if (await maybeStageBridgeUpdate()) {
           return BRIDGE_UPDATE_RESTART_EXIT_CODE;
         }

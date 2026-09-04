@@ -34,14 +34,25 @@ import {
   type ChannelState,
   rememberProcessedMessage,
 } from "./state";
-import { safeCollectionReply } from "./collection-reply-control";
+import {
+  collectionControlResult,
+  safeCollectionReply,
+  type CollectionReplyRejectionReason,
+} from "./collection-reply-control";
 import type { AttentionMcpFailure } from "./mcp-readiness";
+import {
+  cancelSummaryRetry,
+  scheduleSummaryRetry,
+  summaryRetryContext,
+} from "./summary-retry";
 
 export interface PipelineInput {
   readonly brain: BrainAdapter;
   /** Working directory for brain subprocesses (the channel state dir). */
   readonly cwd: string;
   readonly message: InboundMessage;
+  /** Injectable wall clock for deterministic durable retry scheduling. */
+  readonly now?: () => Date;
   /** Ephemeral server pairing code; never persisted or replayed. */
   readonly pairingCode?: string | null;
   readonly state: ChannelState;
@@ -63,6 +74,8 @@ export interface PipelineOutput {
   readonly controlCommand?: ControlCommand;
   /** Structured Attention MCP failure that kept this message pending. */
   readonly attentionMcpFailure?: AttentionMcpFailure;
+  /** Stable rejection code only; rejected Agent prose is never returned. */
+  readonly collectionReplyRejectionReason?: CollectionReplyRejectionReason;
 }
 
 export type ControlCommand =
@@ -214,7 +227,8 @@ export async function handleInboundMessage(
   state.runtimeState.activeTurnMessageRef = messageRef;
   const outcome = await invokeWithFallback(input, text, messageRef);
 
-  state.lastActivityAt = new Date().toISOString();
+  const completedAt = input.now?.() ?? new Date();
+  state.lastActivityAt = completedAt.toISOString();
   if (outcome.attentionMcpFailure) {
     return {
       attentionMcpFailure: outcome.attentionMcpFailure,
@@ -242,13 +256,54 @@ export async function handleInboundMessage(
       ? previousActiveTurnMessageRef
       : null;
   state.runtimeState.lastSuccessfulMessageAt = state.lastActivityAt;
-  const safeReply = outcome.collectionReplyControl
-    ? safeCollectionReply(outcome.collectionReplyControl)
-    : outcome.reply.trim();
+  let collectionReplyRejectionReason:
+    | CollectionReplyRejectionReason
+    | undefined;
+  let safeReply = outcome.reply.trim();
+  if (outcome.collectionReplyControl) {
+    const result = collectionControlResult(outcome.collectionReplyControl);
+    let retryQueueFull = false;
+    if (outcome.collectionReplyControl.kind !== "fixed") {
+      if (result === "retryable_incomplete") {
+        retryQueueFull =
+          scheduleSummaryRetry(
+            state,
+            outcome.collectionReplyControl.collectionId,
+            completedAt,
+          ) === "full";
+      } else {
+        cancelSummaryRetry(
+          state,
+          outcome.collectionReplyControl.collectionId,
+        );
+      }
+    }
+    const checked = safeCollectionReply(
+      outcome.collectionReplyControl,
+      outcome.reply,
+      {
+        phase:
+          retryQueueFull
+            ? "queue_full"
+            : result === "retryable_incomplete"
+            ? "initial_incomplete"
+            : "ordinary",
+        sensitiveFragments:
+          outcome.collectionReplySensitiveFragments ?? [],
+      },
+    );
+    safeReply = checked.text;
+    if (checked.reason) {
+      collectionReplyRejectionReason = checked.reason;
+    }
+  }
   appendHistory(state, text, safeReply);
   rememberProcessedMessage(state, messageId);
   return {
     completed: true,
+    ...(collectionReplyRejectionReason
+      ? { collectionReplyRejectionReason }
+      : {}),
     processed: true,
     replies: splitReply(safeReply),
   };
@@ -294,6 +349,7 @@ function buildControlReply(
       return RESET_CONFIRMATION_REPLY;
     case "status": {
       const runtime = state.runtimeState;
+      const retries = summaryRetryContext(state);
       const wechat = state.token ? "已登录" : "未登录";
       const lastSuccess = runtime.lastSuccessfulMessageAt ?? "无";
       const runtimeRetry = runtime.nextRetryAt
@@ -317,6 +373,8 @@ function buildControlReply(
         `Reporter：${reporterEnabled ? "已启用" : "未启用"}`,
         `最近成功处理：${lastSuccess}`,
         `队列：${state.pendingInbound.length} 条待处理，${state.pendingOutbound.length} 条待发送`,
+        `摘要重试：${retries.active} 项活动（${retries.running} 项运行），${retries.paused} 项暂停` +
+          `${retries.nextAttemptAt ? `；最近计划：${retries.nextAttemptAt}` : ""}`,
       ].join("\n");
     }
   }
@@ -343,7 +401,11 @@ async function invokeWithFallback(
 
   if (storedSession) {
     const resumed = await invoke({
-      prompt: buildFollowUpPrompt({ messageRef, userMessage: text }),
+      prompt: buildFollowUpPrompt({
+        messageRef,
+        retryContext: summaryRetryContext(state),
+        userMessage: text,
+      }),
       sessionId: storedSession,
     });
     if (!resumed.resumeFailed) {
@@ -356,10 +418,15 @@ async function invokeWithFallback(
 
   const prompt =
     state.history.length === 0
-      ? buildFirstTurnPrompt({ messageRef, userMessage: text })
+      ? buildFirstTurnPrompt({
+          messageRef,
+          retryContext: summaryRetryContext(state),
+          userMessage: text,
+        })
       : buildReplayPrompt({
           history: state.history,
           messageRef,
+          retryContext: summaryRetryContext(state),
           userMessage: text,
         });
   const fresh = await invoke({ prompt, sessionId: null });

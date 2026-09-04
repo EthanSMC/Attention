@@ -262,10 +262,10 @@ describe("Skill staging and apply", () => {
   it.each([
     {
       document: validSkillDocument.replace(
-        "Skill version: `1.8.0`",
+        "Skill version: `1.9.0`",
         "Skill version: `1.2.0`",
       ),
-      expectedError: /Skill version mismatch.*expected 1\.8\.0.*received 1\.2\.0/i,
+      expectedError: /Skill version mismatch.*expected 1\.9\.0.*received 1\.2\.0/i,
       name: "Skill package version",
     },
     {

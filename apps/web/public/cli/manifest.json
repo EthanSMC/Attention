@@ -1,9 +1,9 @@
 {
-  "artifact_path": "/cli/attention-0.3.14.mjs",
+  "artifact_path": "/cli/attention-0.3.15.mjs",
   "minimum_supported_version": "0.3.5",
   "node": ">=22.16.0",
   "permission_profile_sha256": "008145538ba70eaef4d66a6e99c588dd0cae2087dba8de85202e21f2eb738230",
   "schema_version": 2,
-  "sha256": "131eeb8e831b6b649db8c28188b90e5a0b6d2bea70195f2a522fadc766e2c936",
-  "version": "0.3.14"
+  "sha256": "59287be9635e184be2c94cb983be89a5f10c5071be29842e9a7e99e4b74271e4",
+  "version": "0.3.15"
 }

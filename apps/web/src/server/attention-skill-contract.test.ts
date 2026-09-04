@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 
+import { ATTENTION_SKILL_PACKAGE_VERSION } from "@attention/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -45,7 +46,9 @@ describe("public Attention Skill contract", () => {
 
     expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe("1.6.0");
     expect(skill).toContain("Skill ID: `attention`");
-    expect(skill).toContain("Skill version: `1.8.0`");
+    expect(skill).toContain(
+      `Skill version: \`${ATTENTION_SKILL_PACKAGE_VERSION}\``,
+    );
     expect(skill).toContain(
       `Tool contract version: \`${ATTENTION_TOOL_CONTRACT_VERSION}\``,
     );

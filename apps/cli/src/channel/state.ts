@@ -88,6 +88,15 @@ export interface PendingOutboundMessage {
   readonly toUserId: string;
 }
 
+export interface SummaryRetryJob {
+  automaticAttempts: 0 | 1 | 2 | 3;
+  readonly collectionId: string;
+  readonly cycleStartedAt: string;
+  lastFailureClass: "enrichment_incomplete" | null;
+  nextAttemptAt: string | null;
+  status: "scheduled" | "running" | "paused";
+}
+
 export interface ChannelState {
   accountVerification: AccountVerificationCheckpoint | null;
   attentionMcp: AttentionMcpCheckpoint;
@@ -103,6 +112,7 @@ export interface ChannelState {
   lastActivityAt: string | null;
   pendingInbound: PendingInboundMessage[];
   pendingOutbound: PendingOutboundMessage[];
+  summaryRetries: SummaryRetryJob[];
   summaryNotificationCursor: string | null;
   runtimeReporter: RuntimeReporterLocalState;
   runtimeState: RuntimeCheckpoint;
@@ -135,6 +145,7 @@ export function defaultChannelState(): ChannelState {
     pendingInbound: [],
     pendingOutbound: [],
     processedMessageIds: [],
+    summaryRetries: [],
     summaryNotificationCursor: null,
     runtimeReporter: {
       bindingId: null,
@@ -242,6 +253,7 @@ function normalizeState(raw: unknown): ChannelState {
             typeof (item as PendingOutboundMessage).toUserId === "string",
         )
       : [],
+    summaryRetries: normalizeSummaryRetries(record.summaryRetries),
     summaryNotificationCursor:
       ChannelSummaryNotificationCursorSchema.safeParse(
         record.summaryNotificationCursor,
@@ -487,6 +499,72 @@ function nullableIsoTimestamp(value: unknown): string | null {
   }
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? value : null;
+}
+
+const SUMMARY_RETRY_KEYS = new Set([
+  "automaticAttempts",
+  "collectionId",
+  "cycleStartedAt",
+  "lastFailureClass",
+  "nextAttemptAt",
+  "status",
+]);
+
+function normalizeSummaryRetries(value: unknown): SummaryRetryJob[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const normalized: SummaryRetryJob[] = [];
+  for (const item of value) {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+    const record = item as Record<string, unknown>;
+    if (
+      Object.keys(record).length !== SUMMARY_RETRY_KEYS.size ||
+      Object.keys(record).some((key) => !SUMMARY_RETRY_KEYS.has(key))
+    ) {
+      continue;
+    }
+    const collectionId =
+      typeof record.collectionId === "string" &&
+      UUID_PATTERN.test(record.collectionId)
+        ? record.collectionId.toLowerCase()
+        : null;
+    const cycleStartedAt = nullableIsoTimestamp(record.cycleStartedAt);
+    const nextAttemptAt = nullableIsoTimestamp(record.nextAttemptAt);
+    const automaticAttempts = record.automaticAttempts;
+    const persistedStatus = record.status;
+    if (
+      !collectionId ||
+      !cycleStartedAt ||
+      seen.has(collectionId) ||
+      typeof automaticAttempts !== "number" ||
+      !Number.isInteger(automaticAttempts) ||
+      automaticAttempts < 0 ||
+      automaticAttempts > 3 ||
+      (record.lastFailureClass !== null &&
+        record.lastFailureClass !== "enrichment_incomplete") ||
+      (persistedStatus !== "scheduled" &&
+        persistedStatus !== "running" &&
+        persistedStatus !== "paused") ||
+      (persistedStatus === "paused"
+        ? nextAttemptAt !== null || automaticAttempts !== 3
+        : nextAttemptAt === null || automaticAttempts >= 3)
+    ) {
+      continue;
+    }
+    seen.add(collectionId);
+    normalized.push({
+      automaticAttempts: automaticAttempts as 0 | 1 | 2 | 3,
+      collectionId,
+      cycleStartedAt,
+      lastFailureClass: record.lastFailureClass,
+      nextAttemptAt,
+      status: persistedStatus === "running" ? "scheduled" : persistedStatus,
+    });
+    if (normalized.length >= 32) break;
+  }
+  return normalized;
 }
 
 function normalizeBaseUrl(value: unknown): string {

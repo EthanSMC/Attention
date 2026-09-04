@@ -19,6 +19,7 @@ import { CHANNEL_HOST_SYSTEM_POLICY } from "../prompt";
 import { ATTENTION_CHANNEL_MCP_TOOL_NAMES } from "./codex";
 import {
   applyAttentionToolResult,
+  attentionResultSensitiveFragments,
   mcpResultPayload,
   type CollectionReplyControl,
 } from "../collection-reply-control";
@@ -59,6 +60,7 @@ interface ActiveTurn {
   attentionMcpFailure: AttentionMcpFailure | null;
   attentionMcpProbe: AttentionMcpProbeResult | null;
   collectionReplyControl: CollectionReplyControl | null;
+  readonly collectionReplySensitiveFragments: string[];
   readonly pendingToolNames: Map<string, string>;
   reply: string;
   readonly requestedSessionId: string | null;
@@ -147,6 +149,14 @@ function observeClaudeAttentionTools(
       continue;
     }
     const payload = mcpResultPayload(block.content);
+    for (const fragment of attentionResultSensitiveFragments(payload)) {
+      if (
+        pending.collectionReplySensitiveFragments.length < 64 &&
+        !pending.collectionReplySensitiveFragments.includes(fragment)
+      ) {
+        pending.collectionReplySensitiveFragments.push(fragment);
+      }
+    }
     pending.collectionReplyControl = applyAttentionToolResult(
       pending.collectionReplyControl,
       toolName,
@@ -342,6 +352,12 @@ export function createClaudeResidentBrain(
       ...(pending.collectionReplyControl
         ? { collectionReplyControl: pending.collectionReplyControl }
         : {}),
+      ...(pending.collectionReplySensitiveFragments.length > 0
+        ? {
+            collectionReplySensitiveFragments:
+              pending.collectionReplySensitiveFragments,
+          }
+        : {}),
       resumeFailed: false,
       sessionId: resolvedSessionId,
       timedOut: false,
@@ -509,6 +525,7 @@ export function createClaudeResidentBrain(
         attentionMcpFailure: null,
         attentionMcpProbe: null,
         collectionReplyControl: null,
+        collectionReplySensitiveFragments: [],
         pendingToolNames: new Map(),
         reply: "",
         requestedSessionId: input.sessionId,

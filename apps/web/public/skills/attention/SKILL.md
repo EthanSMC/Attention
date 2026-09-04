@@ -9,7 +9,7 @@ Use the configured `attention` MCP server for cloud data. Never ask the user to 
 
 Skill ID: `attention`
 
-Skill version: `1.8.0`
+Skill version: `1.9.0`
 
 Tool contract version: `1.6.0`
 
@@ -21,7 +21,7 @@ Machine-readable capability manifest: `/skills/attention/capabilities/v1/index.j
 
 ## Call context
 
-For every tool call, include `client_context` with `skill_id: "attention"`, `skill_version: "1.8.0"`, and one opaque `workflow_run_id` reused across that user workflow. Use only letters, numbers, `.`, `_`, `:`, or `-`; never put user text, a URL, a query, or a credential in these fields.
+For every tool call, include `client_context` with `skill_id: "attention"`, `skill_version: "1.9.0"`, and one opaque `workflow_run_id` reused across that user workflow. Use only letters, numbers, `.`, `_`, `:`, or `-`; never put user text, a URL, a query, or a credential in these fields.
 
 ## Collect
 
@@ -53,6 +53,8 @@ For every tool call, include `client_context` with `skill_id: "attention"`, `ski
 ## Designated collection channels
 
 A host runtime may declare a conversation as a designated collection channel — for example, the local Attention channel bridge started with `attention channel start <host>`, or a host-managed WeChat assistant whose owner configured it for collection. Inside such a declared conversation only, every link or platform share text the user sends is itself an explicit save request: call `attention_collect_content` directly without asking for confirmation, and keep replying conversation by conversation so follow-up turns (candidate selection, questions about saved items) stay in context. This exception never applies to ordinary interactive sessions: outside a declared collection channel, rule 1 of Collect still governs. The runtime provides the per-message reference used to derive a stable `idempotency_key`; reuse it for retries of the same message.
+
+When the local Attention Bridge observes an established collection that still requires `generate_summary`, it may persist a content-free local retry job keyed only by the owned collection ID. `summary_status=pending` alone never means a server background job is running. The Bridge reports the first incomplete result immediately, retries locally after about 2, 10, and 30 minutes while the local Bridge and host are available, keeps the first two automatic failures silent, uses the existing summary-ready notification on success, and reports a paused state after the third automatic failure. A user-requested retry runs immediately and does not consume or postpone an already scheduled automatic attempt. MCP authorization, MCP reachability, host Runtime, iLink, and upstream page-read failures remain distinct; never claim that one repaired another.
 
 ## Optional device status sync
 

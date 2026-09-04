@@ -61,7 +61,7 @@ function validInput() {
     entrypoint: "hosted_mcp" as const,
     outcome: "tool_error" as const,
     reportedSkillId: "attention" as const,
-    reportedSkillVersion: "1.0.0" as const,
+    reportedSkillVersion: "1.9.0" as const,
     reportedWorkflowId: "att_pat_private-token",
     requestId: "00000000-0000-4000-8000-000000000006",
     resultStatus: "resolution_pending",
@@ -111,7 +111,7 @@ describe("Attention tool audit", () => {
         attempt_id: attemptId,
         client_id: "att_codex_client",
         client_reported_skill_id: "attention",
-        client_reported_skill_version: "1.0.0",
+        client_reported_skill_version: "1.9.0",
         client_reported_workflow_fingerprint:
           expect.stringMatching(/^(?:hmac-)?sha256:[a-f0-9]{64}$/u),
         collection_id: collectionId,
