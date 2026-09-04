@@ -9,6 +9,8 @@
 
 import { createHash } from "node:crypto";
 
+import { ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256 } from "../bridge-update-contract";
+import { ATTENTION_CLI_VERSION } from "../version";
 import type { BrainAdapter, BrainOutcome } from "./brain";
 import {
   BRAIN_FAILURE_REPLY,
@@ -28,6 +30,7 @@ import {
 } from "./prompt";
 import {
   appendHistory,
+  type BrainSession,
   type ChannelState,
   rememberProcessedMessage,
 } from "./state";
@@ -328,10 +331,15 @@ async function invokeWithFallback(
   const invoke =
     input.invokeBrain ??
     ((brainInput) => brain.invoke({ ...brainInput, cwd: input.cwd }));
-  const storedSession =
-    state.brainSession?.hostId === brain.hostId
-      ? state.brainSession.sessionId
-      : null;
+  const storedSession = sessionMatchesCurrentRelease(
+    state.brainSession,
+    brain.hostId,
+  )
+    ? state.brainSession.sessionId
+    : null;
+  if (state.brainSession && !storedSession) {
+    state.brainSession = null;
+  }
 
   if (storedSession) {
     const resumed = await invoke({
@@ -368,10 +376,27 @@ function recordSession(
 ): void {
   if (!sessionId) return;
   state.brainSession = {
+    bridgeVersion: ATTENTION_CLI_VERSION,
     hostId,
+    permissionProfileSha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
     sessionId,
     updatedAt: new Date().toISOString(),
   };
+}
+
+function sessionMatchesCurrentRelease(
+  session: BrainSession | null,
+  hostId: BrainAdapter["hostId"],
+): session is BrainSession & {
+  readonly bridgeVersion: string;
+  readonly permissionProfileSha256: string;
+} {
+  return (
+    session?.hostId === hostId &&
+    session.bridgeVersion === ATTENTION_CLI_VERSION &&
+    session.permissionProfileSha256 ===
+      ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256
+  );
 }
 
 /** Splits long replies at sentence/line boundaries for WeChat delivery. */

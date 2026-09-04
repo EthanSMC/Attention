@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256 } from "../bridge-update-contract";
+import { ATTENTION_CLI_VERSION } from "../version";
 import type { BrainAdapter, BrainOutcome } from "./brain";
 import { NON_TEXT_REPLY, RESET_REPLY } from "./limits";
 import {
@@ -9,6 +11,17 @@ import {
   splitReply,
 } from "./pipeline";
 import { defaultChannelState } from "./state";
+
+const currentBrainSession = (
+  hostId: BrainAdapter["hostId"],
+  sessionId: string,
+) => ({
+  bridgeVersion: ATTENTION_CLI_VERSION,
+  hostId,
+  permissionProfileSha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+  sessionId,
+  updatedAt: "2026-09-04T00:00:00.000Z",
+});
 
 const textMessage = (
   text: string,
@@ -117,11 +130,7 @@ describe("handleInboundMessage", () => {
         { content: "share with two links", role: "user" },
         { content: "请选择 1 或 2", role: "assistant" },
       ];
-      state.brainSession = {
-        hostId,
-        sessionId: "selected-session",
-        updatedAt: "now",
-      };
+      state.brainSession = currentBrainSession(hostId, "selected-session");
       const output = await handleInboundMessage({
         brain: fakeBrain(hostId),
         cwd: "/tmp",
@@ -477,11 +486,7 @@ describe("handleInboundMessage", () => {
 
   it("reasserts the no-confirm collection contract when continuing an existing host session", async () => {
     const state = defaultChannelState();
-    state.brainSession = {
-      hostId: "claude-code",
-      sessionId: "session-9",
-      updatedAt: "now",
-    };
+    state.brainSession = currentBrainSession("claude-code", "session-9");
     state.history = [
       { content: "q", role: "user" },
       { content: "a", role: "assistant" },
@@ -506,11 +511,7 @@ describe("handleInboundMessage", () => {
 
   it("falls back to transcript replay when resume fails", async () => {
     const state = defaultChannelState();
-    state.brainSession = {
-      hostId: "claude-code",
-      sessionId: "stale",
-      updatedAt: "now",
-    };
+    state.brainSession = currentBrainSession("claude-code", "stale");
     state.history = [
       { content: "q", role: "user" },
       { content: "a", role: "assistant" },
@@ -544,11 +545,7 @@ describe("handleInboundMessage", () => {
 
   it("keeps the stored session when the host reports none", async () => {
     const state = defaultChannelState();
-    state.brainSession = {
-      hostId: "codex",
-      sessionId: "session-5",
-      updatedAt: "now",
-    };
+    state.brainSession = currentBrainSession("codex", "session-5");
     await handleInboundMessage({
       brain: fakeBrain("codex"),
       cwd: "/tmp",
@@ -564,6 +561,54 @@ describe("handleInboundMessage", () => {
     });
     expect(state.brainSession?.sessionId).toBe("session-5");
   });
+
+  it.each([
+    ["legacy", undefined, undefined],
+    [
+      "old bridge version",
+      "0.3.12",
+      ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+    ],
+    ["changed permission profile", ATTENTION_CLI_VERSION, "b".repeat(64)],
+  ])(
+    "rebuilds a %s session from preserved text history",
+    async (_label, bridgeVersion, permissionProfileSha256) => {
+      const state = defaultChannelState();
+      state.brainSession = {
+        ...(bridgeVersion ? { bridgeVersion } : {}),
+        hostId: "codex",
+        ...(permissionProfileSha256 ? { permissionProfileSha256 } : {}),
+        sessionId: "stale-session",
+        updatedAt: "2026-09-03T00:00:00.000Z",
+      };
+      state.history = [
+        { content: "old question", role: "user" },
+        { content: "old answer", role: "assistant" },
+      ];
+      const invocations: Array<{ prompt: string; sessionId: string | null }> = [];
+
+      await handleInboundMessage({
+        brain: fakeBrain("codex"),
+        cwd: "/tmp",
+        invokeBrain: async (input) => {
+          invocations.push(input);
+          return okOutcome("rebuilt", "fresh-session");
+        },
+        message: textMessage("continue"),
+        state,
+      });
+
+      expect(invocations).toHaveLength(1);
+      expect(invocations[0]?.sessionId).toBeNull();
+      expect(invocations[0]?.prompt).toContain("old question");
+      expect(state.brainSession).toMatchObject({
+        bridgeVersion: ATTENTION_CLI_VERSION,
+        hostId: "codex",
+        permissionProfileSha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+        sessionId: "fresh-session",
+      });
+    },
+  );
 
   it("answers with a failure reply when the brain errors", async () => {
     const state = defaultChannelState();

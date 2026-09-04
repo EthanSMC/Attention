@@ -31,7 +31,9 @@ export interface HistoryEntry {
 }
 
 export interface BrainSession {
+  readonly bridgeVersion?: string;
   readonly hostId: "codex" | "claude-code";
+  readonly permissionProfileSha256?: string;
   readonly sessionId: string;
   readonly updatedAt: string;
 }
@@ -164,14 +166,7 @@ function normalizeState(raw: unknown): ChannelState {
     accountId: typeof record.accountId === "string" ? record.accountId : "",
     attentionMcp: normalizeAttentionMcpCheckpoint(record.attentionMcp),
     baseUrl: normalizeBaseUrl(record.baseUrl),
-    brainSession:
-      record.brainSession !== null &&
-      typeof record.brainSession === "object" &&
-      typeof (record.brainSession as BrainSession).sessionId === "string" &&
-      ((record.brainSession as BrainSession).hostId === "codex" ||
-        (record.brainSession as BrainSession).hostId === "claude-code")
-        ? (record.brainSession as BrainSession)
-        : null,
+    brainSession: normalizeBrainSession(record.brainSession),
     contextTokens:
       record.contextTokens !== null && typeof record.contextTokens === "object"
         ? Object.fromEntries(
@@ -257,6 +252,52 @@ function normalizeState(raw: unknown): ChannelState {
     token: typeof record.token === "string" && record.token
       ? record.token
       : null,
+  };
+}
+
+const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+
+function normalizeBrainSession(raw: unknown): BrainSession | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const updatedAt = nullableIsoTimestamp(record.updatedAt);
+  if (
+    (record.hostId !== "codex" && record.hostId !== "claude-code") ||
+    typeof record.sessionId !== "string" ||
+    !record.sessionId ||
+    !updatedAt
+  ) {
+    return null;
+  }
+
+  const hasBridgeVersion = record.bridgeVersion !== undefined;
+  const hasPermissionProfile = record.permissionProfileSha256 !== undefined;
+  if (!hasBridgeVersion && !hasPermissionProfile) {
+    return {
+      hostId: record.hostId,
+      sessionId: record.sessionId,
+      updatedAt,
+    };
+  }
+  if (
+    typeof record.bridgeVersion !== "string" ||
+    !SEMVER_PATTERN.test(record.bridgeVersion) ||
+    typeof record.permissionProfileSha256 !== "string" ||
+    !SHA256_PATTERN.test(record.permissionProfileSha256)
+  ) {
+    return {
+      hostId: record.hostId,
+      sessionId: record.sessionId,
+      updatedAt,
+    };
+  }
+  return {
+    bridgeVersion: record.bridgeVersion,
+    hostId: record.hostId,
+    permissionProfileSha256: record.permissionProfileSha256,
+    sessionId: record.sessionId,
+    updatedAt,
   };
 }
 

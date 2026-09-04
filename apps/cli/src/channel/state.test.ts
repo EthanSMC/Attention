@@ -245,7 +245,9 @@ describe("channel state persistence", () => {
     state.contextTokens = { owner: "ctx" };
     state.ownerUserId = "owner";
     state.brainSession = {
+      bridgeVersion: "0.3.13",
       hostId: "claude-code",
+      permissionProfileSha256: "a".repeat(64),
       sessionId: "session-1",
       updatedAt: "2026-08-08T00:00:00.000Z",
     };
@@ -262,6 +264,44 @@ describe("channel state persistence", () => {
 
     const loaded = await loadChannelState(base);
     expect(loaded).toEqual(state);
+  });
+
+  it("keeps a legacy brain session readable without inventing release identity", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState();
+    state.brainSession = {
+      hostId: "codex",
+      sessionId: "legacy-session",
+      updatedAt: "2026-08-08T00:00:00.000Z",
+    };
+
+    await saveChannelState(state, base);
+
+    expect((await loadChannelState(base)).brainSession).toEqual(
+      state.brainSession,
+    );
+  });
+
+  it("keeps malformed release identity only as an untrusted legacy session", async () => {
+    const base = await makeTempBase();
+    await saveChannelState(defaultChannelState(), base);
+    const raw = JSON.parse(
+      await readFile(channelStatePath(base), "utf8"),
+    ) as Record<string, unknown>;
+    raw.brainSession = {
+      bridgeVersion: "latest",
+      hostId: "codex",
+      permissionProfileSha256: "Bearer secret",
+      sessionId: "session-1",
+      updatedAt: "2026-08-08T00:00:00.000Z",
+    };
+    await writeFile(channelStatePath(base), JSON.stringify(raw), "utf8");
+
+    expect((await loadChannelState(base)).brainSession).toEqual({
+      hostId: "codex",
+      sessionId: "session-1",
+      updatedAt: "2026-08-08T00:00:00.000Z",
+    });
   });
 
   it("drops malformed summary notification cursors", async () => {
