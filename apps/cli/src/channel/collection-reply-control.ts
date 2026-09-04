@@ -349,7 +349,7 @@ function rejectionReason(
   if (UUID_IN_TEXT_PATTERN.test(candidate)) return "reply_contains_uuid";
   if (/```/u.test(candidate)) return "reply_contains_code_block";
   if (
-    /mcp__|attention_[a-z0-9_]+|(?:^|\n)\s*[\[{]|["']?(?:tool|tool_name)["']?\s*[:=]/iu.test(
+    /mcp__|attention_[a-z0-9_]+|(?:^|\n)\s*(?:\[|\{)|["']?(?:tool|tool_name)["']?\s*[:=]/iu.test(
       candidate,
     )
   ) {
