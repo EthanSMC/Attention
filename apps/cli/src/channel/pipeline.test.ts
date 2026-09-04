@@ -556,6 +556,41 @@ describe("handleInboundMessage", () => {
     expect(reply).toContain("Reporter：未启用");
   });
 
+  it("reports local summary retry counts and the nearest planned attempt", async () => {
+    const state = defaultChannelState();
+    state.summaryRetries = [
+      {
+        automaticAttempts: 1,
+        collectionId: "11111111-1111-4111-8111-111111111111",
+        cycleStartedAt: "2026-09-04T08:00:00.000Z",
+        lastFailureClass: "enrichment_incomplete",
+        nextAttemptAt: "2026-09-04T08:10:00.000Z",
+        status: "scheduled",
+      },
+      {
+        automaticAttempts: 3,
+        collectionId: "22222222-2222-4222-8222-222222222222",
+        cycleStartedAt: "2026-09-04T07:00:00.000Z",
+        lastFailureClass: "enrichment_incomplete",
+        nextAttemptAt: null,
+        status: "paused",
+      },
+    ];
+    const output = await handleInboundMessage({
+      brain: fakeBrain("codex"),
+      cwd: "/tmp",
+      message: textMessage("状态"),
+      state,
+    });
+
+    expect(output.replies.join("\n")).toContain(
+      "摘要重试：1 项活动（0 项运行），1 项暂停；最近计划：2026-09-04T08:10:00.000Z",
+    );
+    expect(output.replies.join("\n")).not.toContain(
+      "11111111-1111-4111-8111-111111111111",
+    );
+  });
+
   it("defers retry completion until the recovery result is known", async () => {
     const state = defaultChannelState();
     const output = await handleInboundMessage({

@@ -349,6 +349,7 @@ function buildControlReply(
       return RESET_CONFIRMATION_REPLY;
     case "status": {
       const runtime = state.runtimeState;
+      const retries = summaryRetryContext(state);
       const wechat = state.token ? "已登录" : "未登录";
       const lastSuccess = runtime.lastSuccessfulMessageAt ?? "无";
       const runtimeRetry = runtime.nextRetryAt
@@ -372,6 +373,8 @@ function buildControlReply(
         `Reporter：${reporterEnabled ? "已启用" : "未启用"}`,
         `最近成功处理：${lastSuccess}`,
         `队列：${state.pendingInbound.length} 条待处理，${state.pendingOutbound.length} 条待发送`,
+        `摘要重试：${retries.active} 项活动（${retries.running} 项运行），${retries.paused} 项暂停` +
+          `${retries.nextAttemptAt ? `；最近计划：${retries.nextAttemptAt}` : ""}`,
       ].join("\n");
     }
   }
