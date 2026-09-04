@@ -268,6 +268,7 @@ describe("resident Claude Code brain", () => {
         content: [
           {
             content: JSON.stringify({
+              collection_id: "11111111-1111-4111-8111-111111111111",
               enrichment_action: "reuse_summary",
               status: "accepted",
               title: "RAW TITLE",
@@ -286,6 +287,7 @@ describe("resident Claude Code brain", () => {
 
     await expect(pending).resolves.toMatchObject({
       collectionReplyControl: {
+        collectionId: "11111111-1111-4111-8111-111111111111",
         collectionStatus: "accepted",
         enrichmentAction: "reuse_summary",
         enrichmentCompleted: false,
@@ -325,7 +327,9 @@ describe("resident Claude Code brain", () => {
           {
             content: JSON.stringify({
               attempt: null,
-              collection: { collection_id: "collection-1" },
+              collection: {
+                collection_id: "11111111-1111-4111-8111-111111111111",
+              },
               content: {
                 content_id: "content-1",
                 enrichment_action: "generate_summary",
@@ -375,11 +379,17 @@ describe("resident Claude Code brain", () => {
 
     await expect(pending).resolves.toMatchObject({
       collectionReplyControl: {
+        collectionId: "11111111-1111-4111-8111-111111111111",
         enrichmentAction: "generate_summary",
         enrichmentCompleted: true,
         kind: "recovery",
         summaryStatus: "pending",
       },
+      collectionReplySensitiveFragments: [
+        "11111111-1111-4111-8111-111111111111",
+        "content-1",
+        "https://example.org/article",
+      ],
       ok: true,
       reply: "",
     });
@@ -449,7 +459,7 @@ describe("resident Claude Code brain", () => {
       session_id: "session-1", type: "assistant",
     });
     rpcs[0]?.emit({
-      message: { content: [{ content: JSON.stringify({ enrichment_action: "none", status: "merged_with_existing_content" }), tool_use_id: "select-empty", type: "tool_result" }], role: "user" },
+      message: { content: [{ content: JSON.stringify({ collection_id: "11111111-1111-4111-8111-111111111111", enrichment_action: "none", status: "merged_with_existing_content" }), tool_use_id: "select-empty", type: "tool_result" }], role: "user" },
       session_id: "session-1", type: "user",
     });
     rpcs[0]?.complete("");
@@ -457,6 +467,7 @@ describe("resident Claude Code brain", () => {
       ok: true,
       reply: "",
       collectionReplyControl: {
+        collectionId: "11111111-1111-4111-8111-111111111111",
         collectionStatus: "merged_with_existing_content",
         enrichmentAction: "none",
         kind: "established",

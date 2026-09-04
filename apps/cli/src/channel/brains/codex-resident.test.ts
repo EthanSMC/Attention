@@ -350,6 +350,7 @@ describe("resident Codex brain", () => {
           result: {
             content: [],
             structuredContent: {
+              collection_id: "11111111-1111-4111-8111-111111111111",
               enrichment_action: "generate_summary",
               status: "accepted",
               title: "RAW TITLE",
@@ -392,11 +393,17 @@ describe("resident Codex brain", () => {
 
     await expect(pending).resolves.toMatchObject({
       collectionReplyControl: {
+        collectionId: "11111111-1111-4111-8111-111111111111",
         collectionStatus: "accepted",
         enrichmentAction: "generate_summary",
         enrichmentCompleted: true,
         kind: "established",
       },
+      collectionReplySensitiveFragments: [
+        "11111111-1111-4111-8111-111111111111",
+        "RAW TITLE",
+        "https://example.com/raw",
+      ],
     });
     await brain.shutdown();
   });
@@ -425,7 +432,9 @@ describe("resident Codex brain", () => {
             content: [],
             structuredContent: {
               attempt: null,
-              collection: { collection_id: "collection-1" },
+              collection: {
+                collection_id: "11111111-1111-4111-8111-111111111111",
+              },
               content: {
                 content_id: "content-1",
                 enrichment_action: "generate_summary",
@@ -469,6 +478,7 @@ describe("resident Codex brain", () => {
 
     await expect(pending).resolves.toMatchObject({
       collectionReplyControl: {
+        collectionId: "11111111-1111-4111-8111-111111111111",
         enrichmentAction: "generate_summary",
         enrichmentCompleted: true,
         kind: "recovery",
@@ -538,7 +548,7 @@ describe("resident Codex brain", () => {
       params: {
         item: {
           arguments: {}, id: "collect-empty",
-          result: { content: [], structuredContent: { enrichment_action: "reuse_summary", status: "already_collected" } },
+          result: { content: [], structuredContent: { collection_id: "11111111-1111-4111-8111-111111111111", enrichment_action: "reuse_summary", status: "already_collected" } },
           server: "attention", status: "completed", tool: "attention_collect_content", type: "mcpToolCall",
         },
         threadId: "thread-1", turnId: "turn-1",
@@ -549,6 +559,7 @@ describe("resident Codex brain", () => {
       ok: true,
       reply: "",
       collectionReplyControl: {
+        collectionId: "11111111-1111-4111-8111-111111111111",
         collectionStatus: "already_collected",
         enrichmentAction: "reuse_summary",
         kind: "established",

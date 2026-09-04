@@ -54,6 +54,8 @@ export interface BrainOutcome {
   readonly timedOut: boolean;
   /** Content-free control derived from Attention MCP results, when established. */
   readonly collectionReplyControl?: CollectionReplyControl;
+  /** Transient MCP literals used only to reject reflected collection prose. */
+  readonly collectionReplySensitiveFragments?: readonly string[];
 }
 
 export interface BrainInvokeInput {

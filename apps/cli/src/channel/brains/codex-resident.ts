@@ -16,6 +16,7 @@ import { CHANNEL_HOST_SYSTEM_POLICY } from "../prompt";
 import { ATTENTION_CLI_VERSION } from "../../version";
 import {
   applyAttentionToolResult,
+  attentionResultSensitiveFragments,
   mcpResultPayload,
   type CollectionReplyControl,
 } from "../collection-reply-control";
@@ -51,6 +52,7 @@ interface ActiveTurn {
   attentionMcpFailure: AttentionMcpFailure | null;
   attentionMcpProbe: AttentionMcpProbeResult | null;
   collectionReplyControl: CollectionReplyControl | null;
+  readonly collectionReplySensitiveFragments: string[];
   readonly resolve: (outcome: BrainOutcome) => void;
   readonly threadId: string;
   readonly timer: NodeJS.Timeout;
@@ -201,6 +203,14 @@ export function createCodexResidentBrain(
         const toolName = item.tool.replace(/^mcp__attention__/u, "");
         const payload =
           item.status === "failed" ? null : mcpResultPayload(item.result);
+        for (const fragment of attentionResultSensitiveFragments(payload)) {
+          if (
+            pending.collectionReplySensitiveFragments.length < 64 &&
+            !pending.collectionReplySensitiveFragments.includes(fragment)
+          ) {
+            pending.collectionReplySensitiveFragments.push(fragment);
+          }
+        }
         pending.collectionReplyControl = applyAttentionToolResult(
           pending.collectionReplyControl,
           toolName,
@@ -252,6 +262,12 @@ export function createCodexResidentBrain(
         : {}),
       ...(pending.collectionReplyControl
         ? { collectionReplyControl: pending.collectionReplyControl }
+        : {}),
+      ...(pending.collectionReplySensitiveFragments.length > 0
+        ? {
+            collectionReplySensitiveFragments:
+              pending.collectionReplySensitiveFragments,
+          }
         : {}),
       resumeFailed: false,
       sessionId: pending.threadId,
@@ -499,6 +515,7 @@ export function createCodexResidentBrain(
         attentionMcpFailure: null,
         attentionMcpProbe: null,
         collectionReplyControl: null,
+        collectionReplySensitiveFragments: [],
         reply: "",
         resolve,
         threadId,

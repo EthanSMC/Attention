@@ -55,6 +55,7 @@ const controlledOutcome = (
   ({
     ...okOutcome(reply),
     collectionReplyControl: {
+      collectionId: "11111111-1111-4111-8111-111111111111",
       kind: "established",
       ...control,
     },
@@ -69,7 +70,12 @@ const recoveryOutcome = (
   },
 ): BrainOutcome => ({
   ...okOutcome(reply),
-  collectionReplyControl: { kind: "recovery", ...input },
+  collectionReplyControl: {
+    collectionId: "11111111-1111-4111-8111-111111111111",
+    kind: "recovery",
+    ...input,
+  },
+  collectionReplySensitiveFragments: [],
 });
 
 const fakeBrain = (
