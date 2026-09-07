@@ -21,6 +21,19 @@ function context(overrides: Partial<ContentHandlerContext> = {}): ContentHandler
 }
 
 describe("production enrichment handlers", () => {
+  it.each([
+    ['<html><head><title>Member account</title></head><body><main><p>Sign in to continue reading this article.</p><form action="/login"><input type="password"><button>Sign in</button></form></main></body></html>', "login_required"],
+    ['<html><body><article hidden>Not visible article</article><div>Home Subscribe Contact</div></body></html>', "evidence_insufficient"],
+  ])("does not summarize a gate or body text with removed article structure", async (html, code) => {
+    const completeJson = vi.fn().mockResolvedValue({ summary: "Invented summary", tags: ["AI"] });
+    const handlers = createProductionHandlers({
+      documentLoader: { load: async () => ({ html, status: 200, finalUrl: "https://example.com/article" }) },
+      provider: { completeJson },
+    });
+    await expect(handlers.summary(context())).rejects.toMatchObject({ code });
+    expect(completeJson).not.toHaveBeenCalled();
+  });
+
   const fetcherEnv = {
     FETCHER_BASE_URL: "http://127.0.0.1:4100",
     FETCHER_SHARED_SECRET: "s".repeat(32),

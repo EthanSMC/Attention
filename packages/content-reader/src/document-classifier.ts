@@ -39,7 +39,15 @@ function statusFailure(status: number): ReadFailureCode | null {
 
 function challengeCode(html: string, hasReadableArticle: boolean): ReadFailureCode | null {
   const { document } = parseHTML(html);
-  const verificationControl = document.querySelector([
+  const gateControl = (selector: string) => [...document.querySelectorAll<HTMLElement>(selector)]
+    .find((control) => {
+      for (let ancestor: HTMLElement | null = control; ancestor; ancestor = ancestor.parentElement) {
+        if (ancestor.hidden || ancestor.getAttribute("aria-hidden") === "true" ||
+          ancestor.style.display === "none" || ancestor.style.visibility === "hidden") return false;
+      }
+      return !hasReadableArticle || !control.closest("aside, nav, footer, [role='complementary'], [role='navigation']");
+    });
+  const verificationControl = gateControl([
     "input[name*='captcha' i]",
     "input[name*='turnstile' i]",
     "iframe[src*='captcha' i]",
@@ -49,8 +57,7 @@ function challengeCode(html: string, hasReadableArticle: boolean): ReadFailureCo
     ".g-recaptcha, .h-captcha, .cf-turnstile",
   ].join(","));
 
-  const loginForm = document.querySelector("form input[type='password']") ??
-    document.querySelector("form[action*='login' i], form[action*='signin' i], form[action*='sign-in' i]");
+  const loginForm = gateControl("form input[type='password'], form[action*='login' i], form[action*='signin' i], form[action*='sign-in' i]");
 
   const title = document.querySelector("title")?.textContent?.replace(/\s+/gu, " ").trim() ?? "";
   const heading = document.querySelector("h1")?.textContent?.replace(/\s+/gu, " ").trim() ?? "";
@@ -62,11 +69,9 @@ function challengeCode(html: string, hasReadableArticle: boolean): ReadFailureCo
     /^(?:access denied|forbidden|permission denied|访问被拒绝|禁止访问)$/iu.test(heading)) {
     return "access_denied";
   }
-  // Widgets beside an already-readable article do not gate access to its evidence.
-  if (!hasReadableArticle) {
-    if (verificationControl) return "verification_required";
-    if (loginForm) return "login_required";
-  }
+  // Primary-content gates remain gates even when their notice contains readable paragraphs.
+  if (verificationControl) return "verification_required";
+  if (loginForm) return "login_required";
   return null;
 }
 
@@ -119,7 +124,7 @@ export function classifyDocument(input: ClassifyDocumentInput): DocumentEvidence
     };
   }
 
-  const pageBlock = challengeCode(input.html, Boolean(extracted.hasArticleStructure && extracted.visibleText));
+  const pageBlock = challengeCode(input.html, Boolean(extracted.hasArticleEvidence && extracted.visibleText));
   if (pageBlock) {
     return {
       ...base,
@@ -142,7 +147,7 @@ export function classifyDocument(input: ClassifyDocumentInput): DocumentEvidence
     };
   }
 
-  if (extracted.text && extracted.hasArticleStructure) {
+  if (extracted.text && extracted.hasArticleEvidence) {
     return {
       ...base,
       code: null,

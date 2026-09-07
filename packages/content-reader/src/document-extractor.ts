@@ -20,7 +20,7 @@ export interface ExtractedDocument {
 
 export interface ExtractedDocumentDetails extends ExtractedDocument {
   extractionMethod: ExtractionMethod;
-  hasArticleStructure: boolean;
+  hasArticleEvidence: boolean;
   structuredText: string | null;
   truncated: boolean;
   visibleText: string | null;
@@ -133,12 +133,30 @@ function parsedDocument(html: string): Document {
   return document;
 }
 
+function hasRetainedSemanticEvidence(document: Document, selectedText: string | null): boolean {
+  if (!selectedText) return false;
+  return [...document.querySelectorAll<HTMLElement>("article, [itemprop='articleBody'], main, [role='main']")]
+    .some((element) => {
+      const paragraphs = [...element.querySelectorAll<HTMLElement>("p")];
+      const segments = paragraphs.length ? paragraphs : [element];
+      return segments.some((segment) => {
+        const text = bodyText(segment).text;
+        return text !== null && selectedText.includes(text);
+      });
+    });
+}
+
+function hasSubstantiveReadabilityEvidence(article: HTMLElement | null, text: string | null): boolean {
+  if (!article || !text || text.length < 200) return false;
+  const sentenceEndings = text.match(/[.!?](?:\s|$)|[。！？]/gu) ?? [];
+  const linkedTextLength = [...article.querySelectorAll<HTMLElement>("a")]
+    .reduce((length, link) => length + (bodyText(link).text?.length ?? 0), 0);
+  return sentenceEndings.length >= 2 && linkedTextLength < text.length / 4;
+}
+
 export function extractDocumentWithDetails(html: string): ExtractedDocumentDetails {
   const document = parsedDocument(html);
   const structured = structuredArticle(document);
-  const hasArticleStructure = structured?.articleBody !== undefined ||
-    document.querySelector("article, [itemprop='articleBody']") !== null ||
-    document.querySelector("main p, [role='main'] p") !== null;
   const metadata = {
     author: structuredAuthor(structured?.author) ??
       metadataValue(document, ["author", "article:author", "og:article:author"]),
@@ -163,7 +181,7 @@ export function extractDocumentWithDetails(html: string): ExtractedDocumentDetai
     // Malformed pages can still supply bounded metadata and semantic HTML.
   }
   for (const node of document.querySelectorAll("head, title")) node.remove();
-  const semantic = document.querySelector<HTMLElement>("article, main, [role='main']");
+  const semantic = document.querySelector<HTMLElement>("article, [itemprop='articleBody'], main, [role='main']");
   const fallback = semantic ?? document.body;
   const readabilityText = bodyText(article?.content ?? null);
   const semanticText = bodyText(semantic);
@@ -174,6 +192,9 @@ export function extractDocumentWithDetails(html: string): ExtractedDocumentDetai
   const structuredText = boundedArticleText(structured?.articleBody);
   const useStructured = (structuredText.text?.length ?? 0) > (visible.text?.length ?? 0);
   const selected = useStructured ? structuredText : visible;
+  const hasArticleEvidence = useStructured ? structuredText.text !== null
+    : hasRetainedSemanticEvidence(document, visible.text) ||
+      hasSubstantiveReadabilityEvidence(article?.content ?? null, readabilityText.text);
   const extractionMethod: ExtractionMethod = useStructured
     ? "json_ld"
     : readabilityText.text
@@ -187,7 +208,7 @@ export function extractDocumentWithDetails(html: string): ExtractedDocumentDetai
     author: metadata.author ?? cleanText(article?.byline),
     description: metadata.description,
     extractionMethod,
-    hasArticleStructure,
+    hasArticleEvidence,
     publishedAt: metadata.publishedAt,
     structuredText: structuredText.text,
     text: selected.text,

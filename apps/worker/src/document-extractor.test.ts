@@ -3,6 +3,12 @@ import { describe, expect, it } from "vitest";
 import { extractDocument } from "./production-handlers";
 
 describe("document extraction", () => {
+  it("preserves both substantive paragraphs from a non-semantic article container", () => {
+    const result = extractDocument('<html><body><div id="js_content"><h1>Controlled experiment report</h1><p>The researchers randomly assigned participants to two groups and measured response times under identical conditions. Each group completed the same series of tasks over six weeks.</p><p>The treatment group showed a consistent improvement in response time compared with the control group. The report describes the measurement procedure and explains the remaining uncertainty.</p></div></body></html>');
+    expect(result.text).toContain("randomly assigned participants");
+    expect(result.text).toContain("remaining uncertainty");
+  });
+
   it.each(["", "Loading article…"])("recovers JSON-LD from a rendering shell showing %j", (placeholder) => {
     const result = extractDocument(`<html><head>
       <script type="application/ld+json">${JSON.stringify({

@@ -9,6 +9,43 @@ const input = {
 } as const;
 
 describe("document classification", () => {
+  it("blocks a primary-content login notice even when its paragraph survives extraction", () => {
+    expect(classifyDocument({
+      ...input,
+      html: '<html><head><title>Member account</title></head><body><main><p>Sign in to continue reading this article.</p><form action="/login"><input type="password"><button>Sign in</button></form></main></body></html>',
+    })).toMatchObject({ kind: "blocked", code: "login_required", text: null });
+  });
+
+  it.each([
+    '<article hidden>Not visible article</article>',
+    '<article style="display:none">Not visible article</article>',
+    '<form><article>Form contents</article></form>',
+    '<aside><article>Sidebar contents</article></aside>',
+    '<article></article>',
+  ])("does not borrow article status from removed or empty structures: %s", (removed) => {
+    expect(classifyDocument({
+      ...input,
+      html: `<html><body>${removed}<div>Home Subscribe Contact</div></body></html>`,
+    })).toMatchObject({ kind: "empty", code: "evidence_insufficient", text: null });
+  });
+
+  it("accepts substantive extracted article text in an ordinary div", () => {
+    const result = classifyDocument({
+      ...input,
+      html: '<html><body><div id="js_content"><h1>Controlled experiment report</h1><p>The researchers randomly assigned participants to two groups and measured response times under identical conditions. Each group completed the same series of tasks over six weeks.</p><p>The treatment group showed a consistent improvement in response time compared with the control group. The report describes the measurement procedure and explains the remaining uncertainty.</p></div></body></html>',
+    });
+    expect(result).toMatchObject({ kind: "article", code: null });
+    expect(result.text).toContain("randomly assigned participants");
+    expect(result.text).toContain("remaining uncertainty");
+  });
+
+  it("does not promote a long div of navigation links through the substantive-text fallback", () => {
+    expect(classifyDocument({
+      ...input,
+      html: `<html><body><div>${'<a href="/archive">Browse the complete research archive. Subscribe to receive future reports.</a>'.repeat(8)}</div></body></html>`,
+    })).toMatchObject({ kind: "empty", code: "evidence_insufficient", text: null });
+  });
+
   it("recognizes a page-level verification notice without a form", () => {
     expect(classifyDocument({
       ...input,
