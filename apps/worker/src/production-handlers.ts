@@ -3,111 +3,28 @@ import {
   createConfiguredAiProvider,
   type StructuredChatProvider,
 } from "@attention/ai";
+import { classifyDocument, type DocumentEvidence } from "@attention/content-reader";
+import {
+  readFailurePolicy,
+  type ReadFailureCode,
+  type SourceKind,
+} from "@attention/content-reader-contracts";
 import { normalizeCredentialEndpoint } from "@attention/contracts";
 
 import type { MetadataResult, SummaryResult } from "./contracts.js";
 import { JobExecutionError } from "./errors.js";
 import type { ContentHandlerContext, JobHandlers } from "./handlers.js";
 
-const MAX_DOCUMENT_TEXT = 12_000;
+export { extractDocument } from "./document-extractor.js";
 
 export interface LoadedDocument {
   finalUrl: string;
   html: string;
+  status: number;
 }
 
 export interface ContentDocumentLoader {
   load(context: ContentHandlerContext): Promise<LoadedDocument | null>;
-}
-
-interface ExtractedDocument {
-  author: string | null;
-  description: string | null;
-  publishedAt: Date | null;
-  text: string | null;
-  title: string | null;
-}
-
-function decodeHtml(value: string): string {
-  const named: Record<string, string> = {
-    amp: "&",
-    apos: "'",
-    gt: ">",
-    lt: "<",
-    nbsp: " ",
-    quot: '"',
-  };
-  const codePoint = (raw: string, radix: number, entity: string): string => {
-    const point = Number.parseInt(raw, radix);
-    return Number.isFinite(point) && point >= 0 && point <= 0x10ffff &&
-      (point < 0xd800 || point > 0xdfff)
-      ? String.fromCodePoint(point)
-      : entity;
-  };
-  return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/giu, (entity, token: string) => {
-    if (token.startsWith("#x")) {
-      return codePoint(token.slice(2), 16, entity);
-    }
-    if (token.startsWith("#")) {
-      return codePoint(token.slice(1), 10, entity);
-    }
-    return named[token.toLowerCase()] ?? entity;
-  });
-}
-
-function cleanText(value: string | null | undefined, maxLength: number): string | null {
-  if (!value) return null;
-  const normalized = decodeHtml(value).replace(/\s+/gu, " ").trim();
-  return normalized ? normalized.slice(0, maxLength) : null;
-}
-
-function tagAttributes(tag: string): Map<string, string> {
-  const attributes = new Map<string, string>();
-  for (const match of tag.matchAll(/([:\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gu)) {
-    const name = match[1]?.toLowerCase();
-    const value = match[2] ?? match[3] ?? match[4];
-    if (name && value !== undefined) attributes.set(name, value);
-  }
-  return attributes;
-}
-
-function metadataValue(html: string, names: readonly string[]): string | null {
-  const wanted = new Set(names.map((name) => name.toLowerCase()));
-  for (const tag of html.match(/<meta\b[^>]*>/giu) ?? []) {
-    const attributes = tagAttributes(tag);
-    const key = (attributes.get("property") ?? attributes.get("name"))?.toLowerCase();
-    if (key && wanted.has(key)) return cleanText(attributes.get("content"), 4_096);
-  }
-  return null;
-}
-
-function safeDate(value: string | null): Date | null {
-  if (!value) return null;
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return null;
-  const parsed = new Date(timestamp);
-  const year = parsed.getUTCFullYear();
-  return year >= 1970 && year <= 2200 ? parsed : null;
-}
-
-export function extractDocument(html: string): ExtractedDocument {
-  const withoutNonContent = html
-    .replace(/<(?:script|style|noscript|svg|template)\b[^>]*>[\s\S]*?<\/(?:script|style|noscript|svg|template)>/giu, " ")
-    .replace(/<head\b[^>]*>[\s\S]*?<\/head>/iu, " ");
-  const visibleText = cleanText(withoutNonContent.replace(/<[^>]+>/gu, " "), MAX_DOCUMENT_TEXT);
-  const htmlTitle = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/iu)?.[1];
-  return {
-    author: metadataValue(html, ["author", "article:author", "og:article:author"]),
-    description: metadataValue(html, ["description", "og:description", "twitter:description"]),
-    publishedAt: safeDate(metadataValue(html, [
-      "article:published_time",
-      "date",
-      "datepublished",
-      "publishdate",
-    ])),
-    text: visibleText,
-    title: metadataValue(html, ["og:title", "twitter:title"]) ?? cleanText(htmlTitle, 4_096),
-  };
 }
 
 function deterministicTitle(context: ContentHandlerContext): string {
@@ -126,19 +43,55 @@ function deterministicTitle(context: ContentHandlerContext): string {
   }
 }
 
-function deterministicTags(context: ContentHandlerContext, title: string): string[] {
-  const ignored = new Set(["http", "https", "html", "www", "com", "网页", "内容"]);
-  const tokens = `${title} ${context.source}`.normalize("NFKC")
-    .toLocaleLowerCase("zh-CN")
-    .match(/[\p{Script=Han}]{2,8}|[a-z][a-z0-9+._-]{2,31}/gu) ?? [];
-  return [...new Set(tokens.filter((token) => !ignored.has(token)))].slice(0, 6);
-}
-
-function sourceKind(source: string): string {
+function sourceKind(source: string): SourceKind {
   return source === "douyin" || source === "xiaohongshu" ||
     source === "wechat_official_article"
     ? source
     : "generic_web";
+}
+
+function readerFailure(
+  code: ReadFailureCode,
+  retryAfterMs: number | null = null,
+): JobExecutionError {
+  return new JobExecutionError(code, {
+    retryAfterMs,
+    retryable: readFailurePolicy(code).allowedRecoveries.includes("retry_later"),
+  });
+}
+
+function responseRetryAfterMs(response: Response): number | null {
+  const raw = response.headers.get("retry-after")?.trim();
+  if (!raw) return null;
+  const seconds = /^\d+$/u.test(raw) ? Number(raw) : null;
+  const milliseconds = seconds === null
+    ? Date.parse(raw) - Date.now()
+    : seconds * 1_000;
+  return Number.isFinite(milliseconds) && milliseconds > 0
+    ? Math.min(Math.round(milliseconds), 900_000)
+    : null;
+}
+
+async function fetcherFailure(response: Response): Promise<JobExecutionError> {
+  const retryAfterMs = responseRetryAfterMs(response);
+  if (response.status === 429) return readerFailure("rate_limited", retryAfterMs);
+  if (response.status === 404) return readerFailure("reader_unsupported");
+  if (response.status === 401 || response.status === 403) {
+    return readerFailure("reader_not_configured");
+  }
+  let fetcherCode: unknown;
+  try {
+    const payload = await response.json() as { error?: { code?: unknown } };
+    fetcherCode = payload.error?.code;
+  } catch {
+    await response.body?.cancel().catch(() => undefined);
+  }
+  if (fetcherCode === "timeout") return readerFailure("network_timeout", retryAfterMs);
+  if (fetcherCode === "dns_failure") return readerFailure("dns_failure", retryAfterMs);
+  if (typeof fetcherCode === "string" && fetcherCode.startsWith("unsafe_")) {
+    return readerFailure("unsafe_source");
+  }
+  return readerFailure("unknown_reader_error", retryAfterMs);
 }
 
 export function createFetcherDocumentLoader(
@@ -170,22 +123,29 @@ export function createFetcherDocumentLoader(
           redirect: "error",
           signal: AbortSignal.any([context.signal, AbortSignal.timeout(12_000)]),
         });
-      } catch {
-        return null;
+      } catch (error) {
+        if (error instanceof Error &&
+          (error.name === "AbortError" || error.name === "TimeoutError")) {
+          throw readerFailure("network_timeout");
+        }
+        throw readerFailure("unknown_reader_error");
       }
       if (!response.ok) {
-        await response.body?.cancel().catch(() => undefined);
-        return null;
+        throw await fetcherFailure(response);
       }
       const payload = await response.json().catch(() => null) as {
         body?: unknown;
         finalUrl?: unknown;
+        status?: unknown;
       } | null;
-      if (!payload || typeof payload.body !== "string" ||
-        typeof payload.finalUrl !== "string" || payload.body.length > 2 * 1024 * 1024) {
-        return null;
+      if (!payload || typeof payload.status !== "number" ||
+        !Number.isInteger(payload.status) || payload.status < 100 || payload.status > 599 ||
+        (payload.body !== undefined && typeof payload.body !== "string") ||
+        typeof payload.finalUrl !== "string" ||
+        (typeof payload.body === "string" && payload.body.length > 2 * 1024 * 1024)) {
+        throw readerFailure("unknown_reader_error");
       }
-      return { finalUrl: payload.finalUrl, html: payload.body };
+      return { finalUrl: payload.finalUrl, html: payload.body ?? "", status: payload.status };
     },
   };
 }
@@ -214,16 +174,26 @@ function parseGeneratedSummary(value: Record<string, unknown>): SummaryResult {
   };
 }
 
-async function loadDocumentSafely(
+async function loadDocument(
   loader: ContentDocumentLoader | null,
   context: ContentHandlerContext,
-): Promise<LoadedDocument | null> {
-  if (!loader) return null;
-  try {
-    return await loader.load(context);
-  } catch {
-    return null;
-  }
+): Promise<LoadedDocument> {
+  if (!loader) throw readerFailure("reader_not_configured");
+  const document = await loader.load(context);
+  if (!document) throw readerFailure("unknown_reader_error");
+  return document;
+}
+
+function classifyLoadedDocument(
+  document: LoadedDocument,
+  context: ContentHandlerContext,
+): DocumentEvidence {
+  return classifyDocument({
+    finalUrl: document.finalUrl,
+    html: document.html,
+    sourceKind: sourceKind(context.source),
+    status: document.status,
+  });
 }
 
 export function createProductionHandlers(options: {
@@ -234,8 +204,16 @@ export function createProductionHandlers(options: {
   const provider = options.provider ?? null;
   return {
     async metadata(context): Promise<MetadataResult> {
-      const document = await loadDocumentSafely(documentLoader, context);
-      const extracted = document ? extractDocument(document.html) : null;
+      if (!documentLoader) {
+        return {
+          author: context.author,
+          cachedFaviconAssetKey: null,
+          publishedAt: context.publishedAt,
+          title: deterministicTitle(context),
+        };
+      }
+      const evidence = classifyLoadedDocument(await loadDocument(documentLoader, context), context);
+      const extracted = evidence.kind === "blocked" ? null : evidence;
       return {
         author: extracted?.author ?? context.author,
         cachedFaviconAssetKey: null,
@@ -245,12 +223,14 @@ export function createProductionHandlers(options: {
     },
     async summary(context): Promise<SummaryResult> {
       const title = deterministicTitle(context);
-      const fallbackTags = deterministicTags(context, title);
       if (!provider) {
-        return { status: "unavailable", summary: null, tags: fallbackTags };
+        throw new JobExecutionError("summary_handler_not_configured", { retryable: false });
       }
-      const document = await loadDocumentSafely(documentLoader, context);
-      const extracted = document ? extractDocument(document.html) : null;
+      const document = await loadDocument(documentLoader, context);
+      const extracted = classifyLoadedDocument(document, context);
+      if (extracted.kind !== "article" || !extracted.text) {
+        throw readerFailure(extracted.code ?? "evidence_insufficient");
+      }
       try {
         const generated = await provider.completeJson({
           signal: context.signal,

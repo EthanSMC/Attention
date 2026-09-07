@@ -1,0 +1,135 @@
+import { describe, expect, it } from "vitest";
+
+import { classifyDocument } from "./document-classifier";
+
+const input = {
+  finalUrl: "https://example.com/a",
+  sourceKind: "generic_web",
+  status: 200,
+} as const;
+
+describe("document classification", () => {
+  it("recognizes a page-level verification notice without a form", () => {
+    expect(classifyDocument({
+      ...input,
+      html: "<html><head><title>Verify you are human</title></head><body><main>Please complete the security check to continue.</main></body></html>",
+    })).toMatchObject({ kind: "blocked", code: "verification_required", text: null });
+  });
+
+  it("classifies a structured verification page as blocked", () => {
+    expect(classifyDocument({
+      ...input,
+      html: `<html><head><title>Verify you are human</title></head><body>
+        <main><form id="challenge-form" action="/challenge"><h1>Security check</h1>
+        <p>Please complete the security check to continue.</p>
+        <input name="cf-turnstile-response"></form></main></body></html>`,
+    })).toMatchObject({ kind: "blocked", code: "verification_required", text: null });
+  });
+
+  it("classifies a login form as blocked without treating its description as article evidence", () => {
+    expect(classifyDocument({
+      ...input,
+      html: `<html><head><meta name="description" content="Sign in to continue reading"></head>
+        <body><main><form action="/login"><label>Email<input type="email" name="email"></label>
+        <label>Password<input type="password" name="password"></label><button>Sign in</button>
+        </form></main></body></html>`,
+    })).toMatchObject({
+      code: "login_required",
+      description: "Sign in to continue reading",
+      kind: "blocked",
+      text: null,
+    });
+  });
+
+  it("keeps a metadata-only rendering shell out of article evidence", () => {
+    expect(classifyDocument({
+      ...input,
+      html: `<html><head><title>Research notes</title>
+        <meta name="description" content="A preview supplied before the application renders.">
+        </head><body><div id="app"></div><script src="/bundle.js"></script></body></html>`,
+    })).toMatchObject({
+      code: "render_required",
+      description: "A preview supplied before the application renders.",
+      extractionMethod: "metadata",
+      kind: "metadata_only",
+      text: null,
+    });
+  });
+
+  it("does not block a short article that discusses CAPTCHA", () => {
+    expect(classifyDocument({
+      ...input,
+      html: `<article><h1>How CAPTCHA works</h1><p>CAPTCHA uses challenge-response tests.
+        This article explains their accessibility costs.</p></article>`,
+    })).toMatchObject({
+      code: null,
+      extractionMethod: "readability",
+      kind: "article",
+    });
+  });
+
+  it("keeps article evidence when CAPTCHA terminology is only a CSS class", () => {
+    expect(classifyDocument({
+      ...input,
+      html: '<article class="captcha-explainer"><h1>How CAPTCHA works</h1><p>CAPTCHA uses challenge-response tests. This article explains their accessibility costs.</p></article>',
+    })).toMatchObject({ kind: "article", code: null });
+  });
+
+  it("keeps a readable article when an incidental sign-in form appears beside it", () => {
+    expect(classifyDocument({
+      ...input,
+      html: '<html><body><article><h1>Public research notes</h1><p>The public research report describes a controlled experiment with concrete findings.</p></article><aside><form action="/login"><input type="password"></form></aside></body></html>',
+    })).toMatchObject({ kind: "article", code: null });
+  });
+
+  it("rejects conflicting JSON-LD and visible article bodies as insufficient evidence", () => {
+    expect(classifyDocument({
+      ...input,
+      html: `<html><head><script type="application/ld+json">{
+        "@type":"Article","headline":"Quarterly report",
+        "articleBody":"Revenue increased after the product launch in the eastern region."
+      }</script></head><body><article><h1>Quarterly report</h1>
+        <p>The championship final ended after a penalty shootout in the national stadium.</p>
+      </article></body></html>`,
+    })).toMatchObject({
+      code: "evidence_insufficient",
+      kind: "metadata_only",
+      text: null,
+    });
+  });
+
+  it("marks body truncation while preserving the article source", () => {
+    const result = classifyDocument({
+      ...input,
+      html: `<article><h1>Long report</h1><p>${"Grounded sentence with concrete evidence. ".repeat(500)}</p></article>`,
+    });
+    expect(result).toMatchObject({
+      code: null,
+      extractionMethod: "readability",
+      kind: "article",
+      truncated: true,
+    });
+    expect(result.text).toHaveLength(12_000);
+  });
+
+  it("does not promote arbitrary nonempty body text to article evidence", () => {
+    expect(classifyDocument({
+      ...input,
+      html: "<html><body><div>Home Subscribe Contact</div></body></html>",
+    })).toMatchObject({ kind: "empty", text: null });
+  });
+
+  it.each([
+    [403, "access_denied"],
+    [404, "source_not_found"],
+    [410, "source_gone"],
+    [429, "rate_limited"],
+    [503, "upstream_5xx"],
+  ] as const)("classifies HTTP %i before article extraction", (status, code) => {
+    expect(classifyDocument({
+      ...input,
+      status,
+      html: "<article><p>This must not become article evidence.</p></article>",
+    })).toMatchObject({ code, kind: "blocked", text: null });
+  });
+});

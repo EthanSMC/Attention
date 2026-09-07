@@ -17,6 +17,8 @@ COPY apps/worker/package.json apps/worker/package.json
 COPY packages/ai/package.json packages/ai/package.json
 COPY packages/auth/package.json packages/auth/package.json
 COPY packages/collector/package.json packages/collector/package.json
+COPY packages/content-reader/package.json packages/content-reader/package.json
+COPY packages/content-reader-contracts/package.json packages/content-reader-contracts/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/domain/package.json packages/domain/package.json

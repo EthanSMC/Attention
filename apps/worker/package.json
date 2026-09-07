@@ -17,6 +17,8 @@
     "@attention/ai": "workspace:*",
     "@attention/auth": "workspace:*",
     "@attention/collector": "workspace:*",
+    "@attention/content-reader": "workspace:*",
+    "@attention/content-reader-contracts": "workspace:*",
     "@attention/contracts": "workspace:*",
     "@attention/db": "workspace:*"
   },

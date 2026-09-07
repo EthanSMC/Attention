@@ -87,7 +87,9 @@ pnpm dev:wechat
 
 `WECHAT_MESSAGE_MODE=compatible` 同时接受验签后的明文和 AES 消息，正式环境建议在公众号后台和 Adapter 一起切到 `safe`。只有公众号具备客服消息权限且已配置相应生产能力时，才设置 `WECHAT_ASYNC_REPLY_PROVIDER=customer_service`；否则保持 `disabled`，超时请求会安全确认并允许用户重试。Adapter 不记录原始 XML、openid 或 AppSecret。当前仓库只实现并测试了协议合同，未宣称已通过微信平台服务器验证或资质联调。
 
-当前 Worker 默认完成确定性元数据整理；未设置 `ATTENTION_AI_MODEL` 时，摘要会进入明确的 unavailable 状态，托管 AI 检索使用关键词降级。配置 `ATTENTION_AI_MODEL`、可选的 `ATTENTION_AI_BASE_URL` 和 `ATTENTION_AI_API_KEY` 后，Worker 会通过隔离 Fetcher 临时读取受限页面内容并生成摘要/标签，检索服务会基于当前账号可访问的引用生成回答。原文正文不会写入数据库，供应商失败也不会伪装成生成成功。
+当前 Worker 默认完成确定性元数据整理；未设置 `ATTENTION_AI_MODEL` 时，不调度托管摘要，已有待处理摘要保持 pending，托管 AI 检索使用关键词降级。配置 `ATTENTION_AI_MODEL`、可选的 `ATTENTION_AI_BASE_URL` 和 `ATTENTION_AI_API_KEY` 后，Worker 会通过隔离 Fetcher 临时读取受限页面内容并生成摘要/标签，检索服务会基于当前账号可访问的引用生成回答。原文正文不会写入数据库，供应商失败也不会伪装成生成成功。
+
+Worker 使用共享内容读取包解析 HTML 和文章 JSON-LD 中的元数据与正文，用 Readability 去除导航等噪声，并将临时正文限制为 12,000 字符、标记截断。摘要必须有文章正文证据；非 2xx 响应、登录或验证页、仅元数据的页面和相互矛盾的正文会产生明确的读取失败，不会调用摘要模型。读取失败、AI 依赖故障或过期任务耗尽重试时，不会把共享 Content 永久标记为 unavailable，并保留已有 ready/hidden 状态。目前仍是静态 HTML 读取，不执行网页脚本，也不提供浏览器渲染。
 
 普通本地开发与 Domain 日报可使用 `ATTENTION_EMAIL_PROVIDER=console`，验证码只写入服务端终端，浏览器和 API 响应永远不会收到验证码。登录邮件 E2E 必须配置原生 Resend 并实际调用 Resend 服务；生产 Web 登录验证码也可使用原生 Resend 或 webhook provider。Worker 日报目前仍只使用 webhook adapter。日报请求使用 `template=attention-daily-digest-v1`，并以 delivery UUID 同时填充 `message_id` 与 `Idempotency-Key`。供应商必须按该键去重重试；仓库不包含供应商密钥。
 

@@ -1,0 +1,20 @@
+{
+  "name": "@attention/content-reader",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@attention/content-reader-contracts": "workspace:*",
+    "@mozilla/readability": "^0.6.0",
+    "linkedom": "^0.18.13"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

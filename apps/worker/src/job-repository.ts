@@ -6,7 +6,7 @@ import {
   SUMMARY_TASK_TYPE,
   type SupportedTaskType,
 } from "./contracts.js";
-import { isSafeErrorCode } from "./errors.js";
+import { isSafeErrorCode, preservesContentStateOnFailure } from "./errors.js";
 
 type JobSql = DatabaseHandle["sql"];
 
@@ -187,6 +187,7 @@ export async function failJob(
     maxRetryMs: number;
     now?: Date;
     random?: () => number;
+    retryAfterMs?: number | null;
     retryable: boolean;
   },
 ): Promise<FailJobResult> {
@@ -199,12 +200,20 @@ export async function failJob(
   const exponent = Math.max(0, input.job.attempts - 1);
   const unjitteredDelay = Math.min(input.maxRetryMs, input.baseRetryMs * 2 ** exponent);
   const jitter = 0.8 + (input.random ?? Math.random)() * 0.4;
-  const retryDelay = Math.min(input.maxRetryMs, Math.round(unjitteredDelay * jitter));
+  const retryAfterMs = typeof input.retryAfterMs === "number" &&
+    Number.isFinite(input.retryAfterMs) && input.retryAfterMs > 0
+    ? Math.min(input.maxRetryMs, Math.round(input.retryAfterMs))
+    : 0;
+  const retryDelay = Math.min(
+    input.maxRetryMs,
+    Math.max(Math.round(unjitteredDelay * jitter), retryAfterMs),
+  );
   const retryAt = terminal ? null : new Date(now.getTime() + retryDelay);
   const nextStatus = terminal ? "failed" : "pending";
   const availableAt = (retryAt ?? now).toISOString();
   const completedAt = terminal ? now.toISOString() : null;
   const nowValue = now.toISOString();
+  const preserveContentState = preservesContentStateOnFailure(input.errorCode);
 
   const rows = await sql<{ status: "failed" | "pending" }[]>`
     WITH transitioned AS (
@@ -239,6 +248,7 @@ export async function failJob(
           updated_at = ${nowValue}
       FROM transitioned
       WHERE transitioned.status = 'failed'
+        AND NOT ${preserveContentState}
         AND jsonb_typeof(transitioned.payload) = 'object'
         AND content.id::text = (transitioned.payload ->> 'contentId')
         AND content.content_status = 'active'
@@ -270,6 +280,7 @@ export async function reapExhaustedJobs(
   const staleBefore = new Date(now.getTime() - input.leaseMs);
   const nowValue = now.toISOString();
   const staleBeforeValue = staleBefore.toISOString();
+  // An expired lease proves only that execution stopped, not that the source is unavailable.
   const rows = await sql<{ count: number }[]>`
     WITH transitioned AS (
       UPDATE jobs
@@ -284,39 +295,10 @@ export async function reapExhaustedJobs(
         AND status = 'running'
         AND attempts >= max_attempts
         AND locked_at <= ${staleBeforeValue}
-      RETURNING id, payload, task_type
-    ), content_terminal AS (
-      UPDATE contents AS content
-      SET enrichment_status = CASE
-            WHEN transitioned.task_type = ${SUMMARY_TASK_TYPE}
-              AND content.summary_status NOT IN ('ready', 'hidden')
-              THEN 'partial'::enrichment_status
-            WHEN transitioned.task_type = ${METADATA_TASK_TYPE}
-              THEN 'failed'::enrichment_status
-            ELSE content.enrichment_status
-          END,
-          summary_status = CASE
-            WHEN transitioned.task_type = ${SUMMARY_TASK_TYPE}
-              AND content.summary_status NOT IN ('ready', 'hidden')
-              THEN 'unavailable'::summary_status
-            ELSE content.summary_status
-          END,
-          updated_at = ${nowValue}
-      FROM transitioned
-      WHERE jsonb_typeof(transitioned.payload) = 'object'
-        AND content.id::text = (transitioned.payload ->> 'contentId')
-        AND content.content_status = 'active'
-        AND content.public_safety_status = 'allowed'
-        AND content.takedown_status = 'none'
-        AND (
-          transitioned.task_type = ${METADATA_TASK_TYPE}
-          OR content.summary_status NOT IN ('ready', 'hidden')
-        )
-      RETURNING content.id
+      RETURNING id
     )
     SELECT count(transitioned.id)::integer AS count
     FROM transitioned
-    CROSS JOIN (SELECT count(*) FROM content_terminal) AS content_updates
   `;
   return rows[0]?.count ?? 0;
 }

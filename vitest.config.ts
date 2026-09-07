@@ -15,6 +15,8 @@ export default defineConfig({
       "@attention/ai": `${root}packages/ai/src/index.ts`,
       "@attention/auth": `${root}packages/auth/src/index.ts`,
       "@attention/collector": `${root}packages/collector/src/index.ts`,
+      "@attention/content-reader": `${root}packages/content-reader/src/index.ts`,
+      "@attention/content-reader-contracts": `${root}packages/content-reader-contracts/src/index.ts`,
       "@attention/contracts": `${root}packages/contracts/src/index.ts`,
       "@attention/db/migrate": `${root}packages/db/src/migrate.ts`,
       "@attention/db": `${root}packages/db/src/index.ts`,

@@ -107,6 +107,7 @@ async function processJob(
         errorCode: failure.code,
         job,
         maxRetryMs: config.maxRetryMs,
+        retryAfterMs: failure.retryAfterMs,
         retryable: failure.retryable,
       });
 

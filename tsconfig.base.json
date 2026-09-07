@@ -28,6 +28,12 @@
       "@attention/collector": [
         "./packages/collector/src/index.ts"
       ],
+      "@attention/content-reader": [
+        "./packages/content-reader/src/index.ts"
+      ],
+      "@attention/content-reader-contracts": [
+        "./packages/content-reader-contracts/src/index.ts"
+      ],
       "@attention/contracts": [
         "./packages/contracts/src/index.ts"
       ],

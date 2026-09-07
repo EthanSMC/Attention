@@ -3658,7 +3658,8 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
   });
 
-  it("keeps successful metadata partial when a summary provider fails terminally", async () => {
+  it.each(["ai_provider_unauthorized", "ai_provider_unavailable", "summary_handler_not_configured"])(
+    "keeps Core summary pending when a dependency fails terminally: %s", async (errorCode) => {
     const content = await upsertContentByIdentity(handle.db, {
       dedupeKey: "generic:v1:https://example.com/summary-terminal",
       normalizedUrl: "https://example.com/summary-terminal",
@@ -3688,7 +3689,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     if (!claimed) throw new Error("Expected a summary job");
     await failJob(handle.sql, {
       baseRetryMs: 100,
-      errorCode: "ai_provider_unauthorized",
+      errorCode,
       job: claimed,
       maxRetryMs: 1_000,
       retryable: false,
@@ -3702,7 +3703,57 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       .where(eq(contents.id, content.content.id));
     expect(stored).toEqual({
       enrichmentStatus: "partial",
-      summaryStatus: "unavailable",
+      summaryStatus: "pending",
+    });
+  });
+
+  it("keeps Core summary pending when a reader failure exhausts its job", async () => {
+    const content = await upsertContentByIdentity(handle.db, {
+      dedupeKey: "generic:v1:https://example.com/summary-reader-terminal",
+      normalizedUrl: "https://example.com/summary-reader-terminal",
+      outboundUrl: "https://example.com/summary-reader-terminal",
+      source: "example.com",
+      sourceAdapter: "generic_web",
+      adapterVersion: "1",
+    });
+    await handle.db
+      .update(contents)
+      .set({ enrichmentStatus: "partial" })
+      .where(eq(contents.id, content.content.id));
+    await handle.db.insert(jobs).values({
+      availableAt: new Date("2026-07-31T12:09:00.000Z"),
+      idempotencyKey: `content.summary.v1:${content.content.id}`,
+      maxAttempts: 1,
+      payload: { contentId: content.content.id },
+      queue: "content-enrichment",
+      taskType: "content.summary.v1",
+    });
+    const claimed = await claimNextJob(handle.sql, {
+      leaseMs: 5_000,
+      now: new Date("2026-07-31T12:10:00.000Z"),
+      queue: "content-enrichment",
+      workerId: "summary-reader-terminal-worker",
+    });
+    if (!claimed) throw new Error("Expected a summary job");
+
+    await failJob(handle.sql, {
+      baseRetryMs: 100,
+      errorCode: "verification_required",
+      job: claimed,
+      maxRetryMs: 1_000,
+      retryable: false,
+    });
+
+    const [stored] = await handle.db
+      .select({
+        enrichmentStatus: contents.enrichmentStatus,
+        summaryStatus: contents.summaryStatus,
+      })
+      .from(contents)
+      .where(eq(contents.id, content.content.id));
+    expect(stored).toEqual({
+      enrichmentStatus: "partial",
+      summaryStatus: "pending",
     });
   });
 
@@ -3869,7 +3920,57 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
   });
 
-  it("reaps an exhausted stale job and updates its Content in the same operation", async () => {
+  it.each([
+    { summaryStatus: "pending", lastErrorCode: null },
+    { summaryStatus: "pending", lastErrorCode: "legacy_unknown_failure" },
+    { summaryStatus: "ready", lastErrorCode: null },
+    { summaryStatus: "hidden", lastErrorCode: "legacy_unknown_failure" },
+  ] as const)("preserves Core $summaryStatus when an exhausted summary lease is reaped ($lastErrorCode)", async ({ summaryStatus, lastErrorCode }) => {
+    const content = await upsertContentByIdentity(handle.db, {
+      dedupeKey: "generic:v1:https://example.com/summary-reap-pending",
+      normalizedUrl: "https://example.com/summary-reap-pending",
+      outboundUrl: "https://example.com/summary-reap-pending",
+      source: "example.com",
+      sourceAdapter: "generic_web",
+      adapterVersion: "1",
+    });
+    await handle.db
+      .update(contents)
+      .set({ enrichmentStatus: "partial", summaryStatus })
+      .where(eq(contents.id, content.content.id));
+    const staleAt = new Date("2026-07-31T12:40:00.000Z");
+    await handle.db.insert(jobs).values({
+      attempts: 1,
+      idempotencyKey: `content.summary.v1:${content.content.id}`,
+      lockedAt: staleAt,
+      lockedBy: "summary-reap-pending:claim",
+      lastErrorCode,
+      maxAttempts: 1,
+      payload: { contentId: content.content.id },
+      queue: "content-enrichment",
+      status: "running",
+      taskType: "content.summary.v1",
+    });
+
+    await expect(reapExhaustedJobs(handle.sql, {
+      leaseMs: 5_000,
+      now: new Date("2026-07-31T12:40:06.000Z"),
+      queue: "content-enrichment",
+    })).resolves.toBe(1);
+    const [stored] = await handle.db
+      .select({
+        enrichmentStatus: contents.enrichmentStatus,
+        summaryStatus: contents.summaryStatus,
+      })
+      .from(contents)
+      .where(eq(contents.id, content.content.id));
+    expect(stored).toEqual({
+      enrichmentStatus: "partial",
+      summaryStatus,
+    });
+  });
+
+  it("reaps an exhausted stale metadata job while preserving its Content", async () => {
     const content = await upsertContentByIdentity(handle.db, {
       dedupeKey: "generic:v1:https://example.com/worker-stale-reaper",
       normalizedUrl: "https://example.com/worker-stale-reaper",
@@ -3925,7 +4026,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
       status: "failed"
     });
     expect(storedContent).toEqual({
-      enrichmentStatus: "failed",
+      enrichmentStatus: "pending",
       summaryStatus: "pending"
     });
   });
