@@ -26,6 +26,7 @@ export type AddressResolver = (
 export interface SafeFetchOptions {
   resolveAddresses?: AddressResolver;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface RedirectHop {
@@ -35,6 +36,7 @@ export interface RedirectHop {
 }
 
 export interface SafeFetchResult {
+  retryAfter?: string;
   body?: string;
   contentType?: string;
   finalUrl: string;
@@ -175,26 +177,33 @@ function createPinnedAgent(address: string, family: 4 | 6): Agent {
   });
 }
 
-async function readLimitedBody(response: Response): Promise<string> {
+export async function readLimitedBytes(response: Response, limit: number, signal: AbortSignal): Promise<Uint8Array> {
   if (!response.body) {
-    return "";
+    return new Uint8Array();
   }
 
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let received = 0;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (!value) continue;
+  try {
+    while (true) {
+      const { done, value } = await raceWithAbort(reader.read(), signal);
+      if (done) break;
+      if (!value) continue;
 
-    received += value.byteLength;
-    if (received > MAX_HTML_BYTES) {
-      await reader.cancel();
-      throw new FetcherError("response_too_large", "Response exceeded the HTML limit");
+      received += value.byteLength;
+      if (received > limit) {
+        await reader.cancel();
+        throw new FetcherError("response_too_large", "Response exceeded the HTML limit");
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
   }
 
   const body = new Uint8Array(received);
@@ -204,17 +213,19 @@ async function readLimitedBody(response: Response): Promise<string> {
     offset += chunk.byteLength;
   }
 
-  return new TextDecoder().decode(body);
+  return body;
 }
 
-export async function safeFetch(
+async function fetchPinned(
   rawUrl: string,
   sourceKind: SourceKind,
-  mode: "resolve" | "metadata",
+  mode: "resolve" | "metadata" | "read" | "resource",
   options: SafeFetchOptions = {},
-): Promise<SafeFetchResult> {
-  const timeoutMs = options.timeoutMs ?? TOTAL_TIMEOUT_MS;
+  byteLimit = MAX_HTML_BYTES,
+): Promise<SafeFetchResult & {bytes?: Uint8Array}> {
+  const timeoutMs = Math.min(options.timeoutMs ?? TOTAL_TIMEOUT_MS, TOTAL_TIMEOUT_MS);
   const controller = new AbortController();
+  const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
@@ -224,7 +235,7 @@ export async function safeFetch(
     for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
       const { address, family } = await resolvePinnedAddress(
         current.hostname,
-        controller.signal,
+        signal,
         options.resolveAddresses ?? resolveAddresses,
       );
       const dispatcher = createPinnedAgent(address, family);
@@ -238,7 +249,7 @@ export async function safeFetch(
             "user-agent": "AttentionFetcher/0.1"
           },
           redirect: "manual",
-          signal: controller.signal
+          signal
         });
 
         redirects.push({
@@ -267,6 +278,7 @@ export async function safeFetch(
         }
 
         const contentType = response.headers.get("content-type") ?? undefined;
+        const retryAfter = response.headers.get("retry-after")?.slice(0, 128);
         if (mode === "resolve") {
           await response.body?.cancel();
           return {
@@ -277,8 +289,17 @@ export async function safeFetch(
           };
         }
 
-        if (!contentType?.toLowerCase().includes("text/html")) {
+        if (mode === "resource") {
+          return {bytes: await readLimitedBytes(response as unknown as Response, byteLimit, signal),
+            ...(contentType ? {contentType} : {}), finalUrl: current.toString(), redirects, status: response.status};
+        }
+        if (!contentType?.toLowerCase().includes("text/html") &&
+          !(mode === "read" && contentType?.toLowerCase().includes("application/xhtml+xml"))) {
           await response.body?.cancel();
+          if (mode === "read" && (response.status < 200 || response.status >= 300)) {
+            return {body: "", ...(contentType ? {contentType} : {}), ...(retryAfter ? {retryAfter} : {}),
+              finalUrl: current.toString(), redirects, status: response.status};
+          }
           throw new FetcherError(
             "unsupported_content_type",
             "Metadata mode only accepts HTML"
@@ -286,8 +307,9 @@ export async function safeFetch(
         }
 
         return {
-          body: await readLimitedBody(response as unknown as Response),
+          body: new TextDecoder().decode(await readLimitedBytes(response as unknown as Response, MAX_HTML_BYTES, signal)),
           contentType,
+          ...(mode === "read" && retryAfter ? {retryAfter} : {}),
           finalUrl: current.toString(),
           redirects,
           status: response.status
@@ -300,11 +322,23 @@ export async function safeFetch(
     throw new FetcherError("redirect_limit", "Redirect limit exceeded");
   } catch (error) {
     if (error instanceof FetcherError) throw error;
-    if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+    if (signal.aborted || (error instanceof Error && error.name === "AbortError")) {
       throw new FetcherError("timeout", "Request exceeded the time limit");
     }
     throw new FetcherError("fetch_failed", "The remote request failed");
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function safeFetch(rawUrl: string, sourceKind: SourceKind,
+  mode: "resolve" | "metadata" | "read", options: SafeFetchOptions = {}): Promise<SafeFetchResult> {
+  return await fetchPinned(rawUrl, sourceKind, mode, options);
+}
+
+export async function safeFetchResource(rawUrl: string, sourceKind: SourceKind,
+  options: SafeFetchOptions & {maxBytes?: number} = {}): Promise<SafeFetchResult & {bytes: Uint8Array}> {
+  const result = await fetchPinned(rawUrl, sourceKind, "resource", options,
+    Math.max(0, Math.min(options.maxBytes ?? 2 * 1024 * 1024, 20 * 1024 * 1024)));
+  return {...result, bytes: result.bytes ?? new Uint8Array()};
 }

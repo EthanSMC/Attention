@@ -19,6 +19,7 @@
     "declaration": true,
     "sourceMap": true,
     "paths": {
+      "@attention/reader-browser/protocol": ["./apps/reader-browser/src/protocol.ts"],
       "@attention/ai": [
         "./packages/ai/src/index.ts"
       ],

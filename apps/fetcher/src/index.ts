@@ -3,9 +3,12 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { z } from "zod";
+import { ReadRequestSchema } from "@attention/content-reader-contracts";
 
 import { FetcherError } from "./errors.js";
 import { safeFetch } from "./safe-fetch.js";
+import { readDocument, type BrowserReader } from "./read-document.js";
+import { withBrowserAdmission, type BrowserAdmission } from "./browser-reader.js";
 
 const DEFAULT_MAX_CONCURRENCY = 16;
 const DEFAULT_MAX_QUEUE = 32;
@@ -62,7 +65,7 @@ async function cancelBody(body: ReadableStream<Uint8Array> | null): Promise<void
   await body?.cancel().catch(() => undefined);
 }
 
-async function readLimitedJson(request: Request): Promise<unknown> {
+async function readLimitedJson(request: Request, signal?: AbortSignal): Promise<unknown> {
   const declaredLength = request.headers.get("content-length");
   if (declaredLength && /^\d+$/u.test(declaredLength) &&
     Number(declaredLength) > MAX_REQUEST_BODY_BYTES) {
@@ -72,9 +75,12 @@ async function readLimitedJson(request: Request): Promise<unknown> {
   if (!request.body) return undefined;
 
   const reader = request.body.getReader();
+  const abort = (): void => { void reader.cancel().catch(() => undefined); };
+  signal?.addEventListener("abort", abort, {once: true});
   const chunks: Uint8Array[] = [];
   let received = 0;
   try {
+    signal?.throwIfAborted();
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -87,8 +93,10 @@ async function readLimitedJson(request: Request): Promise<unknown> {
       chunks.push(value);
     }
   } finally {
+    signal?.removeEventListener("abort", abort);
     reader.releaseLock();
   }
+  signal?.throwIfAborted();
 
   const body = new Uint8Array(received);
   let offset = 0;
@@ -183,6 +191,8 @@ class CapacityLimiter {
 
 export interface FetcherAppOptions {
   fetchOperation?: typeof safeFetch;
+  browser?: BrowserReader | null;
+  browserAdmission?: BrowserAdmission | null;
   maxConcurrency?: number;
   maxQueue?: number;
   queueTimeoutMs?: number;
@@ -198,6 +208,41 @@ export function createApp(sharedSecret: string, options: FetcherAppOptions = {})
   const fetchOperation = options.fetchOperation ?? safeFetch;
 
   app.get("/health", (context) => context.json({ status: "ok" }));
+
+  app.post("/v1/read", async (context) => {
+    context.header("Cache-Control", "no-store");
+    if (!isAuthorized(context.req.header("authorization"), sharedSecret)) {
+      await cancelBody(context.req.raw.body);
+      return context.json({error: {code: "unauthorized"}}, 401);
+    }
+    const deadline = new AbortController();
+    const signal = AbortSignal.any([context.req.raw.signal, deadline.signal]);
+    const timer = setTimeout(() => deadline.abort(), 90_000);
+    const release = await capacity.acquire(signal);
+    if (!release) {
+      clearTimeout(timer);
+      await cancelBody(context.req.raw.body);
+      context.header("Retry-After", "1");
+      return context.json({error: {code: "overloaded"}}, 503);
+    }
+    try {
+      let payload: unknown;
+      try { payload = await readLimitedJson(context.req.raw, signal); }
+      catch (error) {
+        if (signal.aborted) return context.json({error: {code: "timeout"}}, 408);
+        return error instanceof RequestBodyTooLargeError
+          ? context.json({error: {code: "request_too_large"}}, 413)
+          : context.json({error: {code: "invalid_request"}}, 400);
+      }
+      const parsed = ReadRequestSchema.safeParse(payload);
+      if (!parsed.success) return context.json({error: {code: "invalid_request"}}, 400);
+      const browser = options.browser ? withBrowserAdmission(options.browser, options.browserAdmission ?? null,
+        context.req.header("x-reader-admission"), parsed.data) : null;
+      return context.json(await readDocument({...parsed.data, signal}, {
+        staticRead: fetchOperation, browser, now: Date.now,
+      }));
+    } finally { clearTimeout(timer); release(); }
+  });
 
   app.post("/v1/fetch", async (context) => {
     if (!isAuthorized(context.req.header("authorization"), sharedSecret)) {

@@ -11,6 +11,7 @@ RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
 FROM toolchain AS dependencies
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/fetcher/package.json apps/fetcher/package.json
+COPY apps/reader-browser/package.json apps/reader-browser/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY apps/wechat-adapter/package.json apps/wechat-adapter/package.json
 COPY apps/worker/package.json apps/worker/package.json

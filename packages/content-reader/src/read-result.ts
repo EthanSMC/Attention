@@ -1,0 +1,28 @@
+import { ReadResultSchema, readFailurePolicy, type ReadBase, type ReadResult, type ReadMetadata,
+  type SourceKind } from "@attention/content-reader-contracts";
+import type { DocumentEvidence } from "./document-classifier.js";
+
+export function evidenceMetadata(evidence: DocumentEvidence): ReadMetadata {
+  return {title: evidence.title, author: evidence.author?.slice(0, 1_024) ?? null,
+    description: evidence.description, published_at: evidence.publishedAt?.toISOString() ?? null};
+}
+
+/** Pure formatting only. The caller must validate finalUrl's public-network policy. */
+export function evidenceToReadResult(evidence: DocumentEvidence, context: ReadBase & {
+  sourceKind: SourceKind; finalUrl: string; readAt: string; exhausted?: boolean; retryAfterMs?: number | null;
+}): ReadResult {
+  const {schema_version, request_ref, attempt_ref, attempts} = context;
+  const base = {schema_version, request_ref, attempt_ref, attempts};
+  const metadata = evidenceMetadata(evidence);
+  if (evidence.kind === "article") {
+    return ReadResultSchema.parse({...base, outcome: "ready", evidence_kind: "article", metadata,
+      extraction_method: evidence.extractionMethod, temporary_text: evidence.text, truncated: evidence.truncated,
+      final_public_url: context.finalUrl, source_kind: context.sourceKind, read_at: context.readAt});
+  }
+  const code = evidence.code ?? "unknown_reader_error";
+  const policy = readFailurePolicy(code);
+  const recovery = context.exhausted && policy.allowedRecoveries.includes("pause") ? "pause" : policy.recovery;
+  return ReadResultSchema.parse({...base, outcome: evidence.kind === "blocked" ? "blocked" : "failed", code,
+    scope: policy.scope, recovery, retry_after_ms: recovery === "retry_later" ? context.retryAfterMs ?? null : null,
+    metadata, evidence_kind: Object.values(metadata).some(value => value !== null) ? "metadata_only" : "none"});
+}

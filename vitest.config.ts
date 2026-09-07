@@ -12,6 +12,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      "@attention/reader-browser/protocol": `${root}apps/reader-browser/src/protocol.ts`,
       "@attention/ai": `${root}packages/ai/src/index.ts`,
       "@attention/auth": `${root}packages/auth/src/index.ts`,
       "@attention/collector": `${root}packages/collector/src/index.ts`,

@@ -57,9 +57,18 @@ importers:
 
   apps/fetcher:
     dependencies:
+      '@attention/content-reader':
+        specifier: workspace:*
+        version: link:../../packages/content-reader
+      '@attention/content-reader-contracts':
+        specifier: workspace:*
+        version: link:../../packages/content-reader-contracts
       '@attention/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@attention/reader-browser':
+        specifier: workspace:*
+        version: link:../reader-browser
       '@hono/node-server':
         specifier: latest
         version: 2.1.0(hono@4.13.1)
@@ -85,6 +94,28 @@ importers:
       tsx:
         specifier: latest
         version: 4.23.10
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@26.1.2)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@26.1.2)(esbuild@0.28.1)(tsx@4.23.10))
+
+  apps/reader-browser:
+    dependencies:
+      playwright:
+        specifier: 1.62.0
+        version: 1.62.0
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: latest
+        version: 26.1.2
+      esbuild:
+        specifier: ^0.28.1
+        version: 0.28.1
       typescript:
         specifier: ^6.0.3
         version: 6.0.3

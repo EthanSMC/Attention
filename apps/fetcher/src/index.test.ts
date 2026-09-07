@@ -16,10 +16,40 @@ function authorizedRequest(url = "https://example.com"): RequestInit {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
 describe("fetcher API", () => {
+  it("authenticates and bounds /v1/read and returns a strict read result", async () => {
+    const fetchOperation = vi.fn(async () => ({body: "<article><p>A synthetic public article.</p></article>", contentType: "text/html", finalUrl: "https://example.com/", status: 200, redirects: []}));
+    const app = createApp(secret, {fetchOperation});
+    expect((await app.request("/v1/read", {method: "POST"})).status).toBe(401);
+    expect((await app.request("/v1/read", {...authorizedRequest(), body: "x".repeat(17 * 1024)})).status).toBe(413);
+    const request = {...authorizedRequest(), body: JSON.stringify({url: "https://example.com/", sourceKind: "generic_web", request_ref: "r", attempt_ref: "a"})};
+    const response = await app.request("/v1/read", request);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toMatchObject({outcome: "ready", request_ref: "r", attempt_ref: "a", temporary_text: "A synthetic public article."});
+  });
+  it("keeps renderer disabled without trusted admission even if a backend is injected", async () => {
+    const read = vi.fn();
+    const app = createApp(secret, {browser: {read}, fetchOperation: async () => ({body: '<div id="app"></div><script src="/app.js"></script>', finalUrl: "https://example.com/", status: 200, redirects: []})});
+    const response = await app.request("/v1/read", {...authorizedRequest(), body: JSON.stringify({url: "https://example.com/", sourceKind: "generic_web", request_ref: "r", attempt_ref: "a"})});
+    expect(await response.json()).toMatchObject({code: "browser_backend_unavailable", recovery: "pause"});
+    expect(read).not.toHaveBeenCalled();
+  });
+  it("cancels a stalled authenticated read body within the total 90 second budget", async () => {
+    vi.useFakeTimers();
+    let cancelled = false;
+    const request = new Request("http://fetcher.test/v1/read", {method: "POST", headers: {authorization: `Bearer ${secret}`},
+      body: new ReadableStream({cancel() {cancelled = true;}}), duplex: "half"} as RequestInit & {duplex: "half"});
+    const pending = createApp(secret).request(request);
+    await vi.advanceTimersByTimeAsync(90_001);
+    expect(cancelled).toBe(true);
+    expect((await pending).status).toBe(408);
+    vi.useRealTimers();
+  });
   it("requires the shared secret", async () => {
     const response = await createApp(secret).request("/v1/fetch", {
       body: JSON.stringify({ url: "https://example.com" }),

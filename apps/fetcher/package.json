@@ -10,6 +10,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@attention/content-reader": "workspace:*",
+    "@attention/content-reader-contracts": "workspace:*",
+    "@attention/reader-browser": "workspace:*",
     "@attention/contracts": "workspace:*",
     "@hono/node-server": "latest",
     "hono": "latest",
