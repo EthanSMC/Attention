@@ -1,8 +1,48 @@
 import { PassThrough } from "node:stream";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { expect, it, vi } from "vitest";
 import { buildLaunchArgs, createIsolatedBrowserReader, withBrowserAdmission, RendererCleanupError } from "./browser-reader.js";
 const config = {runtimePath: "/usr/bin/docker", image: `attention-reader@sha256:${"a".repeat(64)}`,
   seccompPath: "/etc/attention/reader-seccomp.json", isolationVerified: true as const};
+
+it.each([
+  ["write", false], ["write", true], ["cleanup", false], ["cleanup", true], ["stdout", false],
+] as const)("contains real pipe errors during %s without an uncaught event (cleanup uncertain=%s)", (phase, uncertain) => {
+  const script = `
+    import {Writable, PassThrough} from 'node:stream';
+    import {createIsolatedBrowserReader, withBrowserAdmission} from ${JSON.stringify(new URL("./browser-reader.ts", import.meta.url).href)};
+    import {readDocument} from ${JSON.stringify(new URL("./read-document.ts", import.meta.url).href)};
+    let releases = 0, removed = 0;
+    const stdout = new PassThrough();
+    const stdin = new Writable({
+      write(_chunk, _encoding, callback) {
+        if (${JSON.stringify(phase)} === 'write') {callback(new Error('synthetic EPIPE')); return;}
+        callback();
+        setImmediate(() => {
+          if (${JSON.stringify(phase)} === 'stdout') stdout.destroy(new Error('synthetic stdout failure'));
+          else stdout.end();
+        });
+      },
+      destroy(_error, callback) {
+        if (${JSON.stringify(phase)} === 'cleanup') setImmediate(() => callback(new Error('synthetic delayed EPIPE')));
+        else callback(_error);
+      }
+    });
+    const isolated = createIsolatedBrowserReader(${JSON.stringify(config)}, {
+      launch() {return {stdin, stdout, closed: Promise.resolve(), kill() {stdout.destroy();}};},
+      async remove() {removed++; if (${uncertain}) throw new Error('uncertain cleanup');}
+    });
+    const request = {url:'https://example.com/',sourceKind:'generic_web',request_ref:'r',attempt_ref:'a',signal:new AbortController().signal};
+    const browser = withBrowserAdmission(isolated, {async consume() {return {signal:request.signal,async release(){releases++;}};}}, 'grant', request);
+    const result = await readDocument(request,{staticRead:async()=>({body:'<div id="app"></div><script src="/app.js"></script>',finalUrl:request.url,status:200,redirects:[]}),browser,now:()=>100});
+    await new Promise(resolve=>setImmediate(resolve));
+    process.stdout.write(JSON.stringify({code:result.code,recovery:result.recovery,releases,removed}));
+  `;
+  const child = spawnSync(process.execPath, ["--import", fileURLToPath(new URL("../node_modules/tsx/dist/loader.mjs", import.meta.url)), "--input-type=module", "--eval", script], {encoding: "utf8", timeout: 5_000});
+  expect({status: child.status, stderr: child.stderr}).toEqual({status: 0, stderr: ""});
+  expect(JSON.parse(child.stdout)).toEqual({code: "browser_backend_unavailable", recovery: uncertain ? "pause" : "retry_later", releases: uncertain ? 0 : 1, removed: 1});
+});
 
 it("builds fixed resource-limited sandbox args and rejects unapproved configurations", () => {
   const args = buildLaunchArgs(config, "attention-reader-12345678-1234-1234-1234-123456789012");

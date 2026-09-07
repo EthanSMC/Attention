@@ -3,6 +3,7 @@ import { spawn, execFile } from "node:child_process";
 import { accessSync, constants, readFileSync } from "node:fs";
 import { promisify } from "node:util";
 import type { Readable, Writable } from "node:stream";
+import { finished } from "node:stream/promises";
 import { z } from "zod";
 import { FrameDecoder, WireBudget, encodeFrame, ProtocolError, type Frame } from "@attention/reader-browser/protocol";
 import type { ReadRequest } from "@attention/content-reader-contracts";
@@ -120,14 +121,29 @@ export function createIsolatedBrowserReader(config: unknown, launcher: Launcher 
     let failure: unknown;
     let failed = false;
     let cleanupFailed = false;
+    let pipeFailure: BrowserUnavailableError | null = null;
     let killed = false;
     const kill = (): void => { if (!killed) {killed = true; child.kill();} };
     const abort = (): void => { kill(); child.stdout.destroy(); };
     signal.addEventListener("abort", abort, {once: true});
+    // A write callback rejection does not consume a Writable's separate error
+    // event. Keep both pipe listeners until stream destruction has completed.
+    const onPipeError = (): void => {
+      pipeFailure = new BrowserUnavailableError(true);
+      controller.abort();
+    };
+    child.stdin.on("error", onPipeError);
+    child.stdout.on("error", onPipeError);
+    const pipesClosed = Promise.allSettled([
+      finished(child.stdin, {cleanup: true}), finished(child.stdout, {cleanup: true}),
+    ]);
     const write = async (frame: Frame): Promise<void> => {
       signal.throwIfAborted();
       const bytes = encodeFrame(frame, budget);
-      await new Promise<void>((resolve, reject) => child.stdin.write(bytes, error => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => child.stdin.write(bytes, error => {
+        if (error) {onPipeError(); reject(pipeFailure);}
+        else resolve();
+      }));
     };
     try {
       await write({kind: "start", url: initial.toString(), sourceKind: input.sourceKind});
@@ -172,8 +188,12 @@ export function createIsolatedBrowserReader(config: unknown, launcher: Launcher 
         await launcher.remove(approved.runtimePath, name);
         await child.closed;
       } catch { cleanupFailed = true; }
+      await pipesClosed;
+      child.stdin.off("error", onPipeError);
+      child.stdout.off("error", onPipeError);
     }
     if (cleanupFailed) throw new RendererCleanupError();
+    if (pipeFailure) throw pipeFailure;
     if (failed) throw failure;
     if (!complete) throw new ProtocolError();
     return {html: complete.html, finalUrl: complete.finalUrl, status: complete.status};

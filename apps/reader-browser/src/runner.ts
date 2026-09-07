@@ -1,29 +1,66 @@
-import { chromium, type Route, type BrowserType, type Page } from "playwright";
+import { chromium, type BrowserType, type Page, type CDPSession } from "playwright";
 import { pathToFileURL } from "node:url";
-import { FrameSchema, FrameDecoder, WireBudget, encodeFrame, ProtocolError, RESOURCE_TYPES,
+import { FrameSchema, FrameDecoder, WireBudget, encodeFrame, ProtocolError,
   type Frame, type ResourceFrame, type ResourceReply } from "./protocol.js";
 
 type RequestResource = (url: string, resourceType: ResourceFrame["resourceType"]) => Promise<ResourceReply>;
-type ResourceRoute = {request(): {url(): string; method(): string; resourceType(): string};
-  abort(): Promise<unknown>; fulfill(options: Parameters<Route["fulfill"]>[0]): Promise<unknown>};
+const CDP_RESOURCE_TYPES = new Map<string, ResourceFrame["resourceType"]>([
+  ["Document", "document"], ["Script", "script"], ["Stylesheet", "stylesheet"], ["Fetch", "fetch"], ["XHR", "xhr"],
+]);
+interface PausedResource {
+  requestId: string;
+  frameId: string;
+  resourceType: string;
+  request: {url: string; method: string};
+}
 
-export async function handleResourceRoute(route: ResourceRoute, request: RequestResource): Promise<void> {
-  const source = route.request();
-  const type = source.resourceType();
-  if (source.method() !== "GET" || !RESOURCE_TYPES.some(allowed => allowed === type)) {
-    await route.abort(); return;
-  }
+/** Container-internal CDP only. Unlike Playwright's HTTP route wrapper, Fetch
+ * request-stage events include every redirect hop. Never continue a request. */
+export async function installResourceInterception(session: CDPSession, request: RequestResource): Promise<{close(): Promise<void>}> {
+  const {frameTree} = await session.send("Page.getFrameTree");
+  const pending = new Set<Promise<void>>();
+  const fail = async (requestId: string): Promise<void> => {
+    await session.send("Fetch.failRequest", {requestId, errorReason: "BlockedByClient"});
+  };
+  const relay = async (event: PausedResource): Promise<void> => {
+    const type = CDP_RESOURCE_TYPES.get(event.resourceType);
+    try {
+      if (event.frameId !== frameTree.frame.id || event.request.method !== "GET" || !type) {
+        await fail(event.requestId); return;
+      }
+      const result = await request(event.request.url, type);
+      if (result.kind === "resource_error") {await fail(event.requestId); return;}
+      if (result.finalUrl !== event.request.url) {
+        await session.send("Fetch.fulfillRequest", {requestId: event.requestId, responseCode: 302,
+          responseHeaders: [{name: "Location", value: result.finalUrl}], body: ""});
+      } else {
+        await session.send("Fetch.fulfillRequest", {requestId: event.requestId, responseCode: result.status,
+          responseHeaders: [{name: "Content-Type", value: result.contentType}], body: result.bodyBase64});
+      }
+    } catch { await fail(event.requestId).catch(() => undefined); }
+  };
+  const track = (operation: Promise<void>): void => {
+    pending.add(operation);
+    void operation.finally(() => pending.delete(operation));
+  };
+  const paused = (event: PausedResource): void => {track(relay(event));};
+  const authenticate = (event: {requestId: string}): void => {
+    track(session.send("Fetch.continueWithAuth", {requestId: event.requestId,
+      authChallengeResponse: {response: "CancelAuth"}}).then(() => undefined).catch(() => undefined));
+  };
+  session.on("Fetch.requestPaused", paused);
+  session.on("Fetch.authRequired", authenticate);
+  const close = async (): Promise<void> => {
+    session.off("Fetch.requestPaused", paused);
+    session.off("Fetch.authRequired", authenticate);
+    await Promise.allSettled(pending);
+  };
   try {
-    const result = await request(source.url(), type as ResourceFrame["resourceType"]);
-    if (result.kind === "resource_error") {await route.abort(); return;}
-    if (result.finalUrl !== source.url()) {
-      // Redirect every resource, including CSS/modules, to retain its base URL.
-      await route.fulfill({status: 302, headers: {location: result.finalUrl}, body: ""});
-    } else {
-      await route.fulfill({status: result.status, contentType: result.contentType,
-        body: Buffer.from(result.bodyBase64, "base64")});
-    }
-  } catch { await route.abort().catch(() => undefined); }
+    await session.send("Fetch.enable", {patterns: [{urlPattern: "*", requestStage: "Request"}], handleAuthRequests: true});
+  } catch (error) {await close(); throw error;}
+  // Caller closes the context before draining/removing interception. Disabling
+  // Fetch on a live page would release paused requests to the network stack.
+  return {close};
 }
 
 export class ResourceClient {
@@ -78,17 +115,13 @@ export async function runRenderer(start: Extract<Frame, {kind: "start"}>, reques
     signal.throwIfAborted();
     const context = await browser.newContext({acceptDownloads: false, serviceWorkers: "block",
       javaScriptEnabled: true, permissions: [], storageState: {cookies: [], origins: []}});
+    let interception: Awaited<ReturnType<typeof installResourceInterception>> | null = null;
     try {
       let mainPage: Page | null = null;
       context.on("page", page => {if (mainPage && page !== mainPage) void page.close().catch(() => undefined);});
       await context.routeWebSocket("**/*", socket => socket.close());
-      await context.route("**/*", async route => {
-        // Popup and child-frame navigations have no reading purpose.
-        const frame = route.request().frame();
-        if (!mainPage || frame !== mainPage.mainFrame()) {await route.abort(); return;}
-        await handleResourceRoute(route, request);
-      });
       mainPage = await context.newPage();
+      interception = await installResourceInterception(await context.newCDPSession(mainPage), request);
       mainPage.on("download", download => {void download.cancel();});
       mainPage.on("dialog", dialog => {void dialog.dismiss();});
       const response = await mainPage.goto(start.url, {waitUntil: "domcontentloaded", timeout: 50_000});
@@ -97,7 +130,9 @@ export async function runRenderer(start: Extract<Frame, {kind: "start"}>, reques
         .catch(() => undefined);
       signal.throwIfAborted();
       return FrameSchema.parse({kind: "complete", html: await mainPage.content(), finalUrl: mainPage.url(), status: response?.status() ?? 200}) as Extract<Frame, {kind: "complete"}>;
-    } finally { await context.close(); }
+    } finally {
+      try {await context.close();} finally {await interception?.close();}
+    }
   } finally {
     signal.removeEventListener("abort", abort);
     await browser.close();

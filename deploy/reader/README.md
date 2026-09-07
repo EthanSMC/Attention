@@ -43,10 +43,16 @@ no request-supplied URL or implicit in-process database access in Fetcher.
 
 Frames are strict JSONL: start; resource; resource_result/resource_error; complete/failed.
 Each result includes `{id,status,contentType,bodyBase64,finalUrl}`. The additive
-`finalUrl` is required: the runner synthesizes a bodyless 302 for any redirected
-resource, including documents, modules, and CSS, then re-requests through the same
-broker. This preserves relative URL bases without forwarding upstream headers.
-Both fetches count; redirects never reset budgets.
+`finalUrl` is required: the runner uses a container-internal CDP session with Fetch
+request-stage interception, fulfills a bodyless 302 for a redirected resource, and
+brokers the ensuing `Fetch.requestPaused` event too. This applies to documents,
+modules and CSS, retaining browser URL bases without forwarding upstream headers.
+Both fetches count; redirects never reset budgets. Playwright's HTTP route API is
+not installed: in the locked 1.62.0 implementation it automatically continues
+redirect hops, which would bypass the broker and fail inside the networkless
+container. The CDP session is local to the runner's page, has no exposed port or
+model-facing capability, and never issues Fetch.continueRequest. Authentication is
+cancelled. Interception stays enabled until the page context is closed.
 
 The parent uses safeFetch's URL, sensitive-query, all-DNS-answer, pinned-address,
 actual-peer, per-redirect, and HTTPS downgrade checks for each GET. Cookies,
@@ -59,6 +65,10 @@ shares a separate 20 MiB cap, including base64 overhead and final snapshot. Fram
 are at most 3 MiB, HTML snapshots at most 2 MiB UTF-8, rendering at most 60 seconds,
 and the authenticated request (including body consumption) at most 90 seconds.
 The stricter wire cap may end a read before 20 MiB binary bytes are reached.
+Pipe error events and write-callback failures are caught across renderer launch,
+reading and stream destruction. Cleanup is awaited before listeners are removed;
+confirmed cleanup returns a typed backend dependency failure, while uncertain
+cleanup retains the shared slot.
 
 ## Shared admission / Task 3 boundary
 
@@ -90,7 +100,11 @@ before reassigning its slot. General read/account leases may expire independentl
 2. Run a synthetic HTML shell plus controlled JavaScript article via the real broker
    and JSONL runner. Assert real final article extraction, final URL, one static then
    one browser attempt, and cleanup. Exercise redirected document/script/CSS relative
-   bases on the actual browser, not only the route seam.
+   bases on the actual browser, not only synthetic CDP events. The parent still
+   forwards only Content-Type and validated redirect destination; cross-origin
+   module/fetch responses requiring CORS headers may fail. Worker targets and
+   out-of-process child frames are not independently brokered; container network
+   isolation remains mandatory and unsupported targets must fail closed.
 3. Prove direct container sockets cannot reach public, private, loopback host, or
    metadata destinations. Test broker DNS rebinding, redirect-to-private, POST,
    WebSocket, service worker, popup and download denial using controlled targets.
@@ -102,5 +116,7 @@ before reassigning its slot. General read/account leases may expire independentl
    before operator attestation or enabling a production renderer.
 
 API references: [Playwright Docker](https://playwright.dev/docs/docker) and
-[Playwright network interception](https://playwright.dev/docs/network). Their generic
+[Playwright network interception](https://playwright.dev/docs/network),
+[CDPSession](https://playwright.dev/docs/api/class-cdpsession), and
+[CDP Fetch](https://chromedevtools.github.io/devtools-protocol/tot/Fetch/). Their generic
 container examples do not override this contract's stronger isolation requirements.
