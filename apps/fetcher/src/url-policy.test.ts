@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {build} from "esbuild";
+import {execFile} from "node:child_process";
+import {promisify} from "node:util";
+import {fileURLToPath} from "node:url";
 
 import { FetcherError } from "./errors.js";
 import { assertNoHttpsDowngrade, parseAndValidateUrl } from "./url-policy.js";
@@ -15,6 +19,13 @@ function expectCode(action: () => unknown, code: string): void {
 }
 
 describe("parseAndValidateUrl", () => {
+  it("exports a pure Web-importable policy without a service, launcher or network implementation", async () => {
+    const bundle = await build({stdin: {contents: 'import {parseAndValidateUrl} from "@attention/fetcher/url-policy"; console.log(parseAndValidateUrl("https://例子.测试:443/article", "generic_web").toString())',
+      resolveDir: fileURLToPath(new URL("../../web", import.meta.url))}, bundle: true, write: false, metafile: true, platform: "node", format: "cjs"});
+    expect(Object.keys(bundle.metafile!.inputs).some(path => /(?:browser-reader|safe-fetch|read-document|resolver|fetcher\/src\/index)\./u.test(path))).toBe(false);
+    const execution = await promisify(execFile)(process.execPath, ["-e", bundle.outputFiles![0]!.text], {timeout: 5000});
+    expect(execution.stdout.trim()).toBe("https://xn--fsqu00a.xn--0zwm56d/article");
+  });
   it("accepts a normal HTTPS URL", () => {
     expect(
       parseAndValidateUrl("https://example.com/article?utm_source=test", "generic_web")

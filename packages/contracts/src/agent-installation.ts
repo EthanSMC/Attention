@@ -16,7 +16,7 @@ import { CHANNEL_RUNTIME_SCOPES } from "./channel-runtime";
  */
 export const AGENT_INSTALLATION_MANIFEST_SCHEMA_VERSION = "2.3.0" as const;
 export const ATTENTION_SKILL_PACKAGE_VERSION = "1.9.0" as const;
-export const ATTENTION_SKILL_TOOL_CONTRACT_VERSION = "1.6.0" as const;
+export const ATTENTION_SKILL_TOOL_CONTRACT_VERSION = "1.7.0" as const;
 
 export const ATTENTION_SKILL_PUBLIC_PATH =
   "/skills/attention/SKILL.md" as const;

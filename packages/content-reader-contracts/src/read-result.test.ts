@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import * as contracts from "./read-result";
 
 import {
   isReaderFailureCode,
@@ -31,6 +33,27 @@ const readyResult = {
 } as const;
 
 describe("read result contract", () => {
+  it("allows truthful preflight failures without inventing reader evidence", () => {
+    const failure = {schema_version: 1, request_ref: "request-1", attempt_ref: "attempt-1",
+      attempts: [], outcome: "failed", code: "rate_limited", scope: "dependency",
+      recovery: "retry_later", retry_after_ms: 1000, evidence_kind: "none",
+      metadata: {author: null, description: null, published_at: null, title: null}};
+    expect(ReadResultSchema.safeParse(failure).success).toBe(true);
+    expect(ReadResultSchema.safeParse({...failure, code: "upstream_5xx"}).success).toBe(false);
+    expect(ReadResultSchema.safeParse({...failure, metadata, evidence_kind: "metadata_only"}).success).toBe(false);
+  });
+  it("extends owned results without dropping strict policy validation or JSON schema", () => {
+    expect(contracts).toHaveProperty("OwnedReadResultSchema");
+    const schema = (contracts as unknown as {OwnedReadResultSchema: z.ZodType}).OwnedReadResultSchema;
+    const owned = {...readyResult, collection_id: "00000000-0000-4000-8000-000000000001"};
+    expect(schema.safeParse(owned).success).toBe(true);
+    expect(schema.safeParse({...owned, secret: "bad"}).success).toBe(false);
+    expect(schema.safeParse({schema_version: 1, request_ref: "request-1", attempt_ref: "attempt-1",
+      collection_id: owned.collection_id, attempts: [], outcome: "failed", code: "permission_revoked",
+      scope: "dependency", recovery: "retry_later", retry_after_ms: 1000, evidence_kind: "none",
+      metadata: {author: null, description: null, published_at: null, title: null}}).success).toBe(false);
+    expect(() => z.toJSONSchema(schema, {target: "draft-7"})).not.toThrow();
+  });
   it("accepts a strict article-evidence result", () => {
     expect(ReadResultSchema.parse(readyResult)).toEqual(readyResult);
   });

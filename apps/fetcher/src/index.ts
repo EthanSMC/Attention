@@ -9,6 +9,7 @@ import { FetcherError } from "./errors.js";
 import { safeFetch } from "./safe-fetch.js";
 import { readDocument, type BrowserReader } from "./read-document.js";
 import { withBrowserAdmission, type BrowserAdmission } from "./browser-reader.js";
+import {readerStartupOptions} from "./admission-coordinator.js";
 
 const DEFAULT_MAX_CONCURRENCY = 16;
 const DEFAULT_MAX_QUEUE = 32;
@@ -317,6 +318,7 @@ if (process.env.NODE_ENV !== "test") {
   const env = envSchema.parse(process.env);
   serve({
     fetch: createApp(env.FETCHER_SHARED_SECRET, {
+      ...readerStartupOptions(process.env),
       maxConcurrency: env.FETCHER_MAX_CONCURRENCY,
       maxQueue: env.FETCHER_MAX_QUEUE,
       queueTimeoutMs: env.FETCHER_QUEUE_TIMEOUT_MS,

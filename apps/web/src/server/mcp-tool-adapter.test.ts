@@ -58,9 +58,9 @@ afterEach(async () => {
 
 describe("canonical Attention tool registry", () => {
   it("exports the stable contract version and a defensive public-name list", () => {
-    expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe("1.6.0");
+    expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe("1.7.0");
     expect(getAttentionPublicToolNames()).toEqual(ATTENTION_TOOL_NAMES);
-    expect(new Set(ATTENTION_TOOL_NAMES).size).toBe(15);
+    expect(new Set(ATTENTION_TOOL_NAMES).size).toBe(16);
   });
 
   it("exposes only scoped tools that a Free account can currently use", async () => {
@@ -136,7 +136,7 @@ describe("canonical Attention tool registry", () => {
     });
   });
 
-  it("publishes a strict structured-output contract for all fifteen tools", async () => {
+  it("publishes a strict structured-output contract for all sixteen tools", async () => {
     const client = await connectedClient(
       context({ isFilter: true, isMember: true, scopes: fullMcpScopes }),
     );

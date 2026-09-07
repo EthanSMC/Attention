@@ -13,6 +13,7 @@ import { AgentAccessError } from "./agent-retrieval";
 import { CollectionServiceError } from "./collection-service";
 import { ContentEnrichmentServiceError } from "./content-enrichment-service";
 import { DigestSettingsError } from "./digest-settings";
+import {FetcherClientError} from "./fetcher-client";
 import {
   createAttentionToolRegistry,
   type AttentionToolContext,
@@ -28,6 +29,16 @@ const collectionId = "00000000-0000-4000-8000-000000000005";
 const moderationCaseId = "00000000-0000-4000-8000-000000000006";
 const moderationVoteId = "00000000-0000-4000-8000-000000000007";
 const statusTimestamp = "2026-08-07T00:00:00.000Z";
+
+it("advertises an authorized source reader with a strict owned-result schema", () => {
+  const registry = createAttentionToolRegistry(dependencies());
+  const reader = registry.find(tool => tool.name === "attention_read_collection_source");
+  expect(reader).toBeDefined();
+  expect(reader!.annotations).toMatchObject({openWorldHint: true, readOnlyHint: true});
+  expect(reader!.inputSchema.safeParse({collection_id: collectionId, attempt_ref: "a", url: "https://example.test"}).success).toBe(false);
+  expect(reader!.outputSchema.safeParse({schema_version: 1, request_ref: "r", attempt_ref: "a", collection_id: collectionId,
+    attempts: [], outcome: "skipped", reason: "already_ready"}).success).toBe(true);
+});
 
 function attemptStatus(
   status: "accepted" | "processing",
@@ -118,6 +129,22 @@ function tool(
 }
 
 describe("Attention Tool Registry execution contract", () => {
+  it("audits only stable source outcome/category fields and keeps reader transport errors opaque", async () => {
+    const recordAudit = vi.fn();
+    const value = {schema_version: 1 as const, request_ref: "r", attempt_ref: "a", collection_id: collectionId,
+      outcome: "failed" as const, code: "rate_limited" as const, scope: "dependency" as const, recovery: "retry_later" as const,
+      attempts: [], retry_after_ms: 1000, evidence_kind: "none" as const, metadata: {author: null, title: null, description: null, published_at: null}};
+    const core = dependencies({readCollectionSource: vi.fn(async () => value)});
+    const definition = tool(core, "attention_read_collection_source");
+    expect(await definition.invoke(context({isMember: true, scopes: ["collection:read"], recordAudit}),
+      {collection_id: collectionId, attempt_ref: "a"})).toMatchObject({ok: true, value: {code: "rate_limited"}});
+    expect(recordAudit.mock.calls[0]![1]).toMatchObject({resultStatus: "failed", stableErrorCode: "rate_limited", collectionId});
+    expect(recordAudit.mock.calls[0]![1]).not.toHaveProperty("metadata");
+    expect(recordAudit.mock.calls[0]![1]).not.toHaveProperty("temporary_text");
+    const unavailable = tool(dependencies({readCollectionSource: vi.fn(async () => {throw new FetcherClientError("fetcher_unavailable");})}), "attention_read_collection_source");
+    expect(await unavailable.invoke(context({isMember: true, scopes: ["collection:read"]}), {collection_id: collectionId, attempt_ref: "a"}))
+      .toMatchObject({ok: false, code: "fetcher_unavailable"});
+  });
   it("binds every public tool name to exactly one success output schema", () => {
     expect(Object.keys(AttentionToolSuccessOutputSchemas)).toEqual(
       createAttentionToolRegistry(dependencies()).map((definition) => definition.name),

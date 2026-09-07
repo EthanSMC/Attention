@@ -267,6 +267,13 @@
       "when": 1788198943977,
       "tag": "0037_admin_entitlement_audits",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1788770822320,
+      "tag": "0038_source_read_coordination",
+      "breakpoints": true
     }
   ]
 }

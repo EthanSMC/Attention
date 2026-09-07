@@ -134,6 +134,12 @@ importers:
       '@attention/collector':
         specifier: workspace:*
         version: link:../../packages/collector
+      '@attention/content-reader':
+        specifier: workspace:*
+        version: link:../../packages/content-reader
+      '@attention/content-reader-contracts':
+        specifier: workspace:*
+        version: link:../../packages/content-reader-contracts
       '@attention/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -143,6 +149,9 @@ importers:
       '@attention/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@attention/fetcher':
+        specifier: workspace:*
+        version: link:../fetcher
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(zod@4.4.3)
@@ -312,6 +321,9 @@ importers:
 
   packages/contracts:
     dependencies:
+      '@attention/content-reader-contracts':
+        specifier: workspace:*
+        version: link:../content-reader-contracts
       zod:
         specifier: latest
         version: 4.4.3

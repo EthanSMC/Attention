@@ -37,6 +37,41 @@ const timestampColumns = () => ({
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 });
 
+// Coordination metadata only. Source URLs and temporary evidence never enter these tables.
+export const sourceReadAccounts = pgTable("source_read_accounts", {
+  accountId: uuid("account_id").primaryKey(),
+  collectionId: uuid("collection_id").notNull(),
+  operation: char("operation", {length: 64}).notNull(),
+  sourceFingerprint: char("source_fingerprint", {length: 64}).notNull(),
+  attemptRef: varchar("attempt_ref", {length: 128}).notNull(),
+  requestRef: varchar("request_ref", {length: 128}).notNull(),
+  reference: uuid("reference").notNull(),
+  leaseDeadline: timestamp("lease_deadline", {withTimezone: true}).notNull(),
+  authorizedUntil: timestamp("authorized_until", {withTimezone: true}).notNull(),
+  minuteBucket: timestamp("minute_bucket", {withTimezone: true}).notNull(),
+  minuteCount: integer("minute_count").notNull(),
+  browserConsumed: boolean("browser_consumed").default(false).notNull(),
+}, table => [
+  uniqueIndex("source_read_reference_unique").on(table.reference),
+  check("source_read_fingerprints", sql`${table.operation} ~ '^[0-9a-f]{64}$' AND ${table.sourceFingerprint} ~ '^[0-9a-f]{64}$'`),
+  check("source_read_count", sql`${table.minuteCount} BETWEEN 1 AND 6`),
+  pgPolicy("source_read_account_owner", {for: "all", to: "attention_web_runtime",
+    using: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`,
+    withCheck: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`}),
+]).enableRLS();
+
+export const sourceReadBrowserSlots = pgTable("source_read_browser_slots", {
+  slot: smallint("slot").primaryKey(),
+  reference: uuid("reference"),
+  claim: uuid("claim"),
+  rendererRef: varchar("renderer_ref", {length: 64}),
+  claimedAt: timestamp("claimed_at", {withTimezone: true}),
+}, table => [
+  check("source_read_physical_slots", sql`${table.slot} IN (1, 2)`),
+  check("source_read_slot_shape", sql`(${table.reference} IS NULL AND ${table.claim} IS NULL AND ${table.rendererRef} IS NULL AND ${table.claimedAt} IS NULL)
+    OR (${table.reference} IS NOT NULL AND ${table.claim} IS NOT NULL AND ${table.rendererRef} ~ '^attention-reader-[0-9a-f-]{36}$' AND ${table.claimedAt} IS NOT NULL)`),
+]).enableRLS();
+
 export const accountStatusEnum = pgEnum("account_status", [
   "invited",
   "active",

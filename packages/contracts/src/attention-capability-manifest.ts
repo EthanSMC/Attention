@@ -3,7 +3,7 @@ import { z } from "zod";
 import { CHANNEL_RUNTIME_RESOURCE, CHANNEL_RUNTIME_SCOPES } from "./channel-runtime";
 
 export const ATTENTION_CAPABILITY_MANIFEST_SCHEMA_VERSION = "1.0.0";
-export const ATTENTION_MCP_TOOL_CONTRACT_VERSION = "1.6.0";
+export const ATTENTION_MCP_TOOL_CONTRACT_VERSION = "1.7.0";
 export const ATTENTION_MCP_OAUTH_AUDIENCE = "attention-mcp";
 
 export const ATTENTION_MCP_OAUTH_SCOPES = [
@@ -22,6 +22,7 @@ export const ATTENTION_MCP_OAUTH_SCOPES = [
 ] as const;
 
 export const ATTENTION_MCP_TOOL_NAMES = [
+  "attention_read_collection_source",
   "attention_get_my_account",
   "attention_get_membership_status",
   "attention_list_collections",
@@ -211,6 +212,15 @@ export const attentionCapabilityManifest =
       contract_version: ATTENTION_MCP_TOOL_CONTRACT_VERSION,
       scopes: [...ATTENTION_MCP_OAUTH_SCOPES],
       tools: [
+        {
+          contract_version: ATTENTION_MCP_TOOL_CONTRACT_VERSION,
+          entitlement: {conditional: null, required: "member_or_filter"},
+          id: "collection.source.read",
+          oauth: {any_of_scopes: ["collection:read"], audience: ATTENTION_MCP_OAUTH_AUDIENCE},
+          summary: "Read temporary article evidence from an eligible public source owned through the current account's collection.",
+          tool_name: "attention_read_collection_source",
+          web_surface: {kind: "api", path: "/api/collections/:collectionId/source-read", shared_policy: true},
+        },
         {
           contract_version: ATTENTION_MCP_TOOL_CONTRACT_VERSION,
           entitlement: {

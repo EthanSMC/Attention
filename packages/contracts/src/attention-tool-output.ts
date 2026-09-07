@@ -1,4 +1,5 @@
 import { z } from "zod";
+import {OwnedReadResultSchema} from "@attention/content-reader-contracts";
 
 import { CollectorResponseSchema } from "./collector-response";
 
@@ -151,6 +152,7 @@ export const AttentionToolStructuredErrorSchema = z
   .strict();
 
 export const AttentionToolSuccessOutputSchemas = {
+  attention_read_collection_source: OwnedReadResultSchema,
   attention_get_my_account: z
     .object({
       capabilities: capabilitiesSchema,

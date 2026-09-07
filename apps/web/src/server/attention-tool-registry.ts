@@ -39,10 +39,13 @@ import {
 import { reportPublicContent } from "./moderation-service";
 import { publicFeedPreviewLimit } from "./public-access";
 import type { AttentionToolAuditInput } from "./attention-tool-audit";
+import {readCollectionSource, collectionSourceRequestSchema, CollectionSourceReadError, type SourceReadPrincipal} from "./collection-source-reader";
+import {FetcherClientError} from "./fetcher-client";
 
-export const ATTENTION_TOOL_CONTRACT_VERSION = "1.6.0";
+export const ATTENTION_TOOL_CONTRACT_VERSION = "1.7.0";
 
 export const ATTENTION_TOOL_NAMES = [
+  "attention_read_collection_source",
   "attention_get_my_account",
   "attention_get_membership_status",
   "attention_list_collections",
@@ -88,6 +91,7 @@ export interface AttentionToolBaseContext {
   requestId: string;
   serviceOrigin: string;
   scopes: readonly string[];
+  revalidate?: () => Promise<SourceReadPrincipal | null>;
 }
 
 export interface AttentionToolContext extends AttentionToolBaseContext {
@@ -134,6 +138,7 @@ export interface AttentionToolDefinition {
 }
 
 export interface AttentionToolCoreDependencies {
+  readCollectionSource?: typeof readCollectionSource;
   castModerationVote: typeof castModerationVote;
   collectFromWeb: typeof collectFromWeb;
   getCollectionStatus: typeof getCollectionStatus;
@@ -276,8 +281,9 @@ function auditToolCall(
     publicCitationIds: publicCitationIds(value),
     requestId: context.requestId,
     resultStatus:
-      stringField(value, "status") ?? stringField(attempt, "status"),
-    stableErrorCode: result.ok ? null : result.code,
+      stringField(value, "status") ?? stringField(attempt, "status") ??
+      (toolName === "attention_read_collection_source" ? stringField(value, "outcome") : null),
+    stableErrorCode: result.ok ? (toolName === "attention_read_collection_source" ? stringField(value, "code") : null) : result.code,
     toolName,
   };
   try {
@@ -570,6 +576,22 @@ export function createAttentionToolRegistry(
   core: AttentionToolCoreDependencies = defaultCoreDependencies,
 ): readonly AttentionToolDefinition[] {
   return [
+    defineAttentionTool({
+      annotations: {destructiveHint: false, idempotentHint: false, openWorldHint: true, readOnlyHint: true},
+      description: "Read an owned collection's eligible public source for temporary article evidence. Requires current Member or Filter and collection:read; performs an external read subject to account limits. Never accepts a URL or browser credentials.",
+      execute: async (context, input) => {
+        if (!hasScope(context, "collection:read")) return insufficientScope("collection:read");
+        try {return toolSuccess(await (core.readCollectionSource ?? readCollectionSource)(context, input));}
+        catch (error) {
+          if (error instanceof CollectionSourceReadError) return toolError(error.code, "Recheck your current Attention access and collection status.");
+          if (error instanceof FetcherClientError) return toolError(error.code, "The configured source reader could not provide a validated response. Retry within the source-reading recovery budget.");
+          const known = knownServiceError(error); if (known) return known; throw error;
+        }
+      },
+      inputSchema: collectionSourceRequestSchema.extend(attentionClientContextShape),
+      isVisible: context => hasScope(context, "collection:read") && (context.isMember || context.isFilter),
+      name: "attention_read_collection_source", title: "Read Attention collection source",
+    }),
     defineAttentionTool({
       annotations: {
         destructiveHint: false,

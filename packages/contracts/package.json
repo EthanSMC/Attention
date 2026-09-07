@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@attention/content-reader-contracts": "workspace:*",
     "zod": "latest"
   },
   "devDependencies": {

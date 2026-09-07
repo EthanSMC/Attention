@@ -14,6 +14,9 @@ const nextConfig: NextConfig = {
   transpilePackages: [
     "@attention/auth",
     "@attention/collector",
+    "@attention/content-reader",
+    "@attention/content-reader-contracts",
+    "@attention/fetcher",
     "@attention/contracts",
     "@attention/db",
     "@attention/domain"

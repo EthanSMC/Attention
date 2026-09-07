@@ -61,7 +61,7 @@ export const ExtractionMethodSchema = z.enum([
 ]);
 export type ExtractionMethod = z.infer<typeof ExtractionMethodSchema>;
 
-const SafeReferenceSchema = z.string()
+export const SafeReferenceSchema = z.string()
   .min(1)
   .max(128)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u);
@@ -85,7 +85,7 @@ export const ReadAttemptSchema = z.object({
 }).strict();
 export type ReadAttempt = z.infer<typeof ReadAttemptSchema>;
 
-const ReadAttemptsSchema = z.array(ReadAttemptSchema).min(1).max(2).superRefine((attempts, context) => {
+const ReadAttemptsSchema = z.array(ReadAttemptSchema).max(2).superRefine((attempts, context) => {
   if (new Set(attempts.map((attempt) => attempt.method)).size !== attempts.length) {
     context.addIssue({ code: "custom", message: "A read method can only be attempted once" });
   }
@@ -111,7 +111,7 @@ const ReadBaseShape = {
 
 const ReadyReadResultSchema = z.object({
   ...ReadBaseShape,
-  attempts: ReadAttemptsSchema,
+  attempts: ReadAttemptsSchema.refine((attempts) => attempts.length > 0),
   evidence_kind: z.literal("article"),
   extraction_method: ExtractionMethodSchema.exclude(["metadata", "none"]),
   final_public_url: SafePublicUrlSchema,
@@ -206,13 +206,16 @@ export function isReaderFailureCode(value: unknown): value is ReadFailureCode {
   return ReadFailureCodeSchema.safeParse(value).success;
 }
 
-export const ReadResultSchema = z.discriminatedUnion("outcome", [
-  ReadyReadResultSchema,
-  FailedReadResultSchema,
-  SkippedReadResultSchema,
-]).superRefine((result, context) => {
+const ReadResultBranches = z.discriminatedUnion("outcome", [ReadyReadResultSchema, FailedReadResultSchema, SkippedReadResultSchema]);
+function validateReadPolicy(result: z.infer<typeof ReadResultBranches>, context: z.RefinementCtx) {
   if (result.outcome === "ready" || result.outcome === "skipped") return;
   const policy = readFailurePolicy(result.code);
+  if (result.attempts.length === 0 && (
+    !["rate_limited", "reader_not_configured", "permission_revoked", "content_ineligible",
+      "unsafe_source"].includes(result.code) || result.evidence_kind !== "none"
+  )) {
+    context.addIssue({code: "custom", path: ["attempts"], message: "Only evidence-free preflight failures may omit attempts"});
+  }
   if (result.scope !== policy.scope) {
     context.addIssue({ code: "custom", path: ["scope"], message: "Scope conflicts with code" });
   }
@@ -238,7 +241,13 @@ export const ReadResultSchema = z.discriminatedUnion("outcome", [
       message: "Evidence kind conflicts with metadata",
     });
   }
-});
+}
+export const ReadResultSchema = ReadResultBranches.superRefine(validateReadPolicy);
+const ownedShape = {collection_id: z.string().uuid()};
+export const OwnedReadResultSchema = z.discriminatedUnion("outcome", [
+  ReadyReadResultSchema.extend(ownedShape), FailedReadResultSchema.extend(ownedShape), SkippedReadResultSchema.extend(ownedShape),
+]).superRefine(validateReadPolicy);
+export type OwnedReadResult = z.infer<typeof OwnedReadResultSchema>;
 export type ReadResult = z.infer<typeof ReadResultSchema>;
 export type ReadBase = Pick<ReadResult, "schema_version" | "request_ref" | "attempt_ref" | "attempts">;
 

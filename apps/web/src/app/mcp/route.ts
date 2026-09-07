@@ -160,6 +160,11 @@ export async function handleMcpRequest(
     requestId: crypto.randomUUID(),
     serviceOrigin: new URL(boundedRequest.url).origin,
     scopes: principal.scopes,
+    revalidate: async () => {
+      const current = await dependencies.principalResolver(boundedRequest, "attention-mcp");
+      return current && current.accountId === principal.accountId && current.credentialId === principal.credentialId &&
+        current.credentialKind === principal.credentialKind && current.clientId === principal.clientId ? current : null;
+    },
   });
   await server.connect(transport);
   return withMcpCors(await transport.handleRequest(boundedRequest));

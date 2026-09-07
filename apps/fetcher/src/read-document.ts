@@ -14,6 +14,9 @@ export interface BrowserReader {
 export class BrowserUnavailableError extends Error {
   constructor(readonly configured: boolean) { super("Browser backend unavailable"); }
 }
+export class BrowserCapacityError extends Error {
+  constructor(readonly retryAfterMs: number) {super("reader_capacity_limited");}
+}
 
 export function parseRetryAfter(value: string | undefined, now: number): number | null {
   if (!value || value.length > 128) return null;
@@ -23,6 +26,7 @@ export function parseRetryAfter(value: string | undefined, now: number): number 
 }
 
 function failureCode(error: unknown): ReadFailureCode {
+  if (error instanceof BrowserCapacityError) return "rate_limited";
   if (error instanceof BrowserUnavailableError) return "browser_backend_unavailable";
   if (!(error instanceof FetcherError)) return "unknown_reader_error";
   switch (error.code) {
@@ -74,6 +78,7 @@ export async function readDocument(input: ReadRequest & {signal: AbortSignal}, d
         evidence = classifyDocument({html, finalUrl, sourceKind: input.sourceKind, status: response.status});
         metadata = evidenceMetadata(evidence);
       } catch (error) {
+        if (error instanceof BrowserCapacityError) retryAfter = error.retryAfterMs;
         attempts.push({method, duration_ms: Math.min(90_000, Math.max(0, Math.round(deps.now() - start)))});
         const code = error instanceof BrowserUnavailableError ? failureCode(error)
           : signal.aborted ? "network_timeout" : failureCode(error);
