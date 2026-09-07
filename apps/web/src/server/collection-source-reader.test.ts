@@ -132,6 +132,134 @@ describe.skipIf(!process.env.TEST_READER_DATABASE_URL)("owned source gateway wit
     expect(await gateway.readCollectionSource(context, input, deps)).toMatchObject({code: "permission_revoked",
       attempts: [{method: "static", duration_ms: 5}]});
   });
+  it("independently rejects and never caches ready evidence for a different source kind", async () => {
+    const {context, deps, read} = fixture();
+    read.mockImplementation(async request => ({...response(request), source_kind: "douyin"} as ReadResult));
+    for (let i = 0; i < 2; i++) await expect(gateway.readCollectionSource(context, input, deps))
+      .rejects.toMatchObject({code: "invalid_fetcher_response"});
+    expect(read).toHaveBeenCalledTimes(2); expect(deps.memory.inflight.size).toBe(0);
+  });
+  it.each([1, 2, 3, 4])("bounds a never-settling direct authority check at position %s", async position => {
+    let checks = 0;
+    const {context, deps, read} = fixture(async () => {
+      if (++checks === position) return new Promise<never>(() => {});
+      return principal;
+    });
+    let settled = false, value: unknown;
+    const pending = gateway.readCollectionSource(context, input, deps).then(result => {value = result;}, error => {value = error;})
+      .finally(() => {settled = true;});
+    await vi.waitFor(() => expect(settled).toBe(true), {timeout: 2200});
+    await pending;
+    expect(value).not.toHaveProperty("temporary_text");
+    if (position >= 3) expect(value).toMatchObject({attempts: [{method: "static", duration_ms: 5}]});
+    expect(read).toHaveBeenCalledTimes(position >= 3 ? 1 : 0);
+    expect(deps.memory.inflight.size).toBe(0);
+    const rows = await owner.sql`select lease_deadline <= clock_timestamp() as released from source_read_accounts where account_id = ${accountId}`;
+    if (position > 1) expect(rows[0]?.released).toBe(true);
+  });
+  it.each([1, 2, 3, 4])("cancels a never-settling direct authority check at position %s", async position => {
+    let checks = 0;
+    const controller = new AbortController();
+    const {context, deps} = fixture(async () => {
+      if (++checks === position) return new Promise<never>(() => {});
+      return principal;
+    });
+    let settled = false, value: unknown;
+    const pending = gateway.readCollectionSource({...context, signal: controller.signal}, input, deps)
+      .then(result => {value = result;}, error => {value = error;}).finally(() => {settled = true;});
+    await vi.waitFor(() => expect(checks).toBeGreaterThanOrEqual(position));
+    controller.abort();
+    await vi.waitFor(() => expect(settled).toBe(true), {timeout: 400});
+    await pending;
+    expect(value).not.toHaveProperty("temporary_text");
+    expect(deps.memory.inflight.size).toBe(0);
+  });
+  it.each(["cache", "duplicate"])("does not return text when %s finalization is cancelled during authority resolution", async reuse => {
+    const {context, deps, read} = fixture();
+    let finishRead!: () => void;
+    if (reuse === "duplicate") read.mockImplementation(async request => {
+      await new Promise<void>(resolve => {finishRead = resolve;}); return response(request);
+    });
+    const first = gateway.readCollectionSource(context, input, deps);
+    if (reuse === "cache") await first;
+    else await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+    let checks = 0, finishAuthority!: (value: typeof principal) => void;
+    const controller = new AbortController();
+    const pending = gateway.readCollectionSource({...context, runId: "waiter", signal: controller.signal, revalidate: async () => {
+      if (++checks === 2) return new Promise<typeof principal>(resolve => {finishAuthority = resolve;});
+      return principal;
+    }}, input, deps).catch(error => error as unknown);
+    if (reuse === "duplicate") {await vi.waitFor(() => expect(checks).toBe(1)); finishRead(); await first;}
+    await vi.waitFor(() => expect(checks).toBe(2));
+    controller.abort(); finishAuthority(principal);
+    expect(await pending).not.toHaveProperty("temporary_text");
+    expect(deps.memory.inflight.size).toBe(0);
+  });
+  it.each(["stall", "reject"])("bounds coordinator release %s and forgets completed evidence", async failure => {
+    const {context, deps, read} = fixture();
+    const release = deps.coordinator.release;
+    deps.coordinator.release = async (...args) => {
+      await release(...args);
+      if (failure === "stall") return new Promise<never>(() => {});
+      throw new Error("private coordinator error");
+    };
+    let settled = false, value: unknown;
+    const pending = gateway.readCollectionSource(context, input, deps).then(result => {value = result;}, error => {value = error;})
+      .finally(() => {settled = true;});
+    await vi.waitFor(() => expect(settled).toBe(true), {timeout: 2000}); await pending;
+    expect(value).toMatchObject({code: "fetcher_unavailable"});
+    expect(value).not.toHaveProperty("temporary_text"); expect(deps.memory.inflight.size).toBe(0);
+    deps.coordinator.release = release;
+    expect(await gateway.readCollectionSource(context, input, deps)).toMatchObject({outcome: "ready"});
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+  it.each(["initial", "reader"])("starts one request deadline before %s work and removes timed-out in-flight work", async stage => {
+    const timeout = AbortSignal.timeout.bind(AbortSignal);
+    const deadlines = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => timeout(ms === 90_000 ? 100 : ms));
+    const {context, deps, read} = fixture(stage === "initial" ? async () => new Promise<never>(() => {}) : undefined);
+    if (stage === "reader") read.mockImplementation(async () => new Promise<never>(() => {}));
+    let settled = false, value: unknown;
+    try {
+      const pending = gateway.readCollectionSource(context, input, deps).then(result => {value = result;}, error => {value = error;})
+        .finally(() => {settled = true;});
+      await vi.waitFor(() => expect(settled).toBe(true), {timeout: 500}); await pending;
+      expect(value).not.toHaveProperty("temporary_text"); expect(value).not.toHaveProperty("attempts");
+      expect(deps.memory.inflight.size).toBe(0);
+      expect(deadlines.mock.calls.filter(([ms]) => ms === 90_000)).toHaveLength(1);
+    } finally {deadlines.mockRestore();}
+  });
+  it("discards late acquisition acknowledgement and releases only its original nonce", async () => {
+    const {context, deps, read} = fixture();
+    const acquire = deps.coordinator.acquire;
+    let acknowledge!: () => void;
+    deps.coordinator.acquire = async (...args) => {
+      const claim = await acquire(...args);
+      await new Promise<void>(resolve => {acknowledge = resolve;}); return claim;
+    };
+    const controller = new AbortController();
+    const pending = gateway.readCollectionSource({...context, signal: controller.signal}, input, deps).catch(error => error as unknown);
+    await vi.waitFor(() => expect(acknowledge).toBeTypeOf("function")); controller.abort();
+    expect(await pending).not.toHaveProperty("temporary_text");
+    expect(deps.memory.inflight.size).toBe(0); expect(read).not.toHaveBeenCalled();
+    const [prior] = await owner.sql`select reference from source_read_accounts where account_id = ${accountId}`;
+    await owner.sql`update source_read_accounts set lease_deadline = clock_timestamp() - interval '1 second' where account_id = ${accountId}`;
+    const scope = {accountId, collectionId, operation: "a".repeat(64), sourceFingerprint: "b".repeat(64), attemptRef: "new", requestRef: "new"};
+    const replacement = await acquire(scope, true); if (!replacement.allowed) throw new Error("replacement missing");
+    acknowledge();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(replacement.reference).not.toBe(prior!.reference);
+    expect(await deps.coordinator.heartbeat(scope, replacement.reference)).toBe(true);
+    await deps.coordinator.release(scope, replacement.reference);
+  });
+  it("observes acquisition rejection when cancellation happens before its await is attached", async () => {
+    const {context, deps, read} = fixture();
+    const controller = new AbortController();
+    deps.coordinator.acquire = async () => {controller.abort(); throw new Error("synthetic cancelled acquisition");};
+    await expect(gateway.readCollectionSource({...context, signal: controller.signal}, input, deps))
+      .rejects.toMatchObject({code: "fetcher_timeout"});
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(deps.memory.inflight.size).toBe(0); expect(read).not.toHaveBeenCalled();
+  });
   it("fails closed when owner principal revalidation stalls and stops its bounded heartbeat loop", async () => {
     let checks = 0;
     const {context, deps, read} = fixture(async () => {

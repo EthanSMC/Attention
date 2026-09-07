@@ -25,12 +25,25 @@ export class SourceReadCapacityError extends Error {
 }
 
 export function createSourceReadCoordinator(db: AttentionDatabase) {
-  async function debit(tx: AttentionTransaction, scope: SourceReadScope): Promise<{allowed: boolean; retryAfterMs: number}> {
+  async function transaction<T>(work: (tx: AttentionTransaction) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
+    return db.transaction(async tx => {
+      signal?.throwIfAborted();
+      await tx.execute(sql`set local statement_timeout = '1000ms'`);
+      signal?.throwIfAborted();
+      const result = await work(tx);
+      // A query that completes after cancellation must roll back, not publish a late claim/renewal.
+      signal?.throwIfAborted();
+      return result;
+    });
+  }
+  async function debit(tx: AttentionTransaction, scope: SourceReadScope, signal?: AbortSignal): Promise<{allowed: boolean; retryAfterMs: number}> {
     await setAccountContext(tx, scope.accountId);
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'source-read:' + scope.accountId}, 0))`);
     const rows = await tx.execute(sql`select minute_bucket = date_trunc('minute', clock_timestamp()) and minute_count >= 6 as limited,
       greatest(1, ceil(extract(epoch from (minute_bucket + interval '1 minute' - clock_timestamp())) * 1000)) as retry
       from source_read_accounts where account_id = ${scope.accountId}::uuid`);
+    signal?.throwIfAborted();
     if (rows[0]?.limited) return {allowed: false, retryAfterMs: Math.min(60_000, Number(rows[0].retry))};
     await tx.execute(sql`insert into source_read_accounts (account_id, collection_id, operation, source_fingerprint,
       attempt_ref, request_ref, reference, lease_deadline, authorized_until, minute_bucket, minute_count, browser_consumed)
@@ -48,16 +61,17 @@ export function createSourceReadCoordinator(db: AttentionDatabase) {
     return result;
   }
   return {
-    consumeInvocation: (scope: SourceReadScope) => db.transaction(tx => debit(tx, scope)),
-    async acquire(scope: SourceReadScope, invocationDebited = false): Promise<SourceClaim> {
-      return db.transaction(async tx => {
-        if (!invocationDebited) {const budget = await debit(tx, scope); if (!budget.allowed) return {allowed: false, retryAfterMs: budget.retryAfterMs};}
+    consumeInvocation: (scope: SourceReadScope, signal?: AbortSignal) => transaction(tx => debit(tx, scope, signal), signal),
+    async acquire(scope: SourceReadScope, invocationDebited = false, signal?: AbortSignal): Promise<SourceClaim> {
+      return transaction(async tx => {
+        if (!invocationDebited) {const budget = await debit(tx, scope, signal); if (!budget.allowed) return {allowed: false, retryAfterMs: budget.retryAfterMs};}
         await setAccountContext(tx, scope.accountId);
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'source-read:' + scope.accountId}, 0))`);
         const rows = await tx.execute(sql`select *,
           lease_deadline > clock_timestamp() as busy
           from source_read_accounts where account_id = ${scope.accountId}::uuid`);
         const prior = rows[0];
+        signal?.throwIfAborted();
         if (prior?.busy) return {allowed: false, retryAfterMs: 1000};
         if (!prior) return {allowed: false, retryAfterMs: 1000};
         const reference = randomUUID();
@@ -71,19 +85,20 @@ export function createSourceReadCoordinator(db: AttentionDatabase) {
             reference = excluded.reference, lease_deadline = excluded.lease_deadline, authorized_until = excluded.authorized_until,
             browser_consumed = false`);
         return {allowed: true, reference};
-      });
+      }, signal);
     },
-    async heartbeat(scope: SourceReadScope, reference: string): Promise<boolean> {
-      return db.transaction(async tx => {
+    async heartbeat(scope: SourceReadScope, reference: string, signal?: AbortSignal): Promise<boolean> {
+      return transaction(async tx => {
         await setAccountContext(tx, scope.accountId);
+        signal?.throwIfAborted();
         const rows = await tx.execute(sql`update source_read_accounts set authorized_until = least(lease_deadline, clock_timestamp() + interval '2 seconds')
           where account_id = ${scope.accountId}::uuid and reference = ${reference}::uuid and operation = ${scope.operation}
             and lease_deadline > clock_timestamp() and authorized_until > clock_timestamp() returning reference`);
         return rows.length === 1;
-      });
+      }, signal);
     },
     async release(scope: SourceReadScope, reference: string): Promise<void> {
-      await db.transaction(async tx => {
+      await transaction(async tx => {
         await setAccountContext(tx, scope.accountId);
         await tx.execute(sql`update source_read_accounts set lease_deadline = clock_timestamp(), authorized_until = clock_timestamp()
           where account_id = ${scope.accountId}::uuid and reference = ${reference}::uuid`);

@@ -3,6 +3,18 @@ import * as client from "./fetcher-client";
 
 afterEach(() => {vi.unstubAllEnvs(); vi.unstubAllGlobals();});
 describe("trusted source reader client", () => {
+  it("rejects a ready response for a different source kind without legacy fallback", async () => {
+    vi.stubEnv("FETCHER_BASE_URL", "https://fetcher.example.test"); vi.stubEnv("FETCHER_SHARED_SECRET", "s".repeat(32));
+    const fetch = vi.fn(async () => Response.json({schema_version: 1, request_ref: "r", attempt_ref: "a", outcome: "ready",
+      attempts: [{method: "static", duration_ms: 5}], temporary_text: "Synthetic article evidence.", evidence_kind: "article",
+      extraction_method: "readability", final_public_url: "https://example.com/article", source_kind: "douyin",
+      read_at: "2026-09-07T00:00:00.000Z", truncated: false,
+      metadata: {author: null, title: null, description: null, published_at: null}}));
+    vi.stubGlobal("fetch", fetch);
+    await expect(client.readExternalSource({request_ref: "r", attempt_ref: "a", sourceKind: "generic_web", url: "https://example.com/article"},
+      {signal: new AbortController().signal, admissionReference: "reference-1"})).rejects.toMatchObject({code: "invalid_fetcher_response"});
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it.each([403, 404])("classifies legacy target HTTP %s as source evidence without a browser attempt", async status => {
     vi.stubEnv("FETCHER_BASE_URL", "https://fetcher.example.test"); vi.stubEnv("FETCHER_SHARED_SECRET", "s".repeat(32));
     const fetch = vi.fn().mockResolvedValueOnce(new Response("missing", {status: 404})).mockResolvedValueOnce(Response.json({

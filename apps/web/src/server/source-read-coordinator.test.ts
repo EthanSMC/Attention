@@ -126,4 +126,55 @@ describe.skipIf(!databaseUrl)("source reader shared coordination with non-owner 
     await c.browserRelease({...replacementInput, claim: replacementSlot!.claim});
     await c.browserRelease({...two, claim: slot2!.claim});
   });
+  it("rolls back cancelled acquisition waiting for a DB lock and fences late heartbeat/release from a replacement", async () => {
+    const c = coordination.createSourceReadCoordinator(web.db);
+    await owner.sql`update source_read_accounts set minute_bucket = clock_timestamp() - interval '1 minute', lease_deadline = clock_timestamp() - interval '1 second' where account_id = ${accountId}`;
+    const old = await c.acquire(scope); if (!old.allowed) throw new Error("old lease missing");
+    await c.release(scope, old.reference);
+    let unlock!: () => void, locked!: () => void;
+    const lockReady = new Promise<void>(resolve => {locked = resolve;});
+    const hold = new Promise<void>(resolve => {unlock = resolve;});
+    const blocker = owner.db.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'source-read:' + accountId}, 0))`);
+      locked(); await hold;
+    });
+    await lockReady;
+    const cancellation = new AbortController();
+    // Optional signal is the production boundary under test; old implementation ignores it.
+    const acquire = c.acquire as (input: typeof scope, debited: boolean, signal?: AbortSignal) => ReturnType<typeof c.acquire>;
+    const late = acquire(scope, true, cancellation.signal).catch(error => error as unknown);
+    await new Promise(resolve => setTimeout(resolve, 100)); cancellation.abort(); unlock(); await blocker;
+    expect(await late).not.toMatchObject({allowed: true});
+    const current = await c.acquire(scope); expect(current.allowed).toBe(true);
+    if (!current.allowed) throw new Error("replacement missing");
+    const expiredReference = old.reference;
+    expect(await c.heartbeat(scope, expiredReference)).toBe(false);
+    await c.release(scope, expiredReference);
+    expect(await c.heartbeat(scope, current.reference)).toBe(true);
+    await c.release(scope, current.reference);
+  });
+  it("cannot apply a blocked old heartbeat or release to a replacement nonce", async () => {
+    const c = coordination.createSourceReadCoordinator(web.db);
+    await owner.sql`update source_read_accounts set minute_bucket = clock_timestamp() - interval '1 minute', lease_deadline = clock_timestamp() - interval '1 second' where account_id = ${accountId}`;
+    const claim = await c.acquire(scope); if (!claim.allowed) throw new Error("claim missing");
+    const replacement = randomUUID();
+    let unlock!: () => void, locked!: () => void;
+    const lockReady = new Promise<void>(resolve => {locked = resolve;});
+    const hold = new Promise<void>(resolve => {unlock = resolve;});
+    const blocker = owner.db.transaction(async tx => {
+      await tx.execute(sql`select reference from source_read_accounts where account_id = ${accountId}::uuid for update`);
+      locked(); await hold;
+      // Controlled replacement while the real runtime-role UPDATE is blocked on this row.
+      await tx.execute(sql`update source_read_accounts set reference = ${replacement}::uuid,
+        authorized_until = clock_timestamp() + interval '2 seconds' where account_id = ${accountId}::uuid`);
+    });
+    await lockReady;
+    const cancellation = new AbortController();
+    const heartbeat = c.heartbeat(scope, claim.reference, cancellation.signal).catch(() => false);
+    await new Promise(resolve => setTimeout(resolve, 100)); cancellation.abort(); unlock(); await blocker;
+    expect(await heartbeat).toBe(false);
+    await c.release(scope, claim.reference);
+    expect(await c.heartbeat(scope, replacement)).toBe(true);
+    await c.release(scope, replacement);
+  });
 });

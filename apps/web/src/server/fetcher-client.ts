@@ -113,6 +113,7 @@ export async function readExternalSource(request: ReadRequest,
   const result = ReadResultSchema.parse(await boundedReaderJson(response, 256 * 1024));
   if (result.request_ref !== request.request_ref || result.attempt_ref !== request.attempt_ref) throw new FetcherClientError("invalid_fetcher_response");
   if (result.outcome === "ready") {
+    if (result.source_kind !== request.sourceKind) throw new FetcherClientError("invalid_fetcher_response");
     assertNoHttpsDowngrade(parseAndValidateUrl(request.url, request.sourceKind), parseAndValidateUrl(result.final_public_url, request.sourceKind));
   }
   return result;
