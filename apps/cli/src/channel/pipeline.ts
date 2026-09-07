@@ -40,11 +40,13 @@ import {
   type CollectionReplyRejectionReason,
 } from "./collection-reply-control";
 import type { AttentionMcpFailure } from "./mcp-readiness";
+import { initialReaderBudget } from "./reader-recovery";
 import {
   cancelSummaryRetry,
   scheduleSummaryRetry,
   settleReaderAttempt,
   summaryRetryContext,
+  unknownReadFailure,
 } from "./summary-retry";
 
 export interface PipelineInput {
@@ -89,6 +91,19 @@ export type ControlCommand =
   | "reset";
 
 const TRUNCATION_NOTE = "\n…（内容过长已截断）";
+
+/** Narrow owner-request authority, independent of host prose and reader availability. */
+function isExplicitSummaryRecovery(message: InboundMessage): boolean {
+  if (!Array.isArray(message.itemList) || message.itemList.length !== 1) return false;
+  const item: unknown = message.itemList[0];
+  if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+  const record = item as Record<string, unknown>;
+  if ("ref_msg" in record) return false;
+  const body = record.type === 1 ? record.text_item : record.type === 3 ? record.voice_item : null;
+  if (!body || typeof body !== "object" || !("text" in body) || typeof body.text !== "string") return false;
+  // Exact whole messages only: no quoted/forwarded/code text, negation, or status questions.
+  return /^(?:请|帮我|请帮我)?(?:重试摘要|重试一下摘要|补一下|补一下摘要|再补一下摘要|再试试补摘要)[。！!]?$/u.test(body.text.normalize("NFKC").trim());
+}
 
 const ALWAYS_LOCAL_COMMANDS: Readonly<Record<string, ControlCommand>> = {
   "/help": "help",
@@ -267,19 +282,21 @@ export async function handleInboundMessage(
     let retryQueueFull = false;
     let readerSettlement: "scheduled" | "paused" | "terminal" | undefined;
     if (outcome.collectionReplyControl.kind !== "fixed") {
-      if (result === "retryable_incomplete" && (outcome.collectionReplyControl.kind === "established" || outcome.readAttemptControl?.collectionId === outcome.collectionReplyControl.collectionId)) {
-        const previousJob = state.summaryRetries.find((job) => job.collectionId === collectionId);
-        retryQueueFull =
-          scheduleSummaryRetry(
-            state,
-            outcome.collectionReplyControl.collectionId,
-            completedAt,
-            { manual: !!outcome.readAttemptControl },
-          ) === "full";
-        const job = state.summaryRetries.find((job) => job.collectionId === outcome.readAttemptControl?.collectionId);
-        if (!retryQueueFull && job && outcome.readAttemptControl) {
-          if (!previousJob || previousJob.status === "paused") job.reader = { schemaVersion: 1, category: "unknown", budget: { contentRecoveries: 0, dependencyRecoveries: 0, dependencyStartedAt: null, unknownRecoveries: 0, sequence: 0 } };
-          readerSettlement = settleReaderAttempt(job, outcome.readAttemptControl, completedAt);
+      const read = outcome.readAttemptControl?.collectionId === collectionId ? outcome.readAttemptControl : undefined;
+      const explicitRecovery = isExplicitSummaryRecovery(input.message);
+      if (result === "retryable_incomplete" && (outcome.collectionReplyControl.kind === "established" || read || explicitRecovery)) {
+        const scheduleResult = scheduleSummaryRetry(
+          state,
+          outcome.collectionReplyControl.collectionId,
+          completedAt,
+          { manual: !!read || explicitRecovery },
+        );
+        retryQueueFull = scheduleResult === "full";
+        const job = state.summaryRetries.find((job) => job.collectionId === collectionId);
+        if (!retryQueueFull && job && (read || scheduleResult === "scheduled")) {
+          // New cycles consume the initial failure's budget now; do not remigrate active legacy jobs.
+          if (scheduleResult === "scheduled") job.reader = { schemaVersion: 1, category: "unknown", budget: initialReaderBudget() };
+          readerSettlement = settleReaderAttempt(job, read ?? unknownReadFailure(job.collectionId, messageRef), completedAt);
         }
       } else if (result !== "retryable_incomplete") {
         cancelSummaryRetry(

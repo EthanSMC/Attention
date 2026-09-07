@@ -8,6 +8,15 @@ const control: ReadAttemptControl = {
   failureScope: "source", recovery: "retry_later", retryAfterMs: null,
 };
 describe("finite reader recovery", () => {
+  it.each([
+    ["source_content_pending", "source"],
+    ["unknown_reader_error", "reader"],
+  ] as const)("honors Retry-After for %s without extending its recovery count", (failureCode, failureScope) => {
+    const failure = { ...control, failureCode, failureScope, retryAfterMs: 600000 };
+    const decision = readerRecoveryDecision(failure, initialReaderBudget(), 1000);
+    expect(decision).toMatchObject({ action: "schedule", nextAttemptAt: 601000 });
+    expect(decision.budget).toMatchObject({ contentRecoveries: failureScope === "source" ? 1 : 0, unknownRecoveries: failureScope === "reader" ? 1 : 0 });
+  });
   it("honors contextual pause and verification without a second browser timer", () => {
     for (const recovery of ["pause", "needs_action", "switch_reader"] as const)
       expect(readerRecoveryDecision({ ...control, recovery }, initialReaderBudget(), 0))

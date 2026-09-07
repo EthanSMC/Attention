@@ -238,14 +238,15 @@ export type SummaryRetryProcessingResult =
 export async function processDueSummaryRetry(input: {
   readonly brain: BrainAdapter;
   readonly cwd: string;
-  readonly now: Date;
+  readonly now: () => Date;
   readonly onAttentionMcpFailure?: (
     failure: AttentionMcpFailure,
   ) => Promise<void>;
   readonly persist: () => Promise<void>;
   readonly state: ChannelState;
 }): Promise<SummaryRetryProcessingResult> {
-  const { brain, now, state } = input;
+  const { brain, state } = input;
+  const now = input.now();
   // The existing service loop owns wakeups. Expiry must run before host/MCP health gates.
   for (const job of state.summaryRetries) {
     if (job.status === "paused" || job.reader?.category !== "dependency") continue;
@@ -296,13 +297,14 @@ export async function processDueSummaryRetry(input: {
         ? state.brainSession.sessionId
         : null,
   });
+  const completedAt = input.now();
   if (outcome.sessionId && !outcome.resumeFailed) {
     state.brainSession = {
       bridgeVersion: ATTENTION_CLI_VERSION,
       hostId: brain.hostId,
       permissionProfileSha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
       sessionId: outcome.sessionId,
-      updatedAt: now.toISOString(),
+      updatedAt: completedAt.toISOString(),
     };
   }
   syncRuntimeCheckpoint(state, brain);
@@ -328,7 +330,8 @@ export async function processDueSummaryRetry(input: {
   const failure = outcome.attentionMcpFailure?.retryable === false
     ? { ...unknownReadFailure(running.collectionId, retryRef, true), recovery: "needs_action" as const }
     : correlatedRead ?? unknownReadFailure(running.collectionId, retryRef, !!outcome.attentionMcpFailure || !outcome.ok);
-  const settled = settleReaderAttempt(running, failure, now);
+  if (failure.failureScope === "dependency") checkpoint.budget.dependencyStartedAt ??= now.getTime();
+  const settled = settleReaderAttempt(running, failure, completedAt);
   // Supervisor deadlines may postpone execution, but cannot extend the dependency window.
   if (settled === "scheduled" && failure.failureScope === "dependency") {
     const deadline = checkpoint.budget.dependencyStartedAt! + 900000;
@@ -1110,7 +1113,7 @@ export async function channelStart(
         const summaryRetryResult = await processDueSummaryRetry({
           brain: activeBrain,
           cwd,
-          now: new Date(),
+          now: () => new Date(),
           onAttentionMcpFailure: async (failure) => {
             await activeMcpSupervisor.recordProbe({
               ...failure,

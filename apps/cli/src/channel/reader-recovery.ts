@@ -47,8 +47,6 @@ export function readerRecoveryDecision(control: ReadAttemptControl, previous: Re
     budget.dependencyStartedAt ??= now;
     if (budget.dependencyRecoveries >= 4 || now - budget.dependencyStartedAt >= 900000) return pause;
     delay = [5000, 30000, 120000, 300000][budget.dependencyRecoveries++]!;
-    delay = Math.max(delay, control.retryAfterMs ?? 0);
-    if (now + delay >= budget.dependencyStartedAt + 900000) return pause;
   } else if (control.failureCode === "unknown_reader_error" || control.failureCode === "invalid_fetcher_response" || control.outcome === "ready") {
     if (budget.unknownRecoveries >= 1) return pause;
     budget.unknownRecoveries++; delay = 120000;
@@ -56,5 +54,7 @@ export function readerRecoveryDecision(control: ReadAttemptControl, previous: Re
     if (budget.contentRecoveries >= 3) return pause;
     delay = [120000, 600000, 1800000][budget.contentRecoveries++]!;
   }
+  delay = Math.max(delay, control.retryAfterMs ?? 0);
+  if (control.failureScope === "dependency" && now + delay >= budget.dependencyStartedAt! + 900000) return pause;
   return { action: "schedule", nextAttemptAt: now + delay, budget };
 }

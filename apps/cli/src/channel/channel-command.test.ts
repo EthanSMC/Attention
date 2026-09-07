@@ -204,7 +204,7 @@ describe("channel subcommands", () => {
     const result = await processDueSummaryRetry({
       brain,
       cwd: "/tmp/channel",
-      now: new Date("2026-09-04T08:02:00.000Z"),
+      now: () => new Date("2026-09-04T08:02:00.000Z"),
       persist: async () => {
         persisted.push(structuredClone(state));
       },
@@ -228,19 +228,55 @@ describe("channel subcommands", () => {
     state.summaryRetries[0]!.reader = { schemaVersion: 1, category: "dependency", budget: { contentRecoveries: 0, dependencyRecoveries: 1, dependencyStartedAt: Date.parse("2026-09-04T08:00:00.000Z"), unknownRecoveries: 0, sequence: 1 } };
     let calls = 0;
     const brain = summaryBrain([]); brain.invoke = async () => { calls++; throw new Error("must not call"); };
-    expect(await processDueSummaryRetry({ brain, cwd: "/tmp/channel", now: new Date("2026-09-04T08:15:00.000Z"), persist: async () => {}, state })).toBe("paused");
+    expect(await processDueSummaryRetry({ brain, cwd: "/tmp/channel", now: () => new Date("2026-09-04T08:15:00.000Z"), persist: async () => {}, state })).toBe("paused");
     expect(calls).toBe(0); expect(state.summaryRetries[0]!.nextAttemptAt).toBeNull();
+  });
+  it("gives a fresh old-server collection only one automatic unknown recovery", async () => {
+    const state = dueSummaryState(); state.summaryRetries = [];
+    let automaticCalls = 0;
+    await handleInboundMessage({ brain: summaryBrain([]), cwd: "/tmp/channel", state, now: () => new Date("2026-09-04T08:00:00.000Z"), message: { fromUserId: "owner", contextToken: "ctx-owner", raw: { message_id: "legacy-initial" }, itemList: [{ type: 1, text_item: { text: "请收藏这篇文章" } }] }, invokeBrain: async () => ({ ok: true, reply: "已收藏，但摘要未补全", sessionId: null, resumeFailed: false, timedOut: false, collectionReplyControl: { kind: "established", collectionId: SUMMARY_COLLECTION_ID, collectionStatus: "accepted", enrichmentAction: "generate_summary", enrichmentCompleted: false } }) });
+    expect(state.summaryRetries[0]!.reader?.budget.unknownRecoveries).toBe(1);
+    expect(state.summaryRetries[0]!.nextAttemptAt).toBe("2026-09-04T08:02:00.000Z");
+    const brain = summaryBrain([]);
+    brain.invoke = async () => { automaticCalls++; return summaryControlOutcome({ enrichmentAction: "generate_summary", enrichmentCompleted: false, reply: "仍未补全", summaryStatus: "pending" }); };
+    expect(await processDueSummaryRetry({ brain, cwd: "/tmp/channel", state, now: () => new Date("2026-09-04T08:02:00.000Z"), persist: async () => {} })).toBe("paused");
+    expect(state.summaryRetries[0]!.nextAttemptAt).toBeNull();
+    expect(await processDueSummaryRetry({ brain, cwd: "/tmp/channel", state, now: () => new Date("2026-09-04T08:04:00.000Z"), persist: async () => {} })).toBe("idle");
+    expect(automaticCalls).toBe(1);
+  });
+  it.each([
+    [null, "2026-09-04T08:01:30.000Z", "2026-09-04T08:03:30.000Z", "dependency_failure"],
+    ["2026-09-04T07:59:00.000Z", "2026-09-04T08:01:30.000Z", "2026-09-04T08:03:30.000Z", "dependency_failure"],
+    [null, "2026-09-04T08:15:01.000Z", null, "paused"],
+  ] as const)("uses completion time %s / %s while retaining the dependency window origin", async (existingOrigin, completedAt, deadline, result) => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-04T08:00:00.000Z"));
+      const state = dueSummaryState();
+      state.summaryRetries[0]!.nextAttemptAt = "2026-09-04T08:00:00.000Z";
+      if (existingOrigin) state.summaryRetries[0]!.reader = { schemaVersion: 1, category: "dependency", budget: { contentRecoveries: 0, dependencyRecoveries: 1, dependencyStartedAt: Date.parse(existingOrigin), unknownRecoveries: 0, sequence: 1 } };
+      const brain = summaryBrain([]);
+      brain.invoke = async ({ prompt }) => {
+        vi.setSystemTime(new Date(completedAt));
+        return { ...summaryControlOutcome({ enrichmentAction: "generate_summary", enrichmentCompleted: false, reply: "读取受到限速", summaryStatus: "pending" }), readAttemptControl: {
+          collectionId: SUMMARY_COLLECTION_ID, attemptRef: /summary-retry-[a-f0-9]+/u.exec(prompt)![0], outcome: "failed", methods: [], failureCode: "rate_limited", failureScope: "dependency", recovery: "retry_later", retryAfterMs: 120000,
+        } };
+      };
+      expect(await processDueSummaryRetry({ brain, cwd: "/tmp/channel", now: () => new Date(), persist: async () => {}, state })).toBe(result);
+      expect(state.summaryRetries[0]!.nextAttemptAt).toBe(deadline);
+      expect(state.summaryRetries[0]!.reader!.budget.dependencyStartedAt).toBe(Date.parse(existingOrigin ?? "2026-09-04T08:00:00.000Z"));
+    } finally { vi.useRealTimers(); }
   });
   it("does not resume an obsolete permission session during automatic recovery", async () => {
     const state = dueSummaryState(); state.brainSession = { hostId: "codex", sessionId: "old-permission-session", bridgeVersion: "0.3.15", permissionProfileSha256: "008145538ba70eaef4d66a6e99c588dd0cae2087dba8de85202e21f2eb738230", updatedAt: "2026-09-04T07:00:00.000Z" };
     const invocations: Array<{ prompt: string; sessionId: string | null }> = [];
-    await processDueSummaryRetry({ brain: summaryBrain([summaryControlOutcome({ enrichmentAction: "reuse_summary", enrichmentCompleted: false, reply: "就绪", summaryStatus: "ready" })], invocations), cwd: "/tmp/channel", now: new Date("2026-09-04T08:02:00.000Z"), persist: async () => {}, state });
+    await processDueSummaryRetry({ brain: summaryBrain([summaryControlOutcome({ enrichmentAction: "reuse_summary", enrichmentCompleted: false, reply: "就绪", summaryStatus: "ready" })], invocations), cwd: "/tmp/channel", now: () => new Date("2026-09-04T08:02:00.000Z"), persist: async () => {}, state });
     expect(invocations[0]?.sessionId).toBeNull();
     expect(state.token).toBe("local-ilink-token");
   });
   it("pauses nonretryable MCP authentication failure instead of consuming a reader retry loop", async () => {
     const state = dueSummaryState();
-    expect(await processDueSummaryRetry({ brain: summaryBrain([{ ok: false, reply: "", resumeFailed: false, sessionId: null, timedOut: false, attentionMcpFailure: { errorCode: "mcp_auth_required", retryable: false } }]), cwd: "/tmp/channel", now: new Date("2026-09-04T08:02:00.000Z"), persist: async () => {}, state })).toBe("paused");
+    expect(await processDueSummaryRetry({ brain: summaryBrain([{ ok: false, reply: "", resumeFailed: false, sessionId: null, timedOut: false, attentionMcpFailure: { errorCode: "mcp_auth_required", retryable: false } }]), cwd: "/tmp/channel", now: () => new Date("2026-09-04T08:02:00.000Z"), persist: async () => {}, state })).toBe("paused");
     expect(state.summaryRetries[0]!.nextAttemptAt).toBeNull();
   });
 
@@ -255,7 +291,7 @@ describe("channel subcommands", () => {
       } };
     };
     for (const time of ["08:02:00", "08:02:05", "08:02:35", "08:04:35", "08:09:35"]) {
-      await processDueSummaryRetry({ brain, cwd: "/tmp/channel", now: new Date(`2026-09-04T${time}.000Z`), persist: async () => {}, state });
+      await processDueSummaryRetry({ brain, cwd: "/tmp/channel", now: () => new Date(`2026-09-04T${time}.000Z`), persist: async () => {}, state });
     }
     expect(refs).toHaveLength(5); expect(new Set(refs).size).toBe(5);
     expect(state.summaryRetries[0]!.status).toBe("paused");
@@ -270,7 +306,7 @@ describe("channel subcommands", () => {
       return { ...summaryControlOutcome({ enrichmentAction: "generate_summary", enrichmentCompleted: false, reply: "摘要未补全", summaryStatus: "pending" }), readAttemptControl: { collectionId: SUMMARY_COLLECTION_ID, attemptRef: /summary-retry-[a-f0-9]+/u.exec(prompt)![0], outcome: "failed", methods: ["static"], failureCode: "source_content_pending", failureScope: "source", recovery: "retry_later", retryAfterMs: null } };
     };
     for (const [time, next] of [["08:02:00", "2026-09-04T08:12:00.000Z"], ["08:12:00", "2026-09-04T08:42:00.000Z"], ["08:42:00", null]]) {
-      await processDueSummaryRetry({ brain, cwd: "/tmp/channel", now: new Date(`2026-09-04T${time}.000Z`), persist: async () => {}, state });
+      await processDueSummaryRetry({ brain, cwd: "/tmp/channel", now: () => new Date(`2026-09-04T${time}.000Z`), persist: async () => {}, state });
       expect(state.summaryRetries[0]!.nextAttemptAt).toBe(next);
     }
     expect(prompts).toHaveLength(3); expect(state.summaryRetries[0]!.automaticAttempts).toBe(3);
@@ -289,7 +325,7 @@ describe("channel subcommands", () => {
         }),
       ]),
       cwd: "/tmp/channel",
-      now: new Date("2026-09-04T08:02:00.000Z"),
+      now: () => new Date("2026-09-04T08:02:00.000Z"),
       persist: async () => undefined,
       state,
     });
@@ -317,7 +353,7 @@ describe("channel subcommands", () => {
         },
       ]),
       cwd: "/tmp/channel",
-      now: new Date("2026-09-04T08:02:00.000Z"),
+      now: () => new Date("2026-09-04T08:02:00.000Z"),
       onAttentionMcpFailure: async (failure) => {
         expect(failure.errorCode).toBe("mcp_server_unreachable");
         recorded = true;
@@ -366,7 +402,7 @@ describe("channel subcommands", () => {
         invocations,
       ),
       cwd: "/tmp/channel",
-      now: new Date("2026-09-04T08:02:00.000Z"),
+      now: () => new Date("2026-09-04T08:02:00.000Z"),
       persist: async () => undefined,
       state,
     });
@@ -409,7 +445,7 @@ describe("channel subcommands", () => {
         },
       ]),
       cwd: "/tmp/channel",
-      now: new Date("2026-09-04T08:02:00.000Z"),
+      now: () => new Date("2026-09-04T08:02:00.000Z"),
       persist: async () => undefined,
       state,
     });
@@ -441,7 +477,7 @@ describe("channel subcommands", () => {
         },
       ]),
       cwd: "/tmp/channel",
-      now: new Date("2026-09-04T08:02:00.000Z"),
+      now: () => new Date("2026-09-04T08:02:00.000Z"),
       persist: async () => undefined,
       state,
     });
@@ -478,7 +514,7 @@ describe("channel subcommands", () => {
       await processDueSummaryRetry({
         brain,
         cwd: "/tmp/channel",
-        now: new Date("2026-09-04T08:02:00.000Z"),
+        now: () => new Date("2026-09-04T08:02:00.000Z"),
         persist: async () => undefined,
         state,
       }),

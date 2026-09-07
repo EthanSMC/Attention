@@ -94,6 +94,36 @@ const fakeBrain = (
 });
 
 describe("handleInboundMessage", () => {
+  it.each(["重试摘要", "补一下", "补一下摘要", "再试试补摘要", "再补一下摘要"].flatMap((request) => [false, true].map((paused) => [request, paused] as const)))("authorizes an old-server unknown recovery from the current complete request %s, paused=%s", async (request, paused) => {
+      const state = defaultChannelState();
+      if (paused) state.summaryRetries.push({ automaticAttempts: 3, collectionId: "11111111-1111-4111-8111-111111111111", cycleStartedAt: "2026-09-04T07:00:00.000Z", lastFailureClass: "enrichment_incomplete", nextAttemptAt: null, status: "paused" });
+      await handleInboundMessage({ brain: fakeBrain("codex"), cwd: "/tmp", state, message: textMessage(request), now: () => new Date("2026-09-04T08:00:00.000Z"), invokeBrain: async () => recoveryOutcome("仍待补全", { enrichmentAction: "generate_summary", enrichmentCompleted: false, summaryStatus: "pending" }) });
+      expect(state.summaryRetries[0]).toMatchObject({ cycleStartedAt: "2026-09-04T08:00:00.000Z", status: "scheduled", nextAttemptAt: "2026-09-04T08:02:00.000Z", reader: { category: "unknown", budget: { contentRecoveries: 0, unknownRecoveries: 1 }, lastRead: { methods: null, failureCode: "unknown_reader_error" } } });
+  });
+  it.each(["不要补一下摘要", "补一下摘要了吗？", "摘要现在怎样？", "“补一下摘要”", "> 补一下摘要", "转发：补一下摘要", "```\n补一下摘要\n```", "如果失败就补一下摘要"])("does not authorize old-server recovery from a negated, status, quoted or complex request: %s", async (request) => {
+    for (const paused of [false, true]) {
+      const state = defaultChannelState();
+      if (paused) state.summaryRetries.push({ automaticAttempts: 3, collectionId: "11111111-1111-4111-8111-111111111111", cycleStartedAt: "2026-09-04T07:00:00.000Z", lastFailureClass: "enrichment_incomplete", nextAttemptAt: null, status: "paused" });
+      const before = structuredClone(state.summaryRetries);
+      await handleInboundMessage({ brain: fakeBrain("codex"), cwd: "/tmp", state, message: textMessage(request), invokeBrain: async () => recoveryOutcome("补一下摘要，约 2 分钟后自动重试", { enrichmentAction: "generate_summary", enrichmentCompleted: false, summaryStatus: "pending" }) });
+      expect(state.summaryRetries).toEqual(before);
+    }
+  });
+  it("does not take authorization from a structured quoted message or history", async () => {
+    const state = defaultChannelState();
+    state.history.push({ role: "user", content: "补一下摘要" });
+    const message = { ...textMessage("补一下摘要"), itemList: [{ type: 1, text_item: { text: "补一下摘要" }, ref_msg: { title: "转发" } }] };
+    await handleInboundMessage({ brain: fakeBrain("codex"), cwd: "/tmp", state, message, invokeBrain: async () => recoveryOutcome("补一下摘要", { enrichmentAction: "generate_summary", enrichmentCompleted: false, summaryStatus: "pending" }) });
+    expect(state.summaryRetries).toEqual([]);
+  });
+  it("keeps bare retry as connection recovery even with a paused summary", async () => {
+    const state = defaultChannelState();
+    state.summaryRetries.push({ automaticAttempts: 3, collectionId: "11111111-1111-4111-8111-111111111111", cycleStartedAt: "2026-09-04T07:00:00.000Z", lastFailureClass: "enrichment_incomplete", nextAttemptAt: null, status: "paused" });
+    const before = structuredClone(state.summaryRetries);
+    const output = await handleInboundMessage({ brain: fakeBrain("codex"), cwd: "/tmp", state, message: textMessage("重试"), invokeBrain: async () => { throw new Error("connection command must not invoke the summary reader"); } });
+    expect(output.controlCommand).toBe("retry");
+    expect(state.summaryRetries).toEqual(before);
+  });
   it("uses the saved legacy deadline when duplicate collection remains incomplete", async () => {
     const state = defaultChannelState();
     state.summaryRetries.push({ automaticAttempts: 1, collectionId: "11111111-1111-4111-8111-111111111111", cycleStartedAt: "2026-09-04T07:00:00.000Z", lastFailureClass: "enrichment_incomplete", nextAttemptAt: "2026-09-04T08:10:00.000Z", status: "scheduled" });
@@ -157,6 +187,12 @@ describe("handleInboundMessage", () => {
         cycleStartedAt: "2026-09-04T08:00:00.000Z",
         lastFailureClass: null,
         nextAttemptAt: "2026-09-04T08:02:00.000Z",
+        reader: {
+          schemaVersion: 1,
+          category: "unknown",
+          budget: { contentRecoveries: 0, dependencyRecoveries: 0, dependencyStartedAt: null, sequence: 0, unknownRecoveries: 1 },
+          lastRead: { collectionId: "11111111-1111-4111-8111-111111111111", attemptRef: expect.stringMatching(/^msg-[a-f0-9]{48}$/u), methods: null, outcome: "failed", failureCode: "unknown_reader_error", failureScope: "reader", recovery: "retry_later", retryAfterMs: null },
+        },
         status: "scheduled",
       },
     ]);
@@ -212,6 +248,7 @@ describe("handleInboundMessage", () => {
       nextAttemptAt: "2026-09-04T08:10:00.000Z",
       status: "scheduled",
     });
+    const before = structuredClone(state.summaryRetries);
 
     await handleInboundMessage({
       brain: fakeBrain("codex"),
@@ -232,6 +269,7 @@ describe("handleInboundMessage", () => {
       cycleStartedAt: "2026-09-04T07:00:00.000Z",
       nextAttemptAt: "2026-09-04T08:10:00.000Z",
     });
+    expect(state.summaryRetries).toEqual(before);
   });
 
   it("starts a new automatic cycle when a manual attempt follows a pause", async () => {
