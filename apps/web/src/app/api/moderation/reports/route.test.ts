@@ -1,7 +1,7 @@
 import { ModerationRepositoryError } from "@attention/db";
 import { describe, expect, it } from "vitest";
 
-import { moderationRepositoryErrorResponse } from "./route";
+import { moderationRepositoryErrorResponse } from "./error-response";
 
 describe("moderation report errors", () => {
   it("returns a stable 429 response with Retry-After for the Filter case-opening limit", async () => {

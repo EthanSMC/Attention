@@ -3,7 +3,7 @@ import { createHmac } from "node:crypto";
 import type { AttentionDatabase } from "@attention/db";
 import { describe, expect, it, vi } from "vitest";
 
-import { handleOAuthRegistrationRequest } from "./route";
+import { handleOAuthRegistrationRequest } from "./handler";
 
 function registrationDatabase(inserted: Array<Record<string, unknown>>): AttentionDatabase {
   const transaction = {

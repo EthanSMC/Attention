@@ -4,7 +4,7 @@ import {
 import type { AttentionDatabase } from "@attention/db";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { handleOAuthTokenRequest } from "./route";
+import { handleOAuthTokenRequest } from "./handler";
 
 function authorizationCodeRequest(): Request {
   return new Request("https://attention.example/oauth/token", {

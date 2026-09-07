@@ -1,3 +1,4 @@
+import { moderationRepositoryErrorResponse } from "./error-response";
 import {
   ModerationRepositoryError,
 } from "@attention/db";
@@ -28,27 +29,6 @@ const bodySchema = z
     reason_code: z.string().min(1).max(64),
   })
   .strict();
-
-export function moderationRepositoryErrorResponse(
-  error: ModerationRepositoryError,
-): NextResponse {
-  const status =
-    error.code === "report_rate_limited"
-      ? 429
-      : error.code === "content_not_reportable"
-        ? 404
-        : error.code === "account_not_active"
-          ? 403
-          : 400;
-  const response = noStoreJson({ error: { code: error.code } }, { status });
-  if (error.code === "report_rate_limited") {
-    response.headers.set(
-      "Retry-After",
-      String(Math.max(1, error.retryAfterSeconds ?? 1)),
-    );
-  }
-  return response;
-}
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const guardError = mutationRequestError(request);

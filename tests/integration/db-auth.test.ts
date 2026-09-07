@@ -18,9 +18,9 @@ import {
 } from "@attention/contracts";
 import { handleOAuthAuthorizationServerMetadataRequest } from "../../apps/web/src/app/.well-known/oauth-authorization-server/route";
 import { handleMcpProtectedResourceMetadataRequest } from "../../apps/web/src/app/.well-known/oauth-protected-resource/route";
-import { handleMcpRequest } from "../../apps/web/src/app/mcp/route";
-import { handleOAuthRegistrationRequest } from "../../apps/web/src/app/oauth/register/route";
-import { handleOAuthTokenRequest } from "../../apps/web/src/app/oauth/token/route";
+import { handleMcpRequest } from "../../apps/web/src/app/mcp/handler";
+import { handleOAuthRegistrationRequest } from "../../apps/web/src/app/oauth/register/handler";
+import { handleOAuthTokenRequest } from "../../apps/web/src/app/oauth/token/handler";
 
 import {
   collectFromWeb,

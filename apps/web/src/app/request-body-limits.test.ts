@@ -7,9 +7,9 @@ import { POST as startEmailLogin } from "./api/auth/email/start/route";
 import { POST as verifyEmailLogin } from "./api/auth/email/verify/route";
 import { POST as passwordLogin } from "./api/auth/password/route";
 import { handleMcpProtectedResourceMetadataRequest } from "./.well-known/oauth-protected-resource/route";
-import { handleMcpRequest } from "./mcp/route";
-import { handleOAuthRevokeRequest } from "./oauth/revoke/route";
-import { handleOAuthTokenRequest } from "./oauth/token/route";
+import { handleMcpRequest } from "./mcp/handler";
+import { handleOAuthRevokeRequest } from "./oauth/revoke/handler";
+import { handleOAuthTokenRequest } from "./oauth/token/handler";
 
 afterEach(() => {
   vi.unstubAllEnvs();
