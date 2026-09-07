@@ -19,7 +19,7 @@ import { CHANNEL_HOST_SYSTEM_POLICY } from "../prompt";
 import { ATTENTION_CHANNEL_MCP_TOOL_NAMES } from "./codex";
 import {
   applyAttentionToolResult,
-  attentionResultSensitiveFragments,
+  mergeAttentionSensitiveFragments,
   mcpResultPayload,
   type CollectionReplyControl,
 } from "../collection-reply-control";
@@ -56,7 +56,13 @@ export interface ClaudeResidentBrainOptions {
   readonly turnTimeoutMs?: number;
 }
 
+import { applyReadToolResult, collectionControlFromRead, type ReadAttemptControl } from "../read-attempt-control";
+import { readerCapabilityPrompt } from "../mcp-readiness";
+
 interface ActiveTurn {
+  readAttemptControl: ReadAttemptControl | null;
+  readonly toolInputs: Map<string, unknown>;
+  readonly seenToolIds: Set<string>;
   attentionMcpFailure: AttentionMcpFailure | null;
   attentionMcpProbe: AttentionMcpProbeResult | null;
   collectionReplyControl: CollectionReplyControl | null;
@@ -120,22 +126,32 @@ function observeClaudeAttentionTools(
     const block = objectRecord(entry);
     if (!block) continue;
     if (
-      block.type === "tool_use" &&
+      message.type === "assistant" && block.type === "tool_use" &&
       typeof block.id === "string" &&
       typeof block.name === "string" &&
       block.name.startsWith("mcp__attention__")
     ) {
+      if (pending.seenToolIds.has(block.id) || pending.seenToolIds.size >= 128) continue;
+      pending.seenToolIds.add(block.id);
       pending.pendingToolNames.set(block.id, block.name);
+      const args = objectRecord(block.input);
+      pending.toolInputs.set(block.id, { collection_id: args?.collection_id, attempt_ref: args?.attempt_ref, content_id: args?.content_id });
       continue;
     }
-    if (block.type !== "tool_result" || typeof block.tool_use_id !== "string") {
+    if (message.type !== "user" || block.type !== "tool_result" || typeof block.tool_use_id !== "string") {
       continue;
     }
     const toolName = pending.pendingToolNames.get(block.tool_use_id);
     if (!toolName) continue;
     pending.pendingToolNames.delete(block.tool_use_id);
+    const toolInput = pending.toolInputs.get(block.tool_use_id);
+    pending.toolInputs.delete(block.tool_use_id);
     const normalizedToolName = toolName.replace(/^mcp__attention__/u, "");
-    if (block.is_error === true) {
+    const payload = mcpResultPayload(block.content);
+    pending.readAttemptControl = applyReadToolResult(pending.readAttemptControl, toolName, payload, toolInput);
+    const isReader = normalizedToolName === "attention_read_collection_source";
+    if (isReader) pending.collectionReplyControl = collectionControlFromRead(pending.collectionReplyControl, pending.readAttemptControl);
+    if (block.is_error === true && !isReader) {
       const failure = classifyAttentionMcpFailure(block.content);
       pending.attentionMcpFailure = failure;
       if (normalizedToolName === "attention_get_my_account") {
@@ -148,19 +164,13 @@ function observeClaudeAttentionTools(
       );
       continue;
     }
-    const payload = mcpResultPayload(block.content);
-    for (const fragment of attentionResultSensitiveFragments(payload)) {
-      if (
-        pending.collectionReplySensitiveFragments.length < 64 &&
-        !pending.collectionReplySensitiveFragments.includes(fragment)
-      ) {
-        pending.collectionReplySensitiveFragments.push(fragment);
-      }
-    }
+    mergeAttentionSensitiveFragments(pending.collectionReplySensitiveFragments, payload);
     pending.collectionReplyControl = applyAttentionToolResult(
       pending.collectionReplyControl,
       toolName,
       payload,
+      toolInput,
+      pending.readAttemptControl,
     );
     if (normalizedToolName === "attention_get_my_account") {
       const account = parseAttentionAccountProbe(payload);
@@ -253,6 +263,7 @@ export function createClaudeResidentBrain(
   let acceptingInvocations = true;
   let activeTurn: ActiveTurn | null = null;
   let currentSessionId: string | null = null;
+  let readerCapability = "";
   let desiredRunning = false;
   let healthTimer: NodeJS.Timeout | null = null;
   let invokeTail: Promise<void> = Promise.resolve();
@@ -286,6 +297,7 @@ export function createClaudeResidentBrain(
   };
 
   const handleMessage = (message: ClaudeStreamMessage): void => {
+    if (message.type === "system" && message.subtype === "init") readerCapability = readerCapabilityPrompt(message.tools);
     const sessionId = stringField(message, "session_id");
     if (sessionId) currentSessionId = sessionId;
     if (activeTurn) {
@@ -343,6 +355,7 @@ export function createClaudeResidentBrain(
         pending.collectionReplyControl !== null ||
         pending.attentionMcpProbe?.ok === true,
       reply: resultText.trim(),
+      ...(pending.readAttemptControl ? { readAttemptControl: pending.readAttemptControl } : {}),
       ...(pending.attentionMcpFailure
         ? { attentionMcpFailure: pending.attentionMcpFailure }
         : {}),
@@ -522,6 +535,9 @@ export function createClaudeResidentBrain(
         );
       }, turnTimeout);
       activeTurn = {
+        readAttemptControl: null,
+        toolInputs: new Map(),
+        seenToolIds: new Set(),
         attentionMcpFailure: null,
         attentionMcpProbe: null,
         collectionReplyControl: null,
@@ -535,7 +551,7 @@ export function createClaudeResidentBrain(
       try {
         rpc?.send({
           message: {
-            content: [{ text: input.prompt, type: "text" }],
+            content: [{ text: input.prompt + readerCapability, type: "text" }],
             role: "user",
           },
           type: "user",

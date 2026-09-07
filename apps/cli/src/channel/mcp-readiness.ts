@@ -12,6 +12,16 @@ export type AttentionMcpStatus =
   | "unreachable"
   | "tool_error";
 
+/** Optional capability absence is not an account or whole-server outage. */
+export function readerCapabilityPrompt(tools: unknown): string {
+  const names = Array.isArray(tools) && tools.every((tool) => typeof tool === "string")
+    ? tools as string[]
+    : tools && typeof tools === "object" && !Array.isArray(tools) ? Object.keys(tools) : null;
+  if (!names) return "";
+  const available = names.some((name) => name.replace(/^mcp__attention__/u, "") === "attention_read_collection_source");
+  return `\nAttention reader capability: ${available ? "available; use attention_read_collection_source" : "unavailable; older server, only already approved native public reading may be used"}.`;
+}
+
 export type AttentionMcpErrorCode =
   | "mcp_auth_required"
   | "mcp_token_refresh_failed"

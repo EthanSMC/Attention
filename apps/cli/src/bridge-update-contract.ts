@@ -20,6 +20,7 @@ export const ATTENTION_BRIDGE_PERMISSION_PROFILE = {
       "attention_submit_content_enrichment",
       "attention_select_collection_candidate",
       "attention_get_collection_status",
+      "attention_read_collection_source",
       "attention_update_collection",
     ],
   },

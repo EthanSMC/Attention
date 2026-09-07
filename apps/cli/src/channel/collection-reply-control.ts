@@ -1,3 +1,6 @@
+import { AttentionToolSuccessOutputSchemas } from "@attention/contracts";
+import type { ReadAttemptControl } from "./read-attempt-control";
+
 export type EstablishedCollectionStatus =
   | "accepted"
   | "already_collected"
@@ -17,6 +20,7 @@ export type CollectionEnrichmentAction =
 export type CollectionReplyControl =
   | {
       readonly collectionId: string;
+      readonly contentId?: string;
       readonly collectionStatus: EstablishedCollectionStatus;
       readonly enrichmentAction: CollectionEnrichmentAction;
       readonly enrichmentCompleted: boolean;
@@ -24,6 +28,7 @@ export type CollectionReplyControl =
     }
   | {
       readonly collectionId: string;
+      readonly contentId?: string;
       readonly enrichmentAction: CollectionEnrichmentAction;
       readonly enrichmentCompleted: boolean;
       readonly kind: "recovery";
@@ -58,9 +63,28 @@ const SENSITIVE_RESULT_KEYS = new Set([
   "summary",
   "tags",
   "title",
+  "temporary_text",
+  "final_public_url",
+  "description",
+  "author",
 ]);
 const MAXIMUM_SENSITIVE_FRAGMENTS = 64;
 const MAXIMUM_SENSITIVE_FRAGMENT_CHARS = 512;
+const SENSITIVE_FRAGMENT_OVERFLOW = "[attention-sensitive-fragment-overflow]";
+
+export function mergeAttentionSensitiveFragments(
+  target: string[],
+  payload: Readonly<Record<string, unknown>> | null,
+): void {
+  for (const fragment of attentionResultSensitiveFragments(payload)) {
+    if (target.includes(fragment)) continue;
+    if (target.length >= MAXIMUM_SENSITIVE_FRAGMENTS) {
+      target[MAXIMUM_SENSITIVE_FRAGMENTS - 1] = SENSITIVE_FRAGMENT_OVERFLOW;
+      return;
+    }
+    target.push(fragment);
+  }
+}
 
 function record(value: unknown): Readonly<Record<string, unknown>> | null {
   return value !== null && typeof value === "object"
@@ -147,6 +171,8 @@ export function applyAttentionToolResult(
   current: CollectionReplyControl | null,
   toolName: string,
   payload: Readonly<Record<string, unknown>> | null,
+  input?: unknown,
+  read?: ReadAttemptControl | null,
 ): CollectionReplyControl | null {
   const normalizedToolName = toolName.replace(/^mcp__attention__/u, "");
   if (
@@ -172,6 +198,7 @@ export function applyAttentionToolResult(
     return status && action && id
       ? {
           collectionId: id,
+          ...(collectionId(payload.content_id) ? { contentId: collectionId(payload.content_id)! } : {}),
           collectionStatus: status,
           enrichmentAction: action,
           enrichmentCompleted: false,
@@ -190,6 +217,7 @@ export function applyAttentionToolResult(
     const content = record(payload.content);
     const collection = record(payload.collection);
     const id = collectionId(collection?.collection_id);
+    if ((read || record(input)?.collection_id !== undefined) && record(input)?.collection_id !== id) return current;
     const action = enrichmentAction(content?.enrichment_action);
     const status = summaryStatus(content?.summary_status);
     const safePublicReadUrl =
@@ -203,6 +231,7 @@ export function applyAttentionToolResult(
     }
     return {
       collectionId: id,
+      ...(collectionId(content?.content_id) ? { contentId: collectionId(content?.content_id)! } : {}),
       enrichmentAction: action,
       enrichmentCompleted: false,
       kind: "recovery",
@@ -215,6 +244,10 @@ export function applyAttentionToolResult(
     current.enrichmentAction === "generate_summary" &&
     (payload?.status === "enriched" || payload?.status === "already_enriched")
   ) {
+    if (read) {
+      const submitted = AttentionToolSuccessOutputSchemas.attention_submit_content_enrichment.safeParse(payload);
+      if (current.collectionId !== read.collectionId || !current.contentId || record(input)?.content_id !== current.contentId || !submitted.success || submitted.data.content_id !== current.contentId) return current;
+    }
     return { ...current, enrichmentCompleted: true };
   }
   return current;
@@ -261,6 +294,7 @@ export type CollectionReplyRejectionReason =
   | "reply_missing_incomplete_truth"
   | "reply_missing_pause_state"
   | "reply_missing_retry_plan"
+  | "reply_inaccurate_retry_plan"
   | "reply_missing_terminal_state"
   | "reply_retry_queue_full"
   | "reply_too_long"
@@ -273,6 +307,10 @@ export interface SafeCollectionReplyResult {
 }
 
 export interface CollectionReplySafetyContext {
+  readonly interrupted?: boolean;
+  readonly readRecovery?: ReadAttemptControl["recovery"];
+  readonly nextAttemptAt?: string | null;
+  readonly now?: string;
   readonly phase:
     | "initial_incomplete"
     | "ordinary"
@@ -285,14 +323,21 @@ export interface CollectionReplySafetyContext {
 function fallbackCollectionReply(
   control: CollectionReplyControl,
   phase: CollectionReplySafetyContext["phase"],
+  nextAttemptAt?: string | null,
+  readRecovery?: ReadAttemptControl["recovery"],
+  now?: string,
+  interrupted?: boolean,
 ): string {
   if (control.kind === "fixed") return control.reply;
   if (phase === "initial_incomplete") {
+    if (nextAttemptAt !== undefined && (!nextAttemptAt || !now || Date.parse(nextAttemptAt) - Date.parse(now) !== 120000)) return `${control.kind === "established" ? "已收藏，但" : ""}这次没有补全摘要；${nextAttemptAt ? "已按当前重试计划安排后续尝试。" : "当前未安排自动重试。"}`;
     return control.kind === "established"
       ? "已收藏，但这次没有补全摘要；约 2 分钟后会自动重试。"
       : "这次没有补全摘要；约 2 分钟后会自动重试。";
   }
   if (phase === "paused") {
+    if (interrupted) return "上次读取尝试中断，结果尚未确认；自动重试已暂停，需要时可再让我重试。";
+    if (readRecovery === "needs_action") return "这次没有补全摘要，读取需要你处理访问条件；自动重试已暂停，需要时可再让我重试。";
     return "这轮自动重试仍未补全摘要，现已暂停；你可以随时再让我重试。";
   }
   if (phase === "queue_full") {
@@ -301,6 +346,7 @@ function fallbackCollectionReply(
       : "本地重试队列已满，暂时无法安排自动重试。";
   }
   if (phase === "terminal") {
+    if (readRecovery === "stop") return "这次没有补全摘要；根据当前读取结果，自动重试已停止。";
     return "这项收藏当前已不再符合摘要补全条件，自动重试已停止。";
   }
   if (control.kind === "recovery") {
@@ -340,6 +386,17 @@ function rejectionReason(
   context: CollectionReplySafetyContext,
 ): CollectionReplyRejectionReason | null {
   if (context.phase === "queue_full") return "reply_retry_queue_full";
+  if (context.interrupted && !/中断|结果.{0,3}未确认/u.test(candidate)) return "reply_missing_pause_state";
+  if (context.sensitiveFragments.includes(SENSITIVE_FRAGMENT_OVERFLOW)) return "reply_contains_sensitive_fragment";
+  if ((context.phase === "paused" || context.phase === "terminal" || context.nextAttemptAt === null) && /(?:自动|稍后|分钟后).{0,10}重试/u.test(candidate)) return "reply_inaccurate_retry_plan";
+  if (context.nextAttemptAt !== undefined) {
+    const relative = /(?:(\d+)|([两二]))\s*分钟后/u.exec(candidate);
+    if (relative) {
+      const minutes = relative[1] ? Number(relative[1]) : 2;
+      const actualMs = context.now && context.nextAttemptAt ? Date.parse(context.nextAttemptAt) - Date.parse(context.now) : Number.NaN;
+      if (!Number.isFinite(actualMs) || Math.abs(actualMs - minutes * 60000) > 30000) return "reply_inaccurate_retry_plan";
+    }
+  }
   if (!candidate) return "reply_empty";
   if (candidate.length > MAXIMUM_REPLY_CHARS) return "reply_too_long";
   if (/https?:\/\//iu.test(candidate)) return "reply_contains_url";
@@ -371,6 +428,10 @@ function rejectionReason(
       normalizedCandidate.includes(normalizedFragment)
     ) {
       return "reply_contains_sensitive_fragment";
+    }
+    // Reject excerpt reflection, including text deep in the transient article.
+    for (let index = 0; index + 12 <= normalizedCandidate.length; index++) {
+      if (normalizedFragment.includes(normalizedCandidate.slice(index, index + 12))) return "reply_contains_sensitive_fragment";
     }
   }
 
@@ -413,7 +474,7 @@ export function safeCollectionReply(
     ? {
         accepted: false,
         reason,
-        text: fallbackCollectionReply(control, context.phase),
+        text: fallbackCollectionReply(control, context.phase, context.nextAttemptAt, context.readRecovery, context.now, context.interrupted),
       }
     : { accepted: true, reason: null, text: candidate };
 }
@@ -441,7 +502,11 @@ export function attentionResultSensitiveFragments(
     }
     for (const [key, nested] of Object.entries(value)) {
       if (SENSITIVE_RESULT_KEYS.has(key)) {
-        if (typeof nested === "string") append(nested);
+        if (typeof nested === "string") {
+          if (key === "temporary_text") {
+            for (let offset = 0; offset < Math.min(nested.length, 12000) && fragments.length < MAXIMUM_SENSITIVE_FRAGMENTS; offset += 480) append(nested.slice(offset, offset + 512));
+          } else append(nested);
+        }
         if (Array.isArray(nested)) {
           for (const item of nested) {
             if (typeof item === "string") append(item);

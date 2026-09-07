@@ -43,6 +43,7 @@ import type { AttentionMcpFailure } from "./mcp-readiness";
 import {
   cancelSummaryRetry,
   scheduleSummaryRetry,
+  settleReaderAttempt,
   summaryRetryContext,
 } from "./summary-retry";
 
@@ -261,23 +262,33 @@ export async function handleInboundMessage(
     | undefined;
   let safeReply = outcome.reply.trim();
   if (outcome.collectionReplyControl) {
+    const collectionId = outcome.collectionReplyControl.kind === "fixed" ? null : outcome.collectionReplyControl.collectionId;
     const result = collectionControlResult(outcome.collectionReplyControl);
     let retryQueueFull = false;
+    let readerSettlement: "scheduled" | "paused" | "terminal" | undefined;
     if (outcome.collectionReplyControl.kind !== "fixed") {
-      if (result === "retryable_incomplete") {
+      if (result === "retryable_incomplete" && (outcome.collectionReplyControl.kind === "established" || outcome.readAttemptControl?.collectionId === outcome.collectionReplyControl.collectionId)) {
+        const previousJob = state.summaryRetries.find((job) => job.collectionId === collectionId);
         retryQueueFull =
           scheduleSummaryRetry(
             state,
             outcome.collectionReplyControl.collectionId,
             completedAt,
+            { manual: !!outcome.readAttemptControl },
           ) === "full";
-      } else {
+        const job = state.summaryRetries.find((job) => job.collectionId === outcome.readAttemptControl?.collectionId);
+        if (!retryQueueFull && job && outcome.readAttemptControl) {
+          if (!previousJob || previousJob.status === "paused") job.reader = { schemaVersion: 1, category: "unknown", budget: { contentRecoveries: 0, dependencyRecoveries: 0, dependencyStartedAt: null, unknownRecoveries: 0, sequence: 0 } };
+          readerSettlement = settleReaderAttempt(job, outcome.readAttemptControl, completedAt);
+        }
+      } else if (result !== "retryable_incomplete") {
         cancelSummaryRetry(
           state,
           outcome.collectionReplyControl.collectionId,
         );
       }
     }
+    const savedJob = state.summaryRetries.find((job) => job.collectionId === collectionId);
     const checked = safeCollectionReply(
       outcome.collectionReplyControl,
       outcome.reply,
@@ -285,11 +296,16 @@ export async function handleInboundMessage(
         phase:
           retryQueueFull
             ? "queue_full"
-            : result === "retryable_incomplete"
+            : readerSettlement === "terminal" ? "terminal"
+            : savedJob?.status === "paused" ? "paused"
+            : readerSettlement === "scheduled" ? "initial_incomplete"
+            : result === "retryable_incomplete" && outcome.collectionReplyControl.kind === "established"
             ? "initial_incomplete"
             : "ordinary",
         sensitiveFragments:
           outcome.collectionReplySensitiveFragments ?? [],
+        ...(savedJob?.reader?.interrupted ? { interrupted: true } : outcome.readAttemptControl || savedJob?.reader?.lastRead ? { readRecovery: outcome.readAttemptControl?.recovery ?? savedJob?.reader?.lastRead?.recovery ?? null } : {}),
+        ...(savedJob ? { nextAttemptAt: savedJob.nextAttemptAt, now: completedAt.toISOString() } : {}),
       },
     );
     safeReply = checked.text;

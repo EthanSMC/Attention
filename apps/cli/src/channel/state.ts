@@ -24,6 +24,7 @@ import {
   type AttentionMcpStatus,
 } from "./mcp-readiness";
 import type { InboundMessage } from "./messages";
+import { normalizeReaderCheckpoint, type ReaderCheckpoint } from "./reader-recovery";
 
 export interface HistoryEntry {
   readonly role: "user" | "assistant";
@@ -89,6 +90,7 @@ export interface PendingOutboundMessage {
 }
 
 export interface SummaryRetryJob {
+  reader?: ReaderCheckpoint;
   automaticAttempts: 0 | 1 | 2 | 3;
   readonly collectionId: string;
   readonly cycleStartedAt: string;
@@ -520,8 +522,7 @@ function normalizeSummaryRetries(value: unknown): SummaryRetryJob[] {
     }
     const record = item as Record<string, unknown>;
     if (
-      Object.keys(record).length !== SUMMARY_RETRY_KEYS.size ||
-      Object.keys(record).some((key) => !SUMMARY_RETRY_KEYS.has(key))
+      Object.keys(record).some((key) => key !== "reader" && !SUMMARY_RETRY_KEYS.has(key))
     ) {
       continue;
     }
@@ -534,8 +535,11 @@ function normalizeSummaryRetries(value: unknown): SummaryRetryJob[] {
     const nextAttemptAt = nullableIsoTimestamp(record.nextAttemptAt);
     const automaticAttempts = record.automaticAttempts;
     const persistedStatus = record.status;
+    const reader = record.reader === undefined ? undefined : normalizeReaderCheckpoint(record.reader);
     if (
       !collectionId ||
+      reader === null ||
+      (reader?.lastRead !== undefined && reader.lastRead.collectionId !== collectionId) ||
       !cycleStartedAt ||
       seen.has(collectionId) ||
       typeof automaticAttempts !== "number" ||
@@ -548,19 +552,22 @@ function normalizeSummaryRetries(value: unknown): SummaryRetryJob[] {
         persistedStatus !== "running" &&
         persistedStatus !== "paused") ||
       (persistedStatus === "paused"
-        ? nextAttemptAt !== null || automaticAttempts !== 3
-        : nextAttemptAt === null || automaticAttempts >= 3)
+        ? nextAttemptAt !== null || (!reader && automaticAttempts !== 3)
+        : nextAttemptAt === null || (!reader && automaticAttempts >= 3))
     ) {
       continue;
     }
     seen.add(collectionId);
     normalized.push({
+      ...(reader ? { reader: persistedStatus === "running" ? { ...reader, interrupted: true as const } : reader } : {}),
       automaticAttempts: automaticAttempts as 0 | 1 | 2 | 3,
       collectionId,
       cycleStartedAt,
       lastFailureClass: record.lastFailureClass,
-      nextAttemptAt,
-      status: persistedStatus === "running" ? "scheduled" : persistedStatus,
+      // A versioned in-flight call already consumed its attempt. Replaying it
+      // after an indeterminate process exit would bypass every call budget.
+      nextAttemptAt: reader && persistedStatus === "running" ? null : nextAttemptAt,
+      status: persistedStatus === "running" ? (reader ? "paused" : "scheduled") : persistedStatus,
     });
     if (normalized.length >= 32) break;
   }
@@ -598,6 +605,17 @@ export async function saveChannelState(
   const path = channelStatePath(baseDirectory);
   await mkdir(dirname(path), { mode: 0o700, recursive: true });
   await chmod(dirname(path), 0o700);
+  if (state.summaryRetries.some((job) => job.reader)) {
+    try {
+      const original = await readFile(path, "utf8");
+      const parsed = JSON.parse(original) as Partial<ChannelState>;
+      if (!parsed.summaryRetries?.some((job) => job.reader)) {
+        await writeFile(`${path}.pre-reader-v1.bak`, original, { encoding: "utf8", mode: 0o600, flag: "wx" });
+      }
+    } catch (error) {
+      if (!["ENOENT", "EEXIST"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+    }
+  }
   const temporaryPath = `${path}.tmp-${randomUUID()}`;
   await writeFile(
     temporaryPath,

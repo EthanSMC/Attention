@@ -15,6 +15,7 @@ import { createClaudeCodeBrain } from "./brains/claude-code";
 import { createCodexBrain } from "./brains/codex";
 import { BRAIN_TIMEOUT_MS } from "./limits";
 import type { CollectionReplyControl } from "./collection-reply-control";
+import type { ReadAttemptControl } from "./read-attempt-control";
 import type {
   AttentionMcpFailure,
   AttentionMcpProbeResult,
@@ -39,6 +40,7 @@ export interface ExecBrainResult {
 }
 
 export interface BrainOutcome {
+  readonly readAttemptControl?: ReadAttemptControl;
   /** Stable failure evidence from any Attention MCP tool call. */
   readonly attentionMcpFailure?: AttentionMcpFailure;
   /** Structured evidence emitted only for attention_get_my_account. */

@@ -41,6 +41,7 @@ export const ATTENTION_CHANNEL_MCP_TOOL_NAMES = [
   "attention_submit_content_enrichment",
   "attention_select_collection_candidate",
   "attention_get_collection_status",
+  "attention_read_collection_source",
   "attention_update_collection",
 ] as const satisfies readonly (typeof ATTENTION_MCP_TOOL_NAMES)[number][];
 

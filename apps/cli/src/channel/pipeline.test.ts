@@ -94,6 +94,39 @@ const fakeBrain = (
 });
 
 describe("handleInboundMessage", () => {
+  it("uses the saved legacy deadline when duplicate collection remains incomplete", async () => {
+    const state = defaultChannelState();
+    state.summaryRetries.push({ automaticAttempts: 1, collectionId: "11111111-1111-4111-8111-111111111111", cycleStartedAt: "2026-09-04T07:00:00.000Z", lastFailureClass: "enrichment_incomplete", nextAttemptAt: "2026-09-04T08:10:00.000Z", status: "scheduled" });
+    const output = await handleInboundMessage({ brain: fakeBrain("codex"), cwd: "/tmp", state, message: textMessage("再次收藏"), now: () => new Date("2026-09-04T08:00:00.000Z"), invokeBrain: async () => controlledOutcome("", { collectionStatus: "already_collected", enrichmentAction: "generate_summary", enrichmentCompleted: false }) });
+    expect(output.replies.join("")).not.toContain("2 分钟");
+    expect(state.summaryRetries[0]!.nextAttemptAt).toBe("2026-09-04T08:10:00.000Z");
+  });
+  it.each([
+    ["verification_required", "source", "needs_action", null, "paused", null],
+    ["rate_limited", "dependency", "retry_later", 600000, "scheduled", "2026-09-04T08:10:00.000Z"],
+    ["fetcher_timeout", "dependency", "retry_later", null, "scheduled", "2026-09-04T08:00:05.000Z"],
+    ["source_gone", "source", "stop", null, "paused", null],
+  ] as const)("persists actual %s read recovery and never substitutes a two minute promise", async (failureCode, failureScope, recovery, retryAfterMs, status, nextAttemptAt) => {
+    const state = defaultChannelState();
+    const output = await handleInboundMessage({ brain: fakeBrain("codex"), cwd: "/tmp", state, message: textMessage("补一下这项摘要"), now: () => new Date("2026-09-04T08:00:00.000Z"),
+      invokeBrain: async () => ({ ...recoveryOutcome("摘要未补全，约2分钟后自动重试。", { enrichmentAction: "generate_summary", enrichmentCompleted: false, summaryStatus: "pending" }), readAttemptControl: { collectionId: "11111111-1111-4111-8111-111111111111", attemptRef: "manual-1", outcome: "failed", methods: null, failureCode, failureScope, recovery, retryAfterMs } }),
+    });
+    expect(state.summaryRetries[0]).toMatchObject({ status, nextAttemptAt });
+    expect(output.replies.join("")).not.toMatch(/2\s*分钟|不再符合摘要补全条件/u);
+  });
+  it("status-only Core lookup neither creates a reader job nor resets an existing pause", async () => {
+    for (const paused of [false, true]) {
+      const state = defaultChannelState();
+      if (paused) state.summaryRetries.push({ automaticAttempts: 3, collectionId: "11111111-1111-4111-8111-111111111111", cycleStartedAt: "2026-09-04T07:00:00.000Z", lastFailureClass: "enrichment_incomplete", nextAttemptAt: null, status: "paused" });
+      const before = structuredClone(state.summaryRetries);
+      const output = await handleInboundMessage({ brain: fakeBrain("codex"), cwd: "/tmp", state,
+        message: textMessage("这项收藏摘要现在怎样？"),
+        invokeBrain: async () => recoveryOutcome("摘要仍待补全。", { enrichmentAction: "generate_summary", enrichmentCompleted: false, summaryStatus: "pending" }),
+      });
+      expect(state.summaryRetries).toEqual(before);
+      expect(output.replies.join("")).not.toContain("2 分钟");
+    }
+  });
   it("queues an incomplete summary before returning the safe natural reply", async () => {
     const state = defaultChannelState();
     const output = await handleInboundMessage({
@@ -215,12 +248,14 @@ describe("handleInboundMessage", () => {
     await handleInboundMessage({
       brain: fakeBrain("codex"),
       cwd: "/tmp",
-      invokeBrain: async () =>
-        recoveryOutcome("这次仍没补全摘要，约 2 分钟后会重新自动重试。", {
+      invokeBrain: async () => ({
+        ...recoveryOutcome("这次仍没补全摘要，约 2 分钟后会重新自动重试。", {
           enrichmentAction: "generate_summary",
           enrichmentCompleted: false,
           summaryStatus: "pending",
         }),
+        readAttemptControl: { collectionId: "11111111-1111-4111-8111-111111111111", attemptRef: "manual-read-1", outcome: "failed", methods: ["static"], failureCode: "source_content_pending", failureScope: "source", recovery: "retry_later", retryAfterMs: null },
+      }),
       message: textMessage("再试试补摘要"),
       now: () => new Date("2026-09-04T08:00:00.000Z"),
       state,
@@ -934,7 +969,7 @@ describe("handleInboundMessage", () => {
       message: textMessage("x".repeat(40_000)),
       state,
     });
-    expect(seenPrompt.length).toBeLessThan(35_000);
+    expect(seenPrompt.split("用户消息：\n").at(-1)?.length).toBe(32_000);
     expect(seenPrompt).toContain("内容过长已截断");
   });
 });

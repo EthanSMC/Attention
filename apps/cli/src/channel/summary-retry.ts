@@ -1,4 +1,30 @@
 import type { ChannelState, SummaryRetryJob } from "./state";
+import { normalizeReadAttemptControl, type ReadAttemptControl } from "./read-attempt-control";
+import { initialReaderBudget, readerCategory, readerRecoveryDecision, type ReaderCheckpoint } from "./reader-recovery";
+
+export function ensureReaderCheckpoint(job: SummaryRetryJob): ReaderCheckpoint {
+  return job.reader ??= { schemaVersion: 1, category: "unknown", budget: {
+    ...initialReaderBudget(), contentRecoveries: Math.min(3, job.automaticAttempts + 1), sequence: job.automaticAttempts,
+  } };
+}
+
+export function settleReaderAttempt(job: SummaryRetryJob, control: ReadAttemptControl, now: Date): "scheduled" | "paused" | "terminal" {
+  const checkpoint = ensureReaderCheckpoint(job);
+  const decision = readerRecoveryDecision(control, checkpoint.budget, now.getTime());
+  checkpoint.budget = decision.budget;
+  checkpoint.category = readerCategory(control);
+  const lastRead = normalizeReadAttemptControl(control);
+  if (lastRead) checkpoint.lastRead = lastRead;
+  delete checkpoint.interrupted;
+  if (checkpoint.category === "content" && control.recovery === "retry_later") job.automaticAttempts = Math.max(0, decision.budget.contentRecoveries - (decision.action === "schedule" ? 1 : 0)) as 0 | 1 | 2 | 3;
+  job.nextAttemptAt = decision.nextAttemptAt === null ? null : new Date(decision.nextAttemptAt).toISOString();
+  job.status = decision.action === "schedule" ? "scheduled" : "paused";
+  return decision.action === "stop" ? "terminal" : job.status;
+}
+
+export function unknownReadFailure(collectionId: string, attemptRef: string, dependency = false): ReadAttemptControl {
+  return { collectionId, attemptRef, outcome: "failed", methods: null, failureCode: dependency ? "bridge_dependency_unavailable" : "unknown_reader_error", failureScope: dependency ? "dependency" : "reader", recovery: "retry_later", retryAfterMs: null };
+}
 
 export const SUMMARY_RETRY_DELAYS_MS = [
   2 * 60_000,
@@ -13,6 +39,13 @@ export type SummaryRetryAttemptResult =
   | "terminal";
 
 export interface SummaryRetryContext {
+  readonly readFacts?: readonly {
+    collectionId: string;
+    status: SummaryRetryJob["status"];
+    nextAttemptAt: string | null;
+    lastRead: ReadAttemptControl | null;
+    interrupted: boolean;
+  }[];
   readonly active: number;
   readonly nextAttemptAt: string | null;
   readonly paused: number;
@@ -41,11 +74,12 @@ export function scheduleSummaryRetry(
   state: ChannelState,
   collectionId: string,
   now: Date,
+  options: { readonly manual?: boolean } = {},
 ): SummaryRetryScheduleResult {
   const existingIndex = retryIndex(state, collectionId);
   if (existingIndex >= 0) {
     const existing = state.summaryRetries[existingIndex];
-    if (!existing || existing.status !== "paused") return "preserved";
+    if (!existing || existing.status !== "paused" || !options.manual) return "preserved";
     state.summaryRetries[existingIndex] = {
       automaticAttempts: 0,
       collectionId,
@@ -191,5 +225,6 @@ export function summaryRetryContext(state: ChannelState): SummaryRetryContext {
       nextAttemptAt = job.nextAttemptAt;
     }
   }
-  return { active, nextAttemptAt, paused, running };
+  const readFacts = state.summaryRetries.flatMap((job) => job.reader ? [{ collectionId: job.collectionId, status: job.status, nextAttemptAt: job.nextAttemptAt, lastRead: job.reader.lastRead ?? null, interrupted: job.reader.interrupted === true }] : []);
+  return { active, nextAttemptAt, paused, running, ...(readFacts.length ? { readFacts } : {}) };
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyAttentionToolResult,
   attentionResultSensitiveFragments,
+  mergeAttentionSensitiveFragments,
   collectionControlResult,
   safeCollectionReply,
 } from "./collection-reply-control";
@@ -10,6 +11,40 @@ import {
 const COLLECTION_ID = "11111111-1111-4111-8111-111111111111";
 
 describe("collection reply control", () => {
+  it("fails closed if a turn exhausts its transient reflection budget", () => {
+    const fragments: string[] = [];
+    for (let index = 0; index < 70; index++) mergeAttentionSensitiveFragments(fragments, { title: `Synthetic title ${index}` });
+    const control = { collectionId: COLLECTION_ID, kind: "recovery", enrichmentAction: "generate_summary", enrichmentCompleted: false, summaryStatus: "pending" } as const;
+    expect(fragments.length).toBeLessThanOrEqual(64);
+    expect(safeCollectionReply(control, "Unmatched later article excerpt", { phase: "ordinary", sensitiveFragments: fragments }).accepted).toBe(false);
+  });
+  it("rejects reflected excerpts from anywhere in transient reader text", () => {
+    const text = "Synthetic prefix ".repeat(70) + "独特的临时正文片段绝不能出现在回复";
+    const fragments = attentionResultSensitiveFragments({ temporary_text: text, final_public_url: "https://example.org/source" });
+    const control = { collectionId: COLLECTION_ID, kind: "recovery", enrichmentAction: "generate_summary", enrichmentCompleted: false, summaryStatus: "pending" } as const;
+    expect(safeCollectionReply(control, "独特的临时正文片段绝不能出现在回复", { phase: "ordinary", sensitiveFragments: fragments }).accepted).toBe(false);
+  });
+  it("does not complete collection A from a submit for content B after owned reading", () => {
+    const current = applyAttentionToolResult(null, "attention_collect_content", {
+      collection_id: COLLECTION_ID, content_id: "22222222-2222-4222-8222-222222222222", status: "accepted", enrichment_action: "generate_summary",
+    });
+    const read = { collectionId: COLLECTION_ID, attemptRef: "r1", outcome: "ready", methods: ["static"], failureCode: null, failureScope: null, recovery: null, retryAfterMs: null } as const;
+    const after = applyAttentionToolResult(current, "attention_submit_content_enrichment", { status: "enriched", content_id: "33333333-3333-4333-8333-333333333333", summary_status: "ready" }, { content_id: "33333333-3333-4333-8333-333333333333" }, read);
+    expect(after && collectionControlResult(after)).toBe("retryable_incomplete");
+    const completed = applyAttentionToolResult(current, "attention_submit_content_enrichment", { status: "enriched", content_id: "22222222-2222-4222-8222-222222222222", summary_status: "ready" }, { content_id: "22222222-2222-4222-8222-222222222222" }, read);
+    expect(completed && collectionControlResult(completed)).toBe("completed");
+    const wrongOutput = applyAttentionToolResult(current, "attention_submit_content_enrichment", { status: "enriched", content_id: "33333333-3333-4333-8333-333333333333", summary_status: "ready" }, { content_id: "22222222-2222-4222-8222-222222222222" }, read);
+    expect(wrongOutput && collectionControlResult(wrongOutput)).toBe("retryable_incomplete");
+    const wrongStatus = applyAttentionToolResult(current, "attention_get_collection_status", { collection: { collection_id: COLLECTION_ID }, content: { enrichment_action: "reuse_summary", summary_status: "ready" } }, { collection_id: "33333333-3333-4333-8333-333333333333" }, read);
+    expect(wrongStatus && collectionControlResult(wrongStatus)).toBe("retryable_incomplete");
+  });
+  it("does not promise a fixed two minute retry when the saved job is paused or delayed", () => {
+    const control = { collectionId: COLLECTION_ID, kind: "recovery", enrichmentAction: "generate_summary", enrichmentCompleted: false, summaryStatus: "pending" } as const;
+    expect(safeCollectionReply(control, "约2分钟后会自动重试", { phase: "paused", sensitiveFragments: [] }).text).not.toContain("2分钟");
+    expect(safeCollectionReply(control, "", { phase: "initial_incomplete", sensitiveFragments: [], nextAttemptAt: "2026-09-07T10:10:00.000Z" }).text).not.toContain("2 分钟");
+    expect(safeCollectionReply(control, "摘要未补全，约2分钟后自动重试。", { phase: "initial_incomplete", sensitiveFragments: [], nextAttemptAt: "2026-09-07T10:10:00.000Z", now: "2026-09-07T10:00:00.000Z" }).accepted).toBe(false);
+    expect(safeCollectionReply(control, "已暂停，约2分钟后自动重试。", { phase: "paused", sensitiveFragments: [] }).accepted).toBe(false);
+  });
   it.each([
     ["attention_collect_content", { error: "backend_failed", title: "RAW TITLE" }, "direct error envelope"],
     ["attention_select_collection_candidate", { error: "backend_failed", title: "RAW TITLE" }, "selected error envelope"],

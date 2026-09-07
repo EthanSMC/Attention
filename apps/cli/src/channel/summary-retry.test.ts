@@ -27,6 +27,12 @@ function requireJob(state: ChannelState, collectionId = COLLECTION_A) {
 }
 
 describe("summary retry scheduling", () => {
+  it("preserves paused cycles unless an explicit manual new cycle is requested", () => {
+    const state = defaultChannelState();
+    state.summaryRetries.push({ automaticAttempts: 3, collectionId: COLLECTION_A, cycleStartedAt: "2026-09-04T07:00:00.000Z", lastFailureClass: "enrichment_incomplete", nextAttemptAt: null, status: "paused" });
+    expect(scheduleSummaryRetry(state, COLLECTION_A, at("2026-09-04T08:00:00.000Z"))).toBe("preserved");
+    expect(scheduleSummaryRetry(state, COLLECTION_A, at("2026-09-04T08:00:00.000Z"), { manual: true })).toBe("scheduled");
+  });
   it("uses 2, 10, and 30 minute delays before pausing after attempt three", () => {
     const state = defaultChannelState();
     expect(
@@ -157,6 +163,7 @@ describe("summary retry scheduling", () => {
         state,
         COLLECTION_A,
         at("2026-09-04T08:00:00.000Z"),
+        { manual: true },
       ),
     ).toBe("scheduled");
     expect(requireJob(state)).toEqual({

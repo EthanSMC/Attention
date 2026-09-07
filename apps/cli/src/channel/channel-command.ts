@@ -119,10 +119,11 @@ import {
 } from "./state";
 import {
   cancelSummaryRetry,
-  deferSummaryRetryAfterDependency,
+  ensureReaderCheckpoint,
   markSummaryRetryRunning,
   nextDueSummaryRetry,
-  settleSummaryRetryAttempt,
+  settleReaderAttempt,
+  unknownReadFailure,
 } from "./summary-retry";
 import {
   collectionControlResult,
@@ -224,6 +225,8 @@ interface ReporterRetirement {
   stopped: boolean;
 }
 
+import type { ReadAttemptControl } from "./read-attempt-control";
+
 export type SummaryRetryProcessingResult =
   | "completed"
   | "dependency_failure"
@@ -243,24 +246,42 @@ export async function processDueSummaryRetry(input: {
   readonly state: ChannelState;
 }): Promise<SummaryRetryProcessingResult> {
   const { brain, now, state } = input;
+  // The existing service loop owns wakeups. Expiry must run before host/MCP health gates.
+  for (const job of state.summaryRetries) {
+    if (job.status === "paused" || job.reader?.category !== "dependency") continue;
+    const started = job.reader.budget.dependencyStartedAt;
+    if (started !== null && now.getTime() - started >= 900000) {
+      job.status = "paused"; job.nextAttemptAt = null;
+      await input.persist(); return "paused";
+    }
+  }
   if (
     !state.token ||
     state.pendingInbound.length > 0 ||
-    state.pendingOutbound.length > 0 ||
-    state.attentionMcp.status !== "ready" ||
-    state.runtimeState.phase !== "healthy"
+    state.pendingOutbound.length > 0
   ) {
     return "idle";
   }
   const due = nextDueSummaryRetry(state, now);
   if (!due) return "idle";
+  if (state.attentionMcp.status !== "ready" || state.runtimeState.phase !== "healthy") {
+    const checkpoint = ensureReaderCheckpoint(due);
+    if (checkpoint.category !== "dependency" || checkpoint.budget.dependencyStartedAt === null) {
+      checkpoint.category = "dependency";
+      checkpoint.budget.dependencyStartedAt ??= now.getTime();
+      await input.persist();
+    }
+    return "idle";
+  }
   const running = markSummaryRetryRunning(state, due.collectionId);
   if (!running) return "idle";
+  const checkpoint = ensureReaderCheckpoint(running);
+  checkpoint.budget.sequence++;
   await input.persist();
 
-  const attempt = Math.min(3, running.automaticAttempts + 1) as 1 | 2 | 3;
+  const attempt = checkpoint.budget.sequence;
   const retryRef = `summary-retry-${createHash("sha256")
-    .update(`${running.collectionId}:${running.cycleStartedAt}:${attempt}`)
+    .update(`${running.collectionId}:${running.cycleStartedAt}:${checkpoint.budget.sequence}`)
     .digest("hex")
     .slice(0, 48)}`;
   const outcome = await brain.invoke({
@@ -271,7 +292,7 @@ export async function processDueSummaryRetry(input: {
       retryRef,
     }),
     sessionId:
-      state.brainSession?.hostId === brain.hostId
+      state.brainSession?.hostId === brain.hostId && state.brainSession.bridgeVersion === ATTENTION_CLI_VERSION && state.brainSession.permissionProfileSha256 === ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256
         ? state.brainSession.sessionId
         : null,
   });
@@ -287,71 +308,36 @@ export async function processDueSummaryRetry(input: {
   syncRuntimeCheckpoint(state, brain);
 
   const control = outcome.collectionReplyControl;
+  const read = outcome.readAttemptControl;
+  const correlatedRead = read?.collectionId === running.collectionId && read.attemptRef === retryRef ? read : undefined;
+  const validControl = control && control.kind !== "fixed" && control.collectionId === running.collectionId ? control : undefined;
+  const result = validControl ? collectionControlResult(validControl) : "unconfirmed";
+  if (!outcome.attentionMcpFailure && outcome.ok && validControl && (result === "completed" || result === "ready" || result === "terminal") && (!read || !!correlatedRead)) {
+    cancelSummaryRetry(state, running.collectionId);
+    if (result === "terminal") await enqueueSummaryRetryNotice({ brain, control: validControl, cwd: input.cwd, cycleStartedAt: running.cycleStartedAt, phase: "terminal", state });
+    await input.persist();
+    return result === "terminal" ? "terminal" : "completed";
+  }
   if (
-    outcome.attentionMcpFailure ||
-    !outcome.ok ||
-    !control ||
-    control.kind === "fixed" ||
-    control.collectionId !== running.collectionId
+    outcome.attentionMcpFailure
   ) {
     if (outcome.attentionMcpFailure && input.onAttentionMcpFailure) {
       await input.onAttentionMcpFailure(outcome.attentionMcpFailure);
     }
-    const dependencyRetryAt = [
-      state.attentionMcp.nextRetryAt,
-      state.runtimeState.nextRetryAt,
-    ].reduce(
-      (latest, value) => {
-        const parsed = value ? Date.parse(value) : Number.NaN;
-        return Number.isFinite(parsed) && parsed > latest ? parsed : latest;
-      },
-      now.getTime() + 60_000,
-    );
-    deferSummaryRetryAfterDependency(
-      state,
-      running.collectionId,
-      new Date(dependencyRetryAt),
-    );
-    await input.persist();
-    return "dependency_failure";
   }
-
-  const result = collectionControlResult(control);
-  if (result === "retryable_incomplete") {
-    const settled = settleSummaryRetryAttempt(
-      state,
-      running.collectionId,
-      "incomplete",
-      now,
-    );
-    if (settled === "paused") {
-      await enqueueSummaryRetryNotice({
-        brain,
-        control,
-        cwd: input.cwd,
-        cycleStartedAt: running.cycleStartedAt,
-        phase: "paused",
-        state,
-      });
-    }
-    await input.persist();
-    return settled === "cancelled" ? "completed" : settled;
+  const failure = outcome.attentionMcpFailure?.retryable === false
+    ? { ...unknownReadFailure(running.collectionId, retryRef, true), recovery: "needs_action" as const }
+    : correlatedRead ?? unknownReadFailure(running.collectionId, retryRef, !!outcome.attentionMcpFailure || !outcome.ok);
+  const settled = settleReaderAttempt(running, failure, now);
+  // Supervisor deadlines may postpone execution, but cannot extend the dependency window.
+  if (settled === "scheduled" && failure.failureScope === "dependency") {
+    const deadline = checkpoint.budget.dependencyStartedAt! + 900000;
+    const next = Math.max(Date.parse(running.nextAttemptAt!), ...[state.attentionMcp.nextRetryAt, state.runtimeState.nextRetryAt].map((v) => v ? Date.parse(v) || 0 : 0));
+    running.nextAttemptAt = new Date(Math.min(next, deadline)).toISOString();
   }
-  cancelSummaryRetry(state, running.collectionId);
-  if (result === "terminal") {
-    await enqueueSummaryRetryNotice({
-      brain,
-      control,
-      cwd: input.cwd,
-      cycleStartedAt: running.cycleStartedAt,
-      phase: "terminal",
-      state,
-    });
-  }
+  if (settled !== "scheduled" && validControl) await enqueueSummaryRetryNotice({ brain, control: validControl, cwd: input.cwd, cycleStartedAt: running.cycleStartedAt, phase: settled === "terminal" ? "terminal" : "paused", state, generate: false, readRecovery: failure.recovery });
   await input.persist();
-  return result === "completed" || result === "ready"
-    ? "completed"
-    : "terminal";
+  return settled === "scheduled" && failure.failureScope === "dependency" ? "dependency_failure" : settled;
 }
 
 async function enqueueSummaryRetryNotice(input: {
@@ -361,15 +347,17 @@ async function enqueueSummaryRetryNotice(input: {
   readonly cycleStartedAt: string;
   readonly phase: "paused" | "terminal";
   readonly state: ChannelState;
+  readonly generate?: boolean;
+  readonly readRecovery?: ReadAttemptControl["recovery"];
 }): Promise<void> {
-  const notice = await input.brain.invoke({
+  const notice = input.generate === false ? null : await input.brain.invoke({
     cwd: input.cwd,
     prompt: buildSummaryRetryNoticePrompt({ phase: input.phase }),
     sessionId: null,
   });
   syncRuntimeCheckpoint(input.state, input.brain);
   const candidate =
-    notice.ok &&
+    notice?.ok &&
     !notice.attentionMcpFailure &&
     !notice.collectionReplyControl
       ? notice.reply
@@ -377,6 +365,7 @@ async function enqueueSummaryRetryNotice(input: {
   const checked = safeCollectionReply(input.control, candidate, {
     phase: input.phase,
     sensitiveFragments: [],
+    ...(input.readRecovery ? { readRecovery: input.readRecovery } : {}),
   });
   const toUserId = input.state.ownerUserId;
   const contextToken = toUserId

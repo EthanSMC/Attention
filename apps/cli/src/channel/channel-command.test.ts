@@ -170,7 +170,7 @@ describe("channel subcommands", () => {
     expect(isBridgeHost("nope")).toBe(false);
   });
 
-  it("persists a due summary retry as running before a silent incomplete attempt", async () => {
+  it("persists a due retry before using the single unknown-failure recovery for legacy evidence", async () => {
     const state = defaultChannelState();
     state.token = "local-ilink-token";
     state.attentionMcp.status = "ready";
@@ -214,13 +214,67 @@ describe("channel subcommands", () => {
     expect(persisted[0]?.summaryRetries[0]?.status).toBe("running");
     expect(result).toBe("scheduled");
     expect(state.summaryRetries[0]).toMatchObject({
-      automaticAttempts: 1,
-      nextAttemptAt: "2026-09-04T08:12:00.000Z",
+      automaticAttempts: 0,
+      nextAttemptAt: "2026-09-04T08:04:00.000Z",
       status: "scheduled",
     });
     expect(state.pendingOutbound).toEqual([]);
     expect(state.brainSession?.sessionId).toBe("thread-1");
     expect(state.history).toEqual([]);
+  });
+
+  it("expires a reader dependency window while MCP remains unhealthy without invoking brain", async () => {
+    const state = dueSummaryState(); state.attentionMcp.status = "unreachable";
+    state.summaryRetries[0]!.reader = { schemaVersion: 1, category: "dependency", budget: { contentRecoveries: 0, dependencyRecoveries: 1, dependencyStartedAt: Date.parse("2026-09-04T08:00:00.000Z"), unknownRecoveries: 0, sequence: 1 } };
+    let calls = 0;
+    const brain = summaryBrain([]); brain.invoke = async () => { calls++; throw new Error("must not call"); };
+    expect(await processDueSummaryRetry({ brain, cwd: "/tmp/channel", now: new Date("2026-09-04T08:15:00.000Z"), persist: async () => {}, state })).toBe("paused");
+    expect(calls).toBe(0); expect(state.summaryRetries[0]!.nextAttemptAt).toBeNull();
+  });
+  it("does not resume an obsolete permission session during automatic recovery", async () => {
+    const state = dueSummaryState(); state.brainSession = { hostId: "codex", sessionId: "old-permission-session", bridgeVersion: "0.3.15", permissionProfileSha256: "008145538ba70eaef4d66a6e99c588dd0cae2087dba8de85202e21f2eb738230", updatedAt: "2026-09-04T07:00:00.000Z" };
+    const invocations: Array<{ prompt: string; sessionId: string | null }> = [];
+    await processDueSummaryRetry({ brain: summaryBrain([summaryControlOutcome({ enrichmentAction: "reuse_summary", enrichmentCompleted: false, reply: "就绪", summaryStatus: "ready" })], invocations), cwd: "/tmp/channel", now: new Date("2026-09-04T08:02:00.000Z"), persist: async () => {}, state });
+    expect(invocations[0]?.sessionId).toBeNull();
+    expect(state.token).toBe("local-ilink-token");
+  });
+  it("pauses nonretryable MCP authentication failure instead of consuming a reader retry loop", async () => {
+    const state = dueSummaryState();
+    expect(await processDueSummaryRetry({ brain: summaryBrain([{ ok: false, reply: "", resumeFailed: false, sessionId: null, timedOut: false, attentionMcpFailure: { errorCode: "mcp_auth_required", retryable: false } }]), cwd: "/tmp/channel", now: new Date("2026-09-04T08:02:00.000Z"), persist: async () => {}, state })).toBe("paused");
+    expect(state.summaryRetries[0]!.nextAttemptAt).toBeNull();
+  });
+
+  it("bounds correlated reader dependency calls and produces distinct retry references", async () => {
+    const state = dueSummaryState(); const refs: string[] = [];
+    const brain = summaryBrain([]);
+    brain.invoke = async ({ prompt }) => {
+      const ref = /summary-retry-[a-f0-9]+/u.exec(prompt)![0]; refs.push(ref);
+      return { ...summaryControlOutcome({ enrichmentAction: "generate_summary", enrichmentCompleted: false, reply: "摘要未补全", summaryStatus: "pending" }), readAttemptControl: {
+        collectionId: "11111111-1111-4111-8111-111111111111", attemptRef: ref, outcome: "failed", methods: null,
+        failureCode: "fetcher_unavailable", failureScope: "dependency", recovery: "retry_later", retryAfterMs: null,
+      } };
+    };
+    for (const time of ["08:02:00", "08:02:05", "08:02:35", "08:04:35", "08:09:35"]) {
+      await processDueSummaryRetry({ brain, cwd: "/tmp/channel", now: new Date(`2026-09-04T${time}.000Z`), persist: async () => {}, state });
+    }
+    expect(refs).toHaveLength(5); expect(new Set(refs).size).toBe(5);
+    expect(state.summaryRetries[0]!.status).toBe("paused");
+    expect(state.summaryRetries[0]!.reader?.budget.dependencyRecoveries).toBe(4);
+  });
+  it("runs all three content recoveries through minute 42 despite an earlier dependency window", async () => {
+    const state = dueSummaryState();
+    state.summaryRetries[0]!.reader = { schemaVersion: 1, category: "content", budget: { contentRecoveries: 1, dependencyRecoveries: 1, dependencyStartedAt: Date.parse("2026-09-04T07:59:00.000Z"), unknownRecoveries: 0, sequence: 1 } };
+    const prompts: string[] = []; const brain = summaryBrain([]);
+    brain.invoke = async ({ prompt }) => {
+      prompts.push(prompt);
+      return { ...summaryControlOutcome({ enrichmentAction: "generate_summary", enrichmentCompleted: false, reply: "摘要未补全", summaryStatus: "pending" }), readAttemptControl: { collectionId: SUMMARY_COLLECTION_ID, attemptRef: /summary-retry-[a-f0-9]+/u.exec(prompt)![0], outcome: "failed", methods: ["static"], failureCode: "source_content_pending", failureScope: "source", recovery: "retry_later", retryAfterMs: null } };
+    };
+    for (const [time, next] of [["08:02:00", "2026-09-04T08:12:00.000Z"], ["08:12:00", "2026-09-04T08:42:00.000Z"], ["08:42:00", null]]) {
+      await processDueSummaryRetry({ brain, cwd: "/tmp/channel", now: new Date(`2026-09-04T${time}.000Z`), persist: async () => {}, state });
+      expect(state.summaryRetries[0]!.nextAttemptAt).toBe(next);
+    }
+    expect(prompts).toHaveLength(3); expect(state.summaryRetries[0]!.automaticAttempts).toBe(3);
+    expect(state.summaryRetries[0]!.reader!.budget.dependencyRecoveries).toBe(1);
   });
 
   it("cancels completed retry work without enqueueing a duplicate success reply", async () => {
@@ -283,8 +337,9 @@ describe("channel subcommands", () => {
     });
   });
 
-  it("pauses after attempt three and composes one content-free notification in a disposable session", async () => {
+  it("pauses an exhausted unknown recovery without another model invocation", async () => {
     const state = dueSummaryState(2);
+    state.summaryRetries[0]!.reader = { schemaVersion: 1, category: "unknown", budget: { contentRecoveries: 3, dependencyRecoveries: 0, dependencyStartedAt: null, unknownRecoveries: 1, sequence: 3 } };
     state.brainSession = {
       hostId: "codex",
       sessionId: "conversation-1",
@@ -318,32 +373,31 @@ describe("channel subcommands", () => {
 
     expect(result).toBe("paused");
     expect(state.summaryRetries[0]).toMatchObject({
-      automaticAttempts: 3,
+      automaticAttempts: 2,
       nextAttemptAt: null,
       status: "paused",
     });
-    expect(invocations[0]).toMatchObject({ sessionId: "conversation-1" });
+    expect(invocations[0]).toMatchObject({ sessionId: null });
     expect(invocations[0]?.prompt).toContain(SUMMARY_COLLECTION_ID);
-    expect(invocations[1]).toMatchObject({ sessionId: null });
-    expect(invocations[1]?.prompt).not.toContain(SUMMARY_COLLECTION_ID);
-    expect(invocations[1]?.prompt).toContain("不得调用任何工具");
+    expect(invocations).toHaveLength(1);
     expect(state.brainSession.sessionId).toBe("thread-1");
     expect(state.brainSession.sessionId).not.toBe("disposable-notice-thread");
     expect(state.pendingOutbound).toHaveLength(1);
     expect(state.pendingOutbound[0]?.text).toBe(
-      "这轮自动重试还是没能补全摘要，已经暂停；需要时告诉我再重试。",
+      "这轮自动重试仍未补全摘要，现已暂停；你可以随时再让我重试。",
     );
     expect(state.pendingOutbound[0]?.id).not.toContain(SUMMARY_COLLECTION_ID);
   });
 
-  it("uses a safe fallback when paused notice composition exposes content", async () => {
+  it("uses a content-free pause notice without reflecting the failed turn", async () => {
     const state = dueSummaryState(2);
+    state.summaryRetries[0]!.reader = { schemaVersion: 1, category: "unknown", budget: { contentRecoveries: 3, dependencyRecoveries: 0, dependencyStartedAt: null, unknownRecoveries: 1, sequence: 3 } };
     await processDueSummaryRetry({
       brain: summaryBrain([
         summaryControlOutcome({
           enrichmentAction: "generate_summary",
           enrichmentCompleted: false,
-          reply: "这次仍未补全摘要。",
+          reply: "正文见 https://secret.example/raw",
           summaryStatus: "pending",
         }),
         {

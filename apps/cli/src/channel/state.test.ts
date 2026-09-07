@@ -12,6 +12,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { BRAIN_HISTORY_TURNS, PROCESSED_MESSAGE_RING_SIZE } from "./limits";
+import { summaryRetryContext, settleReaderAttempt } from "./summary-retry";
+import { buildFollowUpPrompt } from "./prompt";
+import { handleInboundMessage } from "./pipeline";
 import {
   appendHistory,
   channelStateDirectory,
@@ -24,6 +27,54 @@ import {
 } from "./state";
 
 describe("channel state persistence", () => {
+  it("retains exact paused read facts across save/load for status-only explanations", async () => {
+    const base = await makeTempBase(); const state = defaultChannelState();
+    const job = { automaticAttempts: 0 as const, collectionId: "11111111-1111-4111-8111-111111111111", cycleStartedAt: "2026-09-04T07:00:00.000Z", lastFailureClass: null, nextAttemptAt: "2026-09-04T07:02:00.000Z", status: "scheduled" as const };
+    state.summaryRetries.push(job);
+    settleReaderAttempt(job, { collectionId: job.collectionId, attemptRef: "read-1", outcome: "blocked", methods: ["static", "browser"], failureCode: "verification_required", failureScope: "source", recovery: "needs_action", retryAfterMs: null }, new Date("2026-09-04T07:00:00.000Z"));
+    await saveChannelState(state, base); const restored = await loadChannelState(base);
+    expect(restored.summaryRetries[0]?.reader?.lastRead).toMatchObject({ methods: ["static", "browser"], failureCode: "verification_required", recovery: "needs_action" });
+    const before = structuredClone(restored.summaryRetries);
+    const prompt = buildFollowUpPrompt({ messageRef: "status-1", userMessage: "摘要现在怎样", retryContext: summaryRetryContext(restored) });
+    expect(prompt).toContain("verification_required"); expect(prompt).toContain('"methods":["static","browser"]'); expect(prompt).toContain("needs_action");
+    expect(prompt).not.toMatch(/temporary_text|https?:/u); expect(restored.summaryRetries).toEqual(before);
+    let statusPrompt = "";
+    const reply = await handleInboundMessage({
+      state: restored, cwd: "/tmp", message: { fromUserId: "owner", contextToken: "context", itemList: [{ type: 1, text_item: { text: "这项收藏摘要现在怎样" } }], raw: {} },
+      brain: { hostId: "codex", start: async () => {}, shutdown: async () => {}, runtimeSnapshot: () => ({ phase: "healthy", lastErrorCode: null, retryAttempt: 0 }), invoke: async () => { throw new Error("No unplanned read"); } },
+      invokeBrain: async ({ prompt }) => {
+        statusPrompt = prompt;
+        return { ok: true, reply: "读取需要验证访问条件，自动重试已暂停；处理后可以再重试。", sessionId: null, resumeFailed: false, timedOut: false, collectionReplyControl: { kind: "recovery", collectionId: job.collectionId, enrichmentAction: "generate_summary", enrichmentCompleted: false, summaryStatus: "pending" } };
+      },
+    });
+    expect(statusPrompt).toContain("verification_required"); expect(statusPrompt).toContain('"methods":["static","browser"]');
+    expect(reply.replies.join("")).toContain("暂停"); expect(restored.summaryRetries).toEqual(before);
+  });
+  it("round trips versioned reader counters and preserves a paused dependency job", async () => {
+    const base = await makeTempBase(); const state = defaultChannelState();
+    state.summaryRetries.push({ automaticAttempts: 0, collectionId: "11111111-1111-4111-8111-111111111111", cycleStartedAt: "2026-09-04T07:00:00.000Z", lastFailureClass: null, nextAttemptAt: null, status: "paused",
+      reader: { schemaVersion: 1, category: "dependency", budget: { contentRecoveries: 2, dependencyRecoveries: 4, dependencyStartedAt: 1788505200000, unknownRecoveries: 1, sequence: 7 } },
+    });
+    await saveChannelState(state, base);
+    const restored = await loadChannelState(base);
+    expect(restored.summaryRetries).toEqual(state.summaryRetries);
+  });
+  it("does not replay an indeterminate in-flight reader call after a process restart", async () => {
+    const base = await makeTempBase(); const state = defaultChannelState();
+    state.summaryRetries.push({ automaticAttempts: 0, collectionId: "11111111-1111-4111-8111-111111111111", cycleStartedAt: "2026-09-04T07:00:00.000Z", lastFailureClass: null, nextAttemptAt: "2026-09-04T07:00:05.000Z", status: "running", reader: { schemaVersion: 1, category: "dependency", budget: { contentRecoveries: 0, dependencyRecoveries: 4, dependencyStartedAt: 1788505200000, unknownRecoveries: 1, sequence: 5 } } });
+    await saveChannelState(state, base);
+    const restored = await loadChannelState(base);
+    expect(restored.summaryRetries[0]).toMatchObject({ status: "paused", nextAttemptAt: null, reader: { interrupted: true, budget: { dependencyRecoveries: 4, unknownRecoveries: 1, sequence: 5 } } });
+    expect(buildFollowUpPrompt({ messageRef: "after-restart", userMessage: "现在怎样", retryContext: summaryRetryContext(restored) })).toContain('"interrupted":true');
+  });
+  it("keeps a private original-state backup on first reader-budget write", async () => {
+    const base = await makeTempBase(); const state = defaultChannelState();
+    await saveChannelState(state, base); const original = await readFile(channelStatePath(base), "utf8");
+    state.summaryRetries.push({ automaticAttempts: 0, collectionId: "11111111-1111-4111-8111-111111111111", cycleStartedAt: "2026-09-04T07:00:00.000Z", lastFailureClass: null, nextAttemptAt: null, status: "paused", reader: { schemaVersion: 1, category: "unknown", budget: { contentRecoveries: 0, dependencyRecoveries: 0, dependencyStartedAt: null, unknownRecoveries: 1, sequence: 1 } } });
+    await saveChannelState(state, base); await saveChannelState(state, base);
+    expect(await readFile(`${channelStatePath(base)}.pre-reader-v1.bak`, "utf8")).toBe(original);
+    expect((await stat(`${channelStatePath(base)}.pre-reader-v1.bak`)).mode & 0o777).toBe(0o600);
+  });
   const tempDirs: string[] = [];
 
   const makeTempBase = async (): Promise<string> => {

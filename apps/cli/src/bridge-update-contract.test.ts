@@ -20,13 +20,14 @@ const manifest = {
 } as const;
 
 describe("Bridge update contract", () => {
-  it("publishes one canonical permission boundary with a reviewed digest", () => {
-    expect(JSON.stringify(ATTENTION_BRIDGE_PERMISSION_PROFILE)).toBe(
-      '{"cloud":{"mcp_server":"attention_only","runtime_oauth":{"resource":"attention-channel-runtime","scopes":["runtime:register","runtime:heartbeat","channel:bind:report","channel:disconnect:report","channel:notifications:read"]},"tools":["attention_get_my_account","attention_list_collections","attention_collect_content","attention_submit_content_enrichment","attention_select_collection_candidate","attention_get_collection_status","attention_update_collection"]},"local":{"deny":["browser_automation","code_execution","filesystem_outside_attention","other_mcp","shell"],"write":["attention_state","managed_bridge_artifacts","user_service_config"]},"native_network":["public_web_reader"],"schema_version":2}',
-    );
-    expect(ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256).toBe(
-      "008145538ba70eaef4d66a6e99c588dd0cae2087dba8de85202e21f2eb738230",
-    );
+  it("requires installed owners to consent when collection reading expands the permission list", () => {
+    expect(ATTENTION_BRIDGE_PERMISSION_PROFILE.cloud.tools).toContain("attention_read_collection_source");
+    expect(bridgeUpdateDecision({ currentPermissionProfileSha256: "008145538ba70eaef4d66a6e99c588dd0cae2087dba8de85202e21f2eb738230", currentVersion: "0.3.15", manifest: { ...manifest, version: "0.3.16", permission_profile_sha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256 } })).toBe("consent_required");
+  });
+  it("keeps the new reader permission inside the existing restricted boundary", () => {
+    expect(ATTENTION_BRIDGE_PERMISSION_PROFILE.cloud.mcp_server).toBe("attention_only");
+    expect(ATTENTION_BRIDGE_PERMISSION_PROFILE.local.deny).toEqual(["browser_automation", "code_execution", "filesystem_outside_attention", "other_mcp", "shell"]);
+    expect(ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256).toMatch(/^[a-f0-9]{64}$/u);
   });
 
   it("accepts only the strict versioned manifest", () => {

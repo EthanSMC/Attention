@@ -118,6 +118,50 @@ async function nextTurn(): Promise<void> {
 }
 
 describe("resident Claude Code brain", () => {
+  it.each(["valid", "submit other content", "submit same content", "wrong collection", "wrong attempt", "unmatched id", "assistant result", "duplicate id"])("validates actual Claude reader correlation: %s", async (mode) => {
+    const { brain, rpcs } = fixture(); const pending = brain.invoke({ cwd: "/tmp/channel", prompt: "read", sessionId: null }); await nextTurn(); const rpc = rpcs[0]!;
+    const id = "11111111-1111-4111-8111-111111111111";
+    const contentId = "22222222-2222-4222-8222-222222222222";
+    if (mode.startsWith("submit")) {
+      rpc.emit({ type: "assistant", message: { content: [{ type: "tool_use", id: "collect-event", name: "mcp__attention__attention_collect_content", input: {} }] } });
+      rpc.emit({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "collect-event", content: JSON.stringify({ status: "accepted", collection_id: id, content_id: contentId, enrichment_action: "generate_summary" }) }] } });
+    }
+    const payload = { schema_version: 1, collection_id: id, attempt_ref: "read-a", request_ref: "run-a", attempts: [{ method: "static", duration_ms: 10 }], outcome: "ready", evidence_kind: "article", extraction_method: "readability", final_public_url: "https://example.org/source", metadata: { author: null, title: null, description: null, published_at: null }, read_at: "2026-09-07T00:00:00.000Z", source_kind: "generic_web", temporary_text: "SYNTHETIC TRANSIENT ARTICLE", truncated: false };
+    const use = (attempt: string) => rpc.emit({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "read-event", name: "mcp__attention__attention_read_collection_source", input: { collection_id: mode === "wrong collection" ? "22222222-2222-4222-8222-222222222222" : id, attempt_ref: attempt } }] } });
+    use(mode === "wrong attempt" || mode === "duplicate id" ? "other-attempt" : "read-a");
+    if (mode === "duplicate id") use("read-a");
+    rpc.emit({ type: mode === "assistant result" ? "assistant" : "user", message: { content: [{ type: "tool_result", tool_use_id: mode === "unmatched id" ? "other-event" : "read-event", content: JSON.stringify(payload) }] } });
+    if (mode.startsWith("submit")) {
+      const target = mode === "submit same content" ? contentId : "33333333-3333-4333-8333-333333333333";
+      rpc.emit({ type: "assistant", message: { content: [{ type: "tool_use", id: "submit-event", name: "mcp__attention__attention_submit_content_enrichment", input: { content_id: target } }] } });
+      rpc.emit({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "submit-event", content: JSON.stringify({ status: "enriched", content_id: target, summary_status: "ready" }) }] } });
+    }
+    rpc.complete("摘要仍待补全"); const outcome = await pending;
+    if (mode === "valid" || mode.startsWith("submit")) { expect(outcome.readAttemptControl).toMatchObject({ outcome: "ready", methods: ["static"] }); expect(outcome.collectionReplyControl).toMatchObject({ collectionId: id, enrichmentCompleted: mode === "submit same content" }); expect(JSON.stringify(outcome.readAttemptControl)).not.toMatch(/TRANSIENT|https:/u); }
+    else expect(outcome.readAttemptControl).toBeUndefined();
+    await brain.shutdown();
+  });
+  it("uses advertised optional reader absence without disabling ordinary chat", async () => {
+    const { brain, rpcs } = fixture(); const first = brain.invoke({ cwd: "/tmp/channel", prompt: "chat", sessionId: null });
+    await nextTurn(); const rpc = rpcs[0]!;
+    rpc.emit({ type: "system", subtype: "init", session_id: "session-1", tools: ["mcp__attention__attention_get_my_account"] });
+    rpc.complete("hello"); expect((await first).ok).toBe(true);
+    const second = brain.invoke({ cwd: "/tmp/channel", prompt: "chat again", sessionId: "session-1" }); await nextTurn();
+    expect(JSON.stringify(rpc.sent.at(-1))).toContain("reader capability: unavailable");
+    rpc.complete("hello again"); expect((await second).ok).toBe(true); await brain.shutdown();
+  });
+  it("correlates actual reader tool use inputs and consumes the result only once", async () => {
+    const { brain, rpcs } = fixture();
+    const pending = brain.invoke({ cwd: "/tmp/channel", prompt: "read", sessionId: null });
+    await nextTurn(); const rpc = rpcs[0]!;
+    rpc.emit({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "read-1", name: "mcp__attention__attention_read_collection_source", input: { collection_id: "11111111-1111-4111-8111-111111111111", attempt_ref: "attempt-1" } }] } });
+    rpc.emit({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "read-1", is_error: true, content: JSON.stringify({ error: { code: "fetcher_unavailable", guidance: "Retry later", request_id: "run-1" } }) }] } });
+    rpc.complete("摘要仍待补全");
+    const outcome = await pending;
+    expect(outcome.readAttemptControl).toMatchObject({ attemptRef: "attempt-1", failureCode: "fetcher_unavailable", methods: null });
+    expect(outcome.attentionMcpFailure).toBeUndefined();
+    await brain.shutdown();
+  });
   it("returns structured readiness after the matching account tool result", async () => {
     const { brain, rpcs } = fixture();
     const pending = brain.invoke({

@@ -16,7 +16,7 @@ import { CHANNEL_HOST_SYSTEM_POLICY } from "../prompt";
 import { ATTENTION_CLI_VERSION } from "../../version";
 import {
   applyAttentionToolResult,
-  attentionResultSensitiveFragments,
+  mergeAttentionSensitiveFragments,
   mcpResultPayload,
   type CollectionReplyControl,
 } from "../collection-reply-control";
@@ -34,6 +34,7 @@ const CHANNEL_DEVELOPER_INSTRUCTIONS = CHANNEL_HOST_SYSTEM_POLICY;
 
 interface McpServerStatus {
   readonly name?: unknown;
+  readonly tools?: unknown;
 }
 
 interface McpServerStatusList {
@@ -48,7 +49,12 @@ interface TurnResult {
   readonly turn?: { readonly id?: unknown };
 }
 
+import { applyReadToolResult, collectionControlFromRead, type ReadAttemptControl } from "../read-attempt-control";
+import { readerCapabilityPrompt } from "../mcp-readiness";
+
 interface ActiveTurn {
+  readAttemptControl: ReadAttemptControl | null;
+  readonly completedToolIds: Set<string>;
   attentionMcpFailure: AttentionMcpFailure | null;
   attentionMcpProbe: AttentionMcpProbeResult | null;
   collectionReplyControl: CollectionReplyControl | null;
@@ -201,22 +207,22 @@ export function createCodexResidentBrain(
         typeof item.tool === "string"
       ) {
         const toolName = item.tool.replace(/^mcp__attention__/u, "");
+        if (typeof item.id !== "string" || pending.completedToolIds.has(item.id) || pending.completedToolIds.size >= 128) return true;
+        pending.completedToolIds.add(item.id);
+        const isReader = toolName === "attention_read_collection_source";
         const payload =
-          item.status === "failed" ? null : mcpResultPayload(item.result);
-        for (const fragment of attentionResultSensitiveFragments(payload)) {
-          if (
-            pending.collectionReplySensitiveFragments.length < 64 &&
-            !pending.collectionReplySensitiveFragments.includes(fragment)
-          ) {
-            pending.collectionReplySensitiveFragments.push(fragment);
-          }
-        }
+          item.status === "failed" && !isReader ? null : mcpResultPayload(item.result) ?? mcpResultPayload(item.error);
+        pending.readAttemptControl = applyReadToolResult(pending.readAttemptControl, toolName, payload, item.arguments);
+        if (isReader) pending.collectionReplyControl = collectionControlFromRead(pending.collectionReplyControl, pending.readAttemptControl);
+        mergeAttentionSensitiveFragments(pending.collectionReplySensitiveFragments, payload);
         pending.collectionReplyControl = applyAttentionToolResult(
           pending.collectionReplyControl,
           toolName,
           payload,
+          item.arguments,
+          pending.readAttemptControl,
         );
-        if (item.status === "failed") {
+        if (item.status === "failed" && !isReader) {
           const failure = classifyAttentionMcpFailure(
             item.error ?? item.result ?? item,
           );
@@ -254,6 +260,7 @@ export function createCodexResidentBrain(
           pending.collectionReplyControl !== null ||
           pending.attentionMcpProbe?.ok === true),
       reply: completedSuccessfully ? pending.reply : "",
+      ...(pending.readAttemptControl ? { readAttemptControl: pending.readAttemptControl } : {}),
       ...(pending.attentionMcpFailure
         ? { attentionMcpFailure: pending.attentionMcpFailure }
         : {}),
@@ -283,6 +290,7 @@ export function createCodexResidentBrain(
     }
   });
 
+  let readerCapability = "";
   const verifyMcpIsolation = async (): Promise<void> => {
     let status: McpServerStatusList;
     try {
@@ -298,6 +306,7 @@ export function createCodexResidentBrain(
       );
     }
     const names = (status.data ?? []).map((entry) => entry.name);
+    readerCapability = readerCapabilityPrompt(status.data?.find((entry) => entry.name === "attention")?.tools);
     if (names.length !== 1 || names[0] !== "attention") {
       throw new CodexAppServerRpcError(
         "protocol_error",
@@ -479,7 +488,7 @@ export function createCodexResidentBrain(
     try {
       const result = await rpc.request<TurnResult>("turn/start", {
         effort: CODEX_REASONING_EFFORT,
-        input: [{ text: input.prompt, text_elements: [], type: "text" }],
+        input: [{ text: input.prompt + readerCapability, text_elements: [], type: "text" }],
         model: CODEX_MODEL,
         // Native Responses web search is configured independently by
         // `web_search="live"`. Keep ordinary sandbox networking closed so no
@@ -512,6 +521,8 @@ export function createCodexResidentBrain(
         );
       }, turnTimeout);
       activeTurn = {
+        readAttemptControl: null,
+        completedToolIds: new Set(),
         attentionMcpFailure: null,
         attentionMcpProbe: null,
         collectionReplyControl: null,

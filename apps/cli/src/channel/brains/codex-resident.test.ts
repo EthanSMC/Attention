@@ -19,6 +19,7 @@ class ScriptedRpc implements CodexResidentRpc {
   closeCount = 0;
   missingThread = false;
   mcpServers = ["attention"];
+  tools: Record<string, unknown> | undefined;
   restartFailures = 0;
   statusFailure = false;
   startCount = 0;
@@ -63,7 +64,7 @@ class ScriptedRpc implements CodexResidentRpc {
         );
       }
       return {
-        data: this.mcpServers.map((name) => ({ authStatus: "oAuth", name })),
+        data: this.mcpServers.map((name) => ({ authStatus: "oAuth", name, ...(this.tools ? { tools: this.tools } : {}) })),
       } as T;
     }
     if (method === "thread/resume") {
@@ -157,6 +158,53 @@ async function nextTurn(): Promise<void> {
 }
 
 describe("resident Codex brain", () => {
+  it.each(["valid", "submit other content", "submit same content", "wrong collection", "wrong attempt", "other server", "other turn", "prose"])("trusts only correlated owned read evidence: %s", async (mode) => {
+    const rpc = new ScriptedRpc(); rpc.autoCompleteTurns = false;
+    const brain = createCodexResidentBrain({ mcpUrl: "https://attention.example/mcp", rpc });
+    const pending = brain.invoke({ cwd: "/tmp/channel", prompt: "read", sessionId: null }); await nextTurn();
+    const id = "11111111-1111-4111-8111-111111111111";
+    const contentId = "22222222-2222-4222-8222-222222222222";
+    if (mode.startsWith("submit")) rpc.emit({ method: "item/completed", params: { threadId: "thread-1", turnId: "turn-1", item: { type: "mcpToolCall", id: "collect-event", server: "attention", tool: "attention_collect_content", status: "completed", arguments: {}, result: { structuredContent: { status: "accepted", collection_id: id, content_id: contentId, enrichment_action: "generate_summary" }, content: [] } } } });
+    const payload = { schema_version: 1, collection_id: id, attempt_ref: "read-a", request_ref: "run-a", attempts: [{ method: "static", duration_ms: 10 }, { method: "browser", duration_ms: 50 }], outcome: "ready", evidence_kind: "article", extraction_method: "readability", final_public_url: "https://example.org/source", metadata: { author: null, title: null, description: null, published_at: null }, read_at: "2026-09-07T00:00:00.000Z", source_kind: "generic_web", temporary_text: "SYNTHETIC TRANSIENT ARTICLE", truncated: false };
+    rpc.emit({ method: "item/completed", params: { threadId: "thread-1", turnId: mode === "other turn" ? "turn-other" : "turn-1", item: mode === "prose" ? { type: "agentMessage", text: JSON.stringify(payload) } : {
+      type: "mcpToolCall", id: "read-event", server: mode === "other server" ? "other" : "attention", tool: "attention_read_collection_source", status: "completed", arguments: { collection_id: mode === "wrong collection" ? "22222222-2222-4222-8222-222222222222" : id, attempt_ref: mode === "wrong attempt" ? "other-attempt" : "read-a" }, result: { structuredContent: payload, content: [] },
+    } } });
+    if (mode.startsWith("submit")) {
+      const target = mode === "submit same content" ? contentId : "33333333-3333-4333-8333-333333333333";
+      rpc.emit({ method: "item/completed", params: { threadId: "thread-1", turnId: "turn-1", item: { type: "mcpToolCall", id: "submit-event", server: "attention", tool: "attention_submit_content_enrichment", status: "completed", arguments: { content_id: target }, result: { structuredContent: { status: "enriched", content_id: target, summary_status: "ready" }, content: [] } } } });
+    }
+    rpc.complete("thread-1", "turn-1", "摘要仍待补全"); const outcome = await pending;
+    if (mode === "valid" || mode.startsWith("submit")) {
+      expect(outcome.readAttemptControl).toMatchObject({ outcome: "ready", methods: ["static", "browser"] });
+      expect(outcome.collectionReplyControl).toMatchObject({ collectionId: id, enrichmentCompleted: mode === "submit same content" });
+      expect(JSON.stringify(outcome.readAttemptControl)).not.toMatch(/TRANSIENT|https:/u);
+    } else expect(outcome.readAttemptControl).toBeUndefined();
+    await brain.shutdown();
+  });
+  it("keeps old servers healthy and tells the turn its optional reader is absent", async () => {
+    const rpc = new ScriptedRpc(); rpc.tools = { attention_get_my_account: { name: "attention_get_my_account" } };
+    const brain = createCodexResidentBrain({ mcpUrl: "https://attention.example/mcp", rpc });
+    expect((await brain.invoke({ cwd: "/tmp/channel", prompt: "chat", sessionId: null })).ok).toBe(true);
+    expect(brain.runtimeSnapshot().phase).toBe("healthy");
+    expect(JSON.stringify(rpc.requests.find((request) => request.method === "turn/start")?.params)).toContain("reader capability: unavailable");
+    await brain.shutdown();
+  });
+  it("correlates owned reader arguments and does not promote reader transport failure to global MCP failure", async () => {
+    const rpc = new ScriptedRpc(); rpc.autoCompleteTurns = false;
+    const brain = createCodexResidentBrain({ mcpUrl: "https://attention.example/mcp", rpc });
+    const pending = brain.invoke({ cwd: "/tmp/channel", prompt: "read", sessionId: null });
+    await nextTurn();
+    rpc.emit({ method: "item/completed", params: { threadId: "thread-1", turnId: "turn-1", item: {
+      type: "mcpToolCall", id: "read-1", server: "attention", tool: "attention_read_collection_source", status: "completed",
+      arguments: { collection_id: "11111111-1111-4111-8111-111111111111", attempt_ref: "attempt-1" },
+      result: { isError: true, content: [], structuredContent: { error: { code: "fetcher_timeout", guidance: "Retry later", request_id: "run-1" } } },
+    } } });
+    rpc.complete("thread-1", "turn-1", "仍待补全");
+    const outcome = await pending;
+    expect(outcome.readAttemptControl).toMatchObject({ attemptRef: "attempt-1", failureCode: "fetcher_timeout", methods: null });
+    expect(outcome.attentionMcpFailure).toBeUndefined();
+    await brain.shutdown();
+  });
   it("returns structured readiness after attention_get_my_account completes", async () => {
     const rpc = new ScriptedRpc();
     rpc.autoCompleteTurns = false;
@@ -625,7 +673,7 @@ describe("resident Codex brain", () => {
     });
     expect(rpc.requests[2]?.params).toMatchObject({
       developerInstructions: expect.stringContaining(
-        "selected generate_summary result, read only the exact public_read_url",
+        "selected generate_summary result, use attention_read_collection_source",
       ),
     });
     expect(rpc.requests[2]?.params).not.toHaveProperty("dynamicTools");
