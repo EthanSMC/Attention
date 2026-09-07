@@ -19,6 +19,8 @@ export function settleReaderAttempt(job: SummaryRetryJob, control: ReadAttemptCo
     (control.recovery === "retry_later" || control.outcome === "ready")) {
     // This is a manual observation, not consumption of the scheduled automatic attempt.
     const next = job.nextAttemptAt === null ? null : Math.max(Date.parse(job.nextAttemptAt), now.getTime() + (control.retryAfterMs ?? 0));
+    // A real dependency observation starts its window even when the automatic cycle is preserved.
+    if (control.failureScope === "dependency") checkpoint.budget.dependencyStartedAt ??= now.getTime();
     const dependencyStart = checkpoint.budget.dependencyStartedAt;
     if (control.failureScope === "dependency" && dependencyStart !== null &&
       (now.getTime() >= dependencyStart + 900_000 || (next !== null && next >= dependencyStart + 900_000))) {

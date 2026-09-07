@@ -38420,6 +38420,7 @@ function settleReaderAttempt(job, control, now, options = {}) {
   delete checkpoint.interrupted;
   if (options.preserveActiveCycle && job.status !== "paused" && (control.recovery === "retry_later" || control.outcome === "ready")) {
     const next = job.nextAttemptAt === null ? null : Math.max(Date.parse(job.nextAttemptAt), now.getTime() + (control.retryAfterMs ?? 0));
+    if (control.failureScope === "dependency") checkpoint.budget.dependencyStartedAt ??= now.getTime();
     const dependencyStart = checkpoint.budget.dependencyStartedAt;
     if (control.failureScope === "dependency" && dependencyStart !== null && (now.getTime() >= dependencyStart + 9e5 || next !== null && next >= dependencyStart + 9e5)) {
       job.status = "paused";

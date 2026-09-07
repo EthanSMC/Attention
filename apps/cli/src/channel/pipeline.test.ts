@@ -97,6 +97,36 @@ const fakeBrain = (
 });
 
 describe("handleInboundMessage", () => {
+  it.each(["content", "unknown"] as const)("starts a manual dependency window from an active %s cycle without spending counters", async category => {
+    for (const scenario of ["within", "saved_outside", "retry_after_outside"] as const) {
+      const state = defaultChannelState(), collectionId = "11111111-1111-4111-8111-111111111111";
+      const observedAt = new Date("2026-09-07T00:12:00.000Z");
+      const deadline = scenario === "saved_outside" ? "2026-09-07T00:42:00.000Z" : "2026-09-07T00:14:00.000Z";
+      const budget = {...initialReaderBudget(), contentRecoveries: category === "content" ? 3 : 0, unknownRecoveries: category === "unknown" ? 1 : 0, sequence: 2};
+      state.summaryRetries.push({collectionId, automaticAttempts: 2, cycleStartedAt: "2026-09-07T00:00:00.000Z", lastFailureClass: "enrichment_incomplete", nextAttemptAt: deadline, status: "scheduled", reader: {schemaVersion: 1, category, budget: {...budget}}});
+      const job = state.summaryRetries[0]!;
+      const observe = async (minute: number, retryAfterMs: number | null) => handleInboundMessage({brain: fakeBrain("codex"), cwd: "/tmp", state,
+        message: textMessage("重试摘要", {message_id: `dependency-${minute}`}), now: () => new Date(observedAt.getTime() + minute * 60_000),
+        invokeBrain: async () => ({...recoveryOutcome("仍待补全", {enrichmentAction: "generate_summary", enrichmentCompleted: false, summaryStatus: "pending"}), readAttemptControl: {collectionId, attemptRef: `manual-${minute}`, outcome: "failed", methods: null, failureCode: "rate_limited", failureScope: "dependency", recovery: "retry_later", retryAfterMs}})});
+      await observe(0, scenario === "retry_after_outside" ? 900_000 : null);
+      expect(job.reader).toMatchObject({category: "dependency", budget: {...budget, dependencyStartedAt: observedAt.getTime()}});
+      expect(job.automaticAttempts).toBe(2);
+      expect(job.cycleStartedAt).toBe("2026-09-07T00:00:00.000Z");
+      expect(job.status).toBe(scenario === "within" ? "scheduled" : "paused");
+      expect(job.nextAttemptAt).toBe(scenario === "within" ? deadline : null);
+      if (scenario === "within") {
+        await observe(1, null);
+        expect(job.reader?.lastRead?.attemptRef).toBe("manual-1");
+        expect(job.reader?.budget).toEqual({...budget, dependencyStartedAt: observedAt.getTime()});
+        expect(job.nextAttemptAt).toBe(deadline);
+        await observe(2, 14 * 60_000);
+        expect(job.reader?.budget).toEqual({...budget, dependencyStartedAt: observedAt.getTime()});
+        expect(job.automaticAttempts).toBe(2);
+        expect(job.status).toBe("paused");
+        expect(job.nextAttemptAt).toBeNull();
+      }
+    }
+  });
   it.each([
     ["unknown_reader_error", "reader"], ["rate_limited", "dependency"], ["source_content_pending", "source"],
   ] as const)("preserves an active automatic cycle after a correlated manual %s", async (failureCode, failureScope) => {
