@@ -235,7 +235,10 @@ function classifyLoadedDocument(
   if (document.readResult) {
     const result = document.readResult;
     const metadata = result.outcome === "skipped" ? null : result.metadata;
-    return {kind: result.outcome === "ready" ? "article" : "blocked",
+    // Failed is not a security classification: strict results can carry blocked codes too.
+    const safeMetadata = result.outcome === "failed" && result.evidence_kind === "metadata_only" &&
+      ["evidence_insufficient", "render_required", "reader_unsupported", "browser_backend_unavailable"].includes(result.code);
+    return {kind: result.outcome === "ready" ? "article" : safeMetadata ? "metadata_only" : "blocked",
       code: result.outcome === "ready" ? null : result.outcome === "skipped" ? "content_ineligible" : result.code,
       author: metadata?.author ?? null, title: metadata?.title ?? null, description: metadata?.description ?? null,
       publishedAt: metadata?.published_at ? new Date(metadata.published_at) : null,
@@ -299,9 +302,11 @@ export function createProductionHandlers(options: {
             "You create grounded metadata for a saved link.",
             "Return JSON with summary (concise Chinese, 80-150 Chinese characters when evidence permits) and tags (1-8 short strings).",
             "Use only supplied metadata and temporary page text. Do not claim the collector read, endorsed, or agreed with the page.",
+            "Summarize only the supplied portion. When evidenceBoundary.truncated is true, do not claim whole-document coverage or infer omitted content.",
             "If evidence is thin, explicitly say the summary is based on limited page metadata. Do not invent facts.",
           ].join(" "),
           user: JSON.stringify({
+            evidenceBoundary: {kind: "article", truncated: extracted.truncated},
             author: extracted?.author ?? context.author,
             description: extracted?.description,
             publishedAt: (extracted?.publishedAt ?? context.publishedAt)?.toISOString() ?? null,

@@ -3,6 +3,24 @@ import * as client from "./fetcher-client";
 
 afterEach(() => {vi.unstubAllEnvs(); vi.unstubAllGlobals();});
 describe("trusted source reader client", () => {
+  it.each([429, 503])("keeps legacy upstream HTTP %s dependency recovery without inventing Retry-After", async status => {
+    vi.stubEnv("FETCHER_BASE_URL", "https://fetcher.example.test"); vi.stubEnv("FETCHER_SHARED_SECRET", "s".repeat(32));
+    for (const retryAfter of [undefined, "30", "not-a-date"]) {
+      const fetch = vi.fn().mockResolvedValueOnce(new Response(null, {status: 404})).mockResolvedValueOnce(Response.json({
+        body: '<title>Unavailable</title>', finalUrl: "https://example.com/article", status, ...(retryAfter ? {retryAfter} : {}),
+      }, {headers: {"retry-after": "999"}})); vi.stubGlobal("fetch", fetch);
+      expect(await client.readExternalSource({request_ref: "r", attempt_ref: "a", sourceKind: "generic_web", url: "https://example.com/article"},
+        {signal: new AbortController().signal, admissionReference: "admission"})).toMatchObject({outcome: "blocked",
+        code: status === 429 ? "rate_limited" : "upstream_5xx", recovery: "retry_later", retry_after_ms: retryAfter === "30" ? 30000 : null});
+      expect(fetch).toHaveBeenCalledTimes(2);
+    }
+  });
+  it.each(['<title>Preview only</title>', '<div id="app"></div><script src="/app.js"></script>'])("still pauses legacy exhausted evidence/method switching", async body => {
+    vi.stubEnv("FETCHER_BASE_URL", "https://fetcher.example.test"); vi.stubEnv("FETCHER_SHARED_SECRET", "s".repeat(32));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(null, {status: 404})).mockResolvedValueOnce(Response.json({body, finalUrl: "https://example.com/article", status: 200})));
+    expect(await client.readExternalSource({request_ref: "r", attempt_ref: "a", sourceKind: "generic_web", url: "https://example.com/article"},
+      {signal: new AbortController().signal, admissionReference: "admission"})).toMatchObject({recovery: "pause", retry_after_ms: null});
+  });
   it("rejects a ready response for a different source kind without legacy fallback", async () => {
     vi.stubEnv("FETCHER_BASE_URL", "https://fetcher.example.test"); vi.stubEnv("FETCHER_SHARED_SECRET", "s".repeat(32));
     const fetch = vi.fn(async () => Response.json({schema_version: 1, request_ref: "r", attempt_ref: "a", outcome: "ready",

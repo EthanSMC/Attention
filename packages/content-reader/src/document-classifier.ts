@@ -72,6 +72,23 @@ function challengeCode(html: string, hasReadableArticle: boolean): ReadFailureCo
   // Primary-content gates remain gates even when their notice contains readable paragraphs.
   if (verificationControl) return "verification_required";
   if (loginForm) return "login_required";
+  // A primary notice with an explicit access action is not article evidence.
+  // Heading/action structure keeps discussions of login and incidental sidebars readable.
+  const primaryHeading = gateControl("h1");
+  const primary = primaryHeading?.closest("article, main, [role='main']") ?? primaryHeading?.parentElement;
+  const noticeHeading = primaryHeading?.textContent?.replace(/\s+/gu, " ").trim() ?? "";
+  const primaryActions = [...primary?.querySelectorAll<HTMLElement>("a[href]") ?? []].filter(link => {
+    if (link.closest("aside, nav, footer, [role='complementary'], [role='navigation']")) return false;
+    for (let ancestor: HTMLElement | null = link; ancestor; ancestor = ancestor.parentElement) {
+      if (ancestor.hidden || ancestor.getAttribute("aria-hidden") === "true" ||
+        ancestor.style.display === "none" || ancestor.style.visibility === "hidden") return false;
+    }
+    return true;
+  });
+  if (primary && /^(?:(?:sign in|log in|login) (?:to continue(?: reading)?|required)|登录后(?:继续)?阅读|请登录后阅读)[.!。！]?$/iu.test(noticeHeading) &&
+    primaryActions.some(link => /^(?:sign in|log in|login|登录)$/iu.test(link.textContent?.trim() ?? ""))) return "login_required";
+  if (primary && /^(?:subscribe to (?:continue reading|read (?:this|the) article)|subscription required|订阅后(?:继续)?阅读|请订阅后阅读)[.!。！]?$/iu.test(noticeHeading) &&
+    primaryActions.some(link => /^(?:subscribe|subscribe now|订阅|立即订阅)$/iu.test(link.textContent?.trim() ?? ""))) return "access_denied";
   return null;
 }
 

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {ReadResultSchema, readFailurePolicy, type ReadRequest, type ReadResult} from "@attention/content-reader-contracts";
-import {classifyDocument, evidenceToReadResult} from "@attention/content-reader";
+import {classifyDocument, evidenceToReadResult, parseRetryAfter} from "@attention/content-reader";
 import {parseAndValidateUrl, assertNoHttpsDowngrade} from "@attention/fetcher/url-policy";
 
 import {
@@ -97,7 +97,7 @@ export async function readExternalSource(request: ReadRequest,
       body: JSON.stringify({mode: "metadata", sourceKind: request.sourceKind, url: request.url}),
       headers: {authorization: `Bearer ${config.secret}`, "content-type": "application/json"}});
     if (!legacy.ok) {await legacy.body?.cancel(); throw new FetcherClientError("fetcher_unavailable");}
-    const payload = z.object({body: z.string().optional(), finalUrl: z.string().url(), status: z.number().int().min(100).max(599)})
+    const payload = z.object({body: z.string().optional(), finalUrl: z.string().url(), status: z.number().int().min(100).max(599), retryAfter: z.string().max(128).optional()})
       .parse(await boundedReaderJson(legacy, 3 * 1024 * 1024));
     const html = payload.body ?? "";
     if (Buffer.byteLength(html) > 2 * 1024 * 1024) throw new FetcherClientError("invalid_fetcher_response");
@@ -107,7 +107,8 @@ export async function readExternalSource(request: ReadRequest,
     // Public DNS and connected-peer enforcement is attested by the authenticated legacy safeFetch response.
     const evidence = classifyDocument({html, finalUrl: target.toString(), sourceKind: request.sourceKind, status: payload.status});
     return evidenceToReadResult(evidence, {...base, schema_version: 1, attempts: [{method: "static", duration_ms: Math.min(90_000, Math.round(performance.now() - started))}],
-      sourceKind: request.sourceKind, finalUrl: target.toString(), readAt: new Date().toISOString(), exhausted: true});
+      sourceKind: request.sourceKind, finalUrl: target.toString(), readAt: new Date().toISOString(), exhausted: true,
+      retryAfterMs: parseRetryAfter(payload.retryAfter, Date.now())});
   }
   if (!response.ok) {await response.body?.cancel(); throw new FetcherClientError("fetcher_unavailable");}
   const result = ReadResultSchema.parse(await boundedReaderJson(response, 256 * 1024));

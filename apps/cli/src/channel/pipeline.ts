@@ -296,7 +296,8 @@ export async function handleInboundMessage(
         if (!retryQueueFull && job && (read || scheduleResult === "scheduled")) {
           // New cycles consume the initial failure's budget now; do not remigrate active legacy jobs.
           if (scheduleResult === "scheduled") job.reader = { schemaVersion: 1, category: "unknown", budget: initialReaderBudget() };
-          readerSettlement = settleReaderAttempt(job, read ?? unknownReadFailure(job.collectionId, messageRef), completedAt);
+          readerSettlement = settleReaderAttempt(job, read ?? unknownReadFailure(job.collectionId, messageRef), completedAt,
+            {preserveActiveCycle: scheduleResult === "preserved"});
         }
       } else if (result !== "retryable_incomplete") {
         cancelSummaryRetry(

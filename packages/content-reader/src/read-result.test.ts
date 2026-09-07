@@ -12,3 +12,8 @@ it("maps exhausted methods to pause while retaining bounded metadata", () => {
   const evidence = classifyDocument({html: '<title>Preview</title>', finalUrl: context.finalUrl, status: 200, sourceKind: "generic_web"});
   expect(evidenceToReadResult(evidence, {...context, exhausted: true})).toMatchObject({outcome: "failed", code: "evidence_insufficient", recovery: "pause", evidence_kind: "metadata_only", metadata: {title: "Preview"}});
 });
+it.each([429, 503])("keeps dependency retry budgets independent of method exhaustion for HTTP %s", status => {
+  const evidence = classifyDocument({html: '<title>Temporarily unavailable</title>', finalUrl: context.finalUrl, status, sourceKind: "generic_web"});
+  expect(evidenceToReadResult(evidence, {...context, exhausted: true, retryAfterMs: 30000}))
+    .toMatchObject({scope: "dependency", recovery: "retry_later", retry_after_ms: 30000});
+});

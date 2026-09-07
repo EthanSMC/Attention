@@ -1,4 +1,5 @@
-import { classifyDocument, evidenceMetadata, evidenceToReadResult, type DocumentEvidence } from "@attention/content-reader";
+import { classifyDocument, evidenceMetadata, evidenceToReadResult, parseRetryAfter, type DocumentEvidence } from "@attention/content-reader";
+export { parseRetryAfter } from "@attention/content-reader";
 import { ReadResultSchema, readFailurePolicy, type ReadRequest, type ReadResult,
   type ReadFailureCode, type ReadAttempt, type ReadMetadata } from "@attention/content-reader-contracts";
 import { FetcherError } from "./errors.js";
@@ -16,13 +17,6 @@ export class BrowserUnavailableError extends Error {
 }
 export class BrowserCapacityError extends Error {
   constructor(readonly retryAfterMs: number) {super("reader_capacity_limited");}
-}
-
-export function parseRetryAfter(value: string | undefined, now: number): number | null {
-  if (!value || value.length > 128) return null;
-  const delay = /^\d+$/u.test(value) ? Number(value) * 1_000
-    : /^[A-Za-z]{3}, /u.test(value) ? Date.parse(value) - now : NaN;
-  return Number.isFinite(delay) && delay > 0 ? Math.min(900_000, Math.ceil(delay)) : null;
 }
 
 function failureCode(error: unknown): ReadFailureCode {

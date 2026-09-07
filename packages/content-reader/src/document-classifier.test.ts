@@ -9,6 +9,21 @@ const input = {
 } as const;
 
 describe("document classification", () => {
+  it.each([
+    ['<html><head><title>Sign in to continue</title></head><body><article><h1>Sign in to continue</h1><p>Sign in is required to read this article. Please sign in to continue reading.</p><a href="/login">Sign in</a></article></body></html>', "login_required"],
+    ['<html><head><script type="application/ld+json">{"@type":"NewsArticle","isAccessibleForFree":false}</script></head><body><article><h1>Subscribe to continue reading</h1><p>A subscription is required to read this article.</p><a href="/subscribe">Subscribe</a></article></body></html>', "access_denied"],
+  ])("blocks explicit primary link-only access gates", (html, code) => {
+    expect(classifyDocument({...input, html})).toMatchObject({kind: "blocked", code, text: null});
+  });
+  it.each([
+    '<article><h1>How sign-in and subscription payments work</h1><p>Sign in to continue is a common notice. This article explains login protocols and payment subscriptions.</p><a href="/login">Sign in</a></article>',
+    '<article><h1>Sign in to continue</h1><p>This essay examines the design and usability of authentication notices.</p><aside><a href="/login">Sign in</a></aside></article>',
+    '<article><h1>Subscribe to continue reading</h1><p>This study examines subscription notices and their effect on readers.</p><a hidden href="/subscribe">Subscribe</a></article>',
+    '<article><h1>Public findings</h1><p>The experiment measured a reproducible improvement under controlled conditions.</p></article><aside><h1>Subscribe to continue reading</h1><p>A subscription is required to read this article.</p><a href="/subscribe">Subscribe</a></aside>',
+    '<article><h1>Public findings</h1><p>The experiment measured a reproducible improvement under controlled conditions.</p></article><aside><h1>Sign in to continue</h1><p>Please sign in to continue reading.</p><a href="/login">Sign in</a></aside>',
+  ])("retains real article evidence with access-related discussion or sidebar notices", html => {
+    expect(classifyDocument({...input, html})).toMatchObject({kind: "article", code: null});
+  });
   it("blocks a primary-content login notice even when its paragraph survives extraction", () => {
     expect(classifyDocument({
       ...input,

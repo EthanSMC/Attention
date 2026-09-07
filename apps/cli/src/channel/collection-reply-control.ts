@@ -388,7 +388,8 @@ function rejectionReason(
   if (context.phase === "queue_full") return "reply_retry_queue_full";
   if (context.interrupted && !/中断|结果.{0,3}未确认/u.test(candidate)) return "reply_missing_pause_state";
   if (context.sensitiveFragments.includes(SENSITIVE_FRAGMENT_OVERFLOW)) return "reply_contains_sensitive_fragment";
-  if ((context.phase === "paused" || context.phase === "terminal" || context.nextAttemptAt === null) && /(?:自动|稍后|分钟后).{0,10}重试/u.test(candidate)) return "reply_inaccurate_retry_plan";
+  const futurePlan = candidate.replace(/自动重试(?:已(?:经)?(?:暂停|停止|终止)|不再继续)/gu, "");
+  if ((context.phase === "paused" || context.phase === "terminal" || context.nextAttemptAt === null) && /(?:自动|稍后|分钟后).{0,10}重试/u.test(futurePlan)) return "reply_inaccurate_retry_plan";
   if (context.nextAttemptAt !== undefined) {
     const relative = /(?:(\d+)|([两二]))\s*分钟后/u.exec(candidate);
     if (relative) {

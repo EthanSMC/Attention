@@ -2,6 +2,14 @@ import { ReadResultSchema, readFailurePolicy, type ReadBase, type ReadResult, ty
   type SourceKind } from "@attention/content-reader-contracts";
 import type { DocumentEvidence } from "./document-classifier.js";
 
+/** Only a trusted upstream Retry-After value, never a transport-wrapper header. */
+export function parseRetryAfter(value: string | undefined, now: number): number | null {
+  if (!value || value.length > 128) return null;
+  const delay = /^\d+$/u.test(value) ? Number(value) * 1_000
+    : /^[A-Za-z]{3}, /u.test(value) ? Date.parse(value) - now : NaN;
+  return Number.isFinite(delay) && delay > 0 ? Math.min(900_000, Math.ceil(delay)) : null;
+}
+
 export function evidenceMetadata(evidence: DocumentEvidence): ReadMetadata {
   return {title: evidence.title, author: evidence.author?.slice(0, 1_024) ?? null,
     description: evidence.description, published_at: evidence.publishedAt?.toISOString() ?? null};
@@ -21,7 +29,7 @@ export function evidenceToReadResult(evidence: DocumentEvidence, context: ReadBa
   }
   const code = evidence.code ?? "unknown_reader_error";
   const policy = readFailurePolicy(code);
-  const recovery = context.exhausted && policy.allowedRecoveries.includes("pause") ? "pause" : policy.recovery;
+  const recovery = context.exhausted && policy.recovery === "switch_reader" ? "pause" : policy.recovery;
   return ReadResultSchema.parse({...base, outcome: evidence.kind === "blocked" ? "blocked" : "failed", code,
     scope: policy.scope, recovery, retry_after_ms: recovery === "retry_later" ? context.retryAfterMs ?? null : null,
     metadata, evidence_kind: Object.values(metadata).some(value => value !== null) ? "metadata_only" : "none"});

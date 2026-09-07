@@ -35695,7 +35695,8 @@ function rejectionReason(candidate, context) {
   if (context.phase === "queue_full") return "reply_retry_queue_full";
   if (context.interrupted && !/中断|结果.{0,3}未确认/u.test(candidate)) return "reply_missing_pause_state";
   if (context.sensitiveFragments.includes(SENSITIVE_FRAGMENT_OVERFLOW)) return "reply_contains_sensitive_fragment";
-  if ((context.phase === "paused" || context.phase === "terminal" || context.nextAttemptAt === null) && /(?:自动|稍后|分钟后).{0,10}重试/u.test(candidate)) return "reply_inaccurate_retry_plan";
+  const futurePlan = candidate.replace(/自动重试(?:已(?:经)?(?:暂停|停止|终止)|不再继续)/gu, "");
+  if ((context.phase === "paused" || context.phase === "terminal" || context.nextAttemptAt === null) && /(?:自动|稍后|分钟后).{0,10}重试/u.test(futurePlan)) return "reply_inaccurate_retry_plan";
   if (context.nextAttemptAt !== void 0) {
     const relative2 = /(?:(\d+)|([两二]))\s*分钟后/u.exec(candidate);
     if (relative2) {
@@ -38411,14 +38412,25 @@ function ensureReaderCheckpoint(job) {
     sequence: job.automaticAttempts
   } };
 }
-function settleReaderAttempt(job, control, now) {
+function settleReaderAttempt(job, control, now, options = {}) {
   const checkpoint = ensureReaderCheckpoint(job);
-  const decision = readerRecoveryDecision(control, checkpoint.budget, now.getTime());
-  checkpoint.budget = decision.budget;
   checkpoint.category = readerCategory(control);
   const lastRead = normalizeReadAttemptControl(control);
   if (lastRead) checkpoint.lastRead = lastRead;
   delete checkpoint.interrupted;
+  if (options.preserveActiveCycle && job.status !== "paused" && (control.recovery === "retry_later" || control.outcome === "ready")) {
+    const next = job.nextAttemptAt === null ? null : Math.max(Date.parse(job.nextAttemptAt), now.getTime() + (control.retryAfterMs ?? 0));
+    const dependencyStart = checkpoint.budget.dependencyStartedAt;
+    if (control.failureScope === "dependency" && dependencyStart !== null && (now.getTime() >= dependencyStart + 9e5 || next !== null && next >= dependencyStart + 9e5)) {
+      job.status = "paused";
+      job.nextAttemptAt = null;
+      return "paused";
+    }
+    if (next !== null && control.retryAfterMs !== null) job.nextAttemptAt = new Date(next).toISOString();
+    return "scheduled";
+  }
+  const decision = readerRecoveryDecision(control, checkpoint.budget, now.getTime());
+  checkpoint.budget = decision.budget;
   if (checkpoint.category === "content" && control.recovery === "retry_later") job.automaticAttempts = Math.max(0, decision.budget.contentRecoveries - (decision.action === "schedule" ? 1 : 0));
   job.nextAttemptAt = decision.nextAttemptAt === null ? null : new Date(decision.nextAttemptAt).toISOString();
   job.status = decision.action === "schedule" ? "scheduled" : "paused";
@@ -38683,7 +38695,12 @@ async function handleInboundMessage(input) {
         const job = state.summaryRetries.find((job2) => job2.collectionId === collectionId2);
         if (!retryQueueFull && job && (read || scheduleResult === "scheduled")) {
           if (scheduleResult === "scheduled") job.reader = { schemaVersion: 1, category: "unknown", budget: initialReaderBudget() };
-          readerSettlement = settleReaderAttempt(job, read ?? unknownReadFailure(job.collectionId, messageRef), completedAt);
+          readerSettlement = settleReaderAttempt(
+            job,
+            read ?? unknownReadFailure(job.collectionId, messageRef),
+            completedAt,
+            { preserveActiveCycle: scheduleResult === "preserved" }
+          );
         }
       } else if (result !== "retryable_incomplete") {
         cancelSummaryRetry(

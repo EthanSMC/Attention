@@ -11,6 +11,9 @@ import {
   splitReply,
 } from "./pipeline";
 import { defaultChannelState } from "./state";
+import { initialReaderBudget } from "./reader-recovery";
+import { scheduleSummaryRetry, settleReaderAttempt } from "./summary-retry";
+import type { ReadAttemptControl } from "./read-attempt-control";
 
 const currentBrainSession = (
   hostId: BrainAdapter["hostId"],
@@ -94,6 +97,42 @@ const fakeBrain = (
 });
 
 describe("handleInboundMessage", () => {
+  it.each([
+    ["unknown_reader_error", "reader"], ["rate_limited", "dependency"], ["source_content_pending", "source"],
+  ] as const)("preserves an active automatic cycle after a correlated manual %s", async (failureCode, failureScope) => {
+    for (const retryAfterMs of [null, 1_000, 300_000]) {
+      const state = defaultChannelState();
+      const collectionId = "11111111-1111-4111-8111-111111111111";
+      const start = new Date("2026-09-07T00:00:00.000Z");
+      const read: ReadAttemptControl = {collectionId, attemptRef: "first", outcome: "failed", methods: null, failureCode, failureScope, recovery: "retry_later", retryAfterMs: null};
+      scheduleSummaryRetry(state, collectionId, start);
+      const job = state.summaryRetries[0]!;
+      job.reader = {schemaVersion: 1, category: "unknown", budget: initialReaderBudget()};
+      settleReaderAttempt(job, read, start);
+      const before = structuredClone(job);
+      await handleInboundMessage({brain: fakeBrain("codex"), cwd: "/tmp", state, message: textMessage("重试摘要"), now: () => new Date(start.getTime() + 1_000),
+        invokeBrain: async () => ({...recoveryOutcome("仍待补全", {enrichmentAction: "generate_summary", enrichmentCompleted: false, summaryStatus: "pending"}), readAttemptControl: {...read, attemptRef: "manual", retryAfterMs}})});
+      expect(job.reader?.budget).toEqual(before.reader?.budget);
+      expect(job.automaticAttempts).toBe(before.automaticAttempts);
+      expect(job.cycleStartedAt).toBe(before.cycleStartedAt);
+      expect(job.status).toBe("scheduled");
+      expect(job.nextAttemptAt).toBe(new Date(Math.max(Date.parse(before.nextAttemptAt!), start.getTime() + 1_000 + (retryAfterMs ?? 0))).toISOString());
+      expect(job.reader?.lastRead?.attemptRef).toBe("manual");
+    }
+  });
+  it.each(["verification_required", "source_gone", "completed", "window"] as const)("honors %s on an active manual read without resetting its budget", async kind => {
+    const state = defaultChannelState(), collectionId = "11111111-1111-4111-8111-111111111111";
+    const start = new Date("2026-09-07T00:00:00.000Z");
+    scheduleSummaryRetry(state, collectionId, start);
+    const job = state.summaryRetries[0]!;
+    job.reader = {schemaVersion: 1, category: "dependency", budget: {...initialReaderBudget(), dependencyRecoveries: 1, dependencyStartedAt: start.getTime()}};
+    const budget = structuredClone(job.reader.budget);
+    const failureCode = kind === "window" ? "rate_limited" : kind === "completed" ? null : kind;
+    await handleInboundMessage({brain: fakeBrain("codex"), cwd: "/tmp", state, message: textMessage("重试摘要"), now: () => new Date(start.getTime() + 1_000),
+      invokeBrain: async () => ({...recoveryOutcome("摘要仍待补全", {enrichmentAction: "generate_summary", enrichmentCompleted: kind === "completed", summaryStatus: kind === "completed" ? "ready" : "pending"}), readAttemptControl: {collectionId, attemptRef: "manual", outcome: kind === "completed" ? "ready" : "failed", methods: null, failureCode, failureScope: kind === "completed" ? null : kind === "window" ? "dependency" : "source", recovery: kind === "completed" ? null : kind === "window" ? "retry_later" : kind === "source_gone" ? "stop" : "needs_action", retryAfterMs: kind === "window" ? 900_000 : null}})});
+    if (kind === "completed") expect(state.summaryRetries).toEqual([]);
+    else {expect(job.status).toBe("paused"); expect(job.nextAttemptAt).toBeNull(); expect(job.reader.budget).toEqual(budget);}
+  });
   it.each(["重试摘要", "补一下", "补一下摘要", "再试试补摘要", "再补一下摘要"].flatMap((request) => [false, true].map((paused) => [request, paused] as const)))("authorizes an old-server unknown recovery from the current complete request %s, paused=%s", async (request, paused) => {
       const state = defaultChannelState();
       if (paused) state.summaryRetries.push({ automaticAttempts: 3, collectionId: "11111111-1111-4111-8111-111111111111", cycleStartedAt: "2026-09-04T07:00:00.000Z", lastFailureClass: "enrichment_incomplete", nextAttemptAt: null, status: "paused" });

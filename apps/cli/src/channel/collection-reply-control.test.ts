@@ -11,6 +11,14 @@ import {
 const COLLECTION_ID = "11111111-1111-4111-8111-111111111111";
 
 describe("collection reply control", () => {
+  it.each([
+    ["paused", "来源需要验证，自动重试已暂停。请完成验证后手动重试。"],
+    ["terminal", "来源已不可用，自动重试已停止。"],
+  ] as const)("retains a truthful %s explanation but rejects a subsequent future promise", (phase, reply) => {
+    const control = {collectionId: COLLECTION_ID, kind: "recovery", enrichmentAction: "generate_summary", enrichmentCompleted: false, summaryStatus: "pending"} as const;
+    expect(safeCollectionReply(control, reply, {phase, nextAttemptAt: null, sensitiveFragments: []})).toMatchObject({accepted: true, text: reply});
+    expect(safeCollectionReply(control, `${reply}稍后会自动重试。`, {phase, nextAttemptAt: null, sensitiveFragments: []}).accepted).toBe(false);
+  });
   it("fails closed if a turn exhausts its transient reflection budget", () => {
     const fragments: string[] = [];
     for (let index = 0; index < 70; index++) mergeAttentionSensitiveFragments(fragments, { title: `Synthetic title ${index}` });

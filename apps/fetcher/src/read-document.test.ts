@@ -9,6 +9,12 @@ const shell = {body: '<html><body><div id="app"></div><script src="/app.js"></sc
 const article = {html: "<html><body><article><p>A controlled synthetic article about public reading and bounded resource handling.</p></article></body></html>", finalUrl: input.url, status: 200};
 
 describe("readDocument", () => {
+  it.each([429, 503])("retains new-reader dependency retry and source Retry-After for HTTP %s", async status => {
+    const read = vi.fn(async () => article);
+    expect(await readDocument(input, {staticRead: async () => ({...shell, status, body: "", retryAfter: "30"}), browser: {read}, now: () => 100}))
+      .toMatchObject({recovery: "retry_later", scope: "dependency", retry_after_ms: 30000, attempts: [{method: "static"}]});
+    expect(read).not.toHaveBeenCalled();
+  });
   it("extracts actual browser article evidence after one static shell", async () => {
     const result = await readDocument(input, {staticRead: async () => shell,
       browser: {read: async () => article}, now: () => 100});

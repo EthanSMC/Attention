@@ -8,14 +8,27 @@ export function ensureReaderCheckpoint(job: SummaryRetryJob): ReaderCheckpoint {
   } };
 }
 
-export function settleReaderAttempt(job: SummaryRetryJob, control: ReadAttemptControl, now: Date): "scheduled" | "paused" | "terminal" {
+export function settleReaderAttempt(job: SummaryRetryJob, control: ReadAttemptControl, now: Date,
+  options: {preserveActiveCycle?: boolean} = {}): "scheduled" | "paused" | "terminal" {
   const checkpoint = ensureReaderCheckpoint(job);
-  const decision = readerRecoveryDecision(control, checkpoint.budget, now.getTime());
-  checkpoint.budget = decision.budget;
   checkpoint.category = readerCategory(control);
   const lastRead = normalizeReadAttemptControl(control);
   if (lastRead) checkpoint.lastRead = lastRead;
   delete checkpoint.interrupted;
+  if (options.preserveActiveCycle && job.status !== "paused" &&
+    (control.recovery === "retry_later" || control.outcome === "ready")) {
+    // This is a manual observation, not consumption of the scheduled automatic attempt.
+    const next = job.nextAttemptAt === null ? null : Math.max(Date.parse(job.nextAttemptAt), now.getTime() + (control.retryAfterMs ?? 0));
+    const dependencyStart = checkpoint.budget.dependencyStartedAt;
+    if (control.failureScope === "dependency" && dependencyStart !== null &&
+      (now.getTime() >= dependencyStart + 900_000 || (next !== null && next >= dependencyStart + 900_000))) {
+      job.status = "paused"; job.nextAttemptAt = null; return "paused";
+    }
+    if (next !== null && control.retryAfterMs !== null) job.nextAttemptAt = new Date(next).toISOString();
+    return "scheduled";
+  }
+  const decision = readerRecoveryDecision(control, checkpoint.budget, now.getTime());
+  checkpoint.budget = decision.budget;
   if (checkpoint.category === "content" && control.recovery === "retry_later") job.automaticAttempts = Math.max(0, decision.budget.contentRecoveries - (decision.action === "schedule" ? 1 : 0)) as 0 | 1 | 2 | 3;
   job.nextAttemptAt = decision.nextAttemptAt === null ? null : new Date(decision.nextAttemptAt).toISOString();
   job.status = decision.action === "schedule" ? "scheduled" : "paused";
