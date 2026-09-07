@@ -10,6 +10,7 @@ import {
   type AttentionDatabase,
 } from "@attention/db";
 import { z } from "zod";
+import {AttentionSkillVersionSchema} from "@attention/contracts";
 
 export const ATTENTION_TOOL_AUDIT_EVENT_TYPE = "agent.tool_call.v1";
 export const MCP_RETRIEVAL_EVENT_TYPE = "mcp_retrieval";
@@ -50,9 +51,7 @@ const attentionToolAuditInputSchema = z
     protocolRequestId: opaqueIdentifierSchema.nullish(),
     publicCitationIds: z.array(z.string().uuid()).max(8).default([]),
     reportedSkillId: z.literal("attention").nullish(),
-    reportedSkillVersion: z
-      .enum(["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0", "1.9.0"])
-      .nullish(),
+    reportedSkillVersion: AttentionSkillVersionSchema.nullish(),
     reportedWorkflowId: opaqueIdentifierSchema.nullish(),
     requestId: opaqueIdentifierSchema,
     resultStatus: stableCodeSchema.nullish(),

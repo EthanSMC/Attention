@@ -4,6 +4,7 @@ import { ATTENTION_WORKBUDDY_SKILL_BUNDLE_PUBLIC_PATH } from "@attention/contrac
 
 import { runAttentionCli } from "./main";
 import { ATTENTION_CLI_VERSION } from "./version";
+import {ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256} from "./bridge-update-contract";
 
 function captureOutput(): {
   readonly errors: string[];
@@ -23,8 +24,8 @@ function captureOutput(): {
 }
 
 describe("Attention CLI", () => {
-  it("reports the 0.3.15 Bridge release identity", () => {
-    expect(ATTENTION_CLI_VERSION).toBe("0.3.15");
+  it("reports the 0.3.16 Bridge release identity", () => {
+    expect(ATTENTION_CLI_VERSION).toBe("0.3.16");
   });
 
   it("reports the exact side-effect-free identity used to probe an update candidate", async () => {
@@ -39,7 +40,7 @@ describe("Attention CLI", () => {
     expect(capture.logs).toEqual([
       JSON.stringify({
         permission_profile_sha256:
-          "008145538ba70eaef4d66a6e99c588dd0cae2087dba8de85202e21f2eb738230",
+          ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
         version: ATTENTION_CLI_VERSION,
       }),
     ]);
@@ -425,7 +426,7 @@ describe("Attention CLI", () => {
     expect(capture.logs).toEqual([
       JSON.stringify({
         permission_profile_sha256:
-          "008145538ba70eaef4d66a6e99c588dd0cae2087dba8de85202e21f2eb738230",
+          ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
         version: ATTENTION_CLI_VERSION,
       }),
     ]);

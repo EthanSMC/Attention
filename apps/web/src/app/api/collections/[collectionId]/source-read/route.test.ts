@@ -1,8 +1,11 @@
 import {describe, expect, it, vi} from "vitest";
 
 describe("session source-read route", () => {
+  it("exports only supported Next route entry points and configuration", async () => {
+    expect(Object.keys(await import("./route")).sort()).toEqual(["POST", "dynamic", "runtime"]);
+  });
   it("rejects cross-origin and unauthenticated callers without resolving collection or reading", async () => {
-    const route = await import("./route").catch(() => undefined);
+    const route = await import("../../../../../server/collection-source-read-route").catch(() => undefined);
     expect(route).toBeDefined();
     const resolve = vi.fn(async () => null), getDatabase = vi.fn();
     const id = "00000000-0000-4000-8000-000000000001";

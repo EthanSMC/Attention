@@ -7,6 +7,8 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
   experimental: {
     authInterrupts: true,
+    // Shared Node-oriented TS packages use .js specifiers before compilation.
+    extensionAlias: { ".js": [".ts", ".tsx", ".js"] },
   },
   output: "standalone",
   outputFileTracingRoot: workspaceRoot,

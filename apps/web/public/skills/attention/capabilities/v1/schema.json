@@ -74,7 +74,7 @@
         },
         "contract_version": {
           "type": "string",
-          "const": "1.6.0"
+          "const": "1.7.0"
         },
         "scopes": {
           "type": "array",
@@ -103,7 +103,7 @@
             "properties": {
               "contract_version": {
                 "type": "string",
-                "const": "1.6.0"
+                "const": "1.7.0"
               },
               "entitlement": {
                 "type": "object",
@@ -187,6 +187,7 @@
               "tool_name": {
                 "type": "string",
                 "enum": [
+                  "attention_read_collection_source",
                   "attention_get_my_account",
                   "attention_get_membership_status",
                   "attention_list_collections",

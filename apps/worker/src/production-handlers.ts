@@ -1,3 +1,4 @@
+import {randomUUID} from "node:crypto";
 import {
   AiProviderError,
   createConfiguredAiProvider,
@@ -6,6 +7,9 @@ import {
 import { classifyDocument, type DocumentEvidence } from "@attention/content-reader";
 import {
   readFailurePolicy,
+  ReadRequestSchema,
+  ReadResultSchema,
+  type ReadResult,
   type ReadFailureCode,
   type SourceKind,
 } from "@attention/content-reader-contracts";
@@ -18,6 +22,7 @@ import type { ContentHandlerContext, JobHandlers } from "./handlers.js";
 export { extractDocument } from "./document-extractor.js";
 
 export interface LoadedDocument {
+  readResult?: ReadResult;
   finalUrl: string;
   html: string;
   status: number;
@@ -103,27 +108,46 @@ export function createFetcherDocumentLoader(
   if (!baseUrl || !secret || secret.length < 32) return null;
   const endpoint = `${normalizeCredentialEndpoint(baseUrl, "FETCHER_BASE_URL", {
     allowedInsecureHosts: ["fetcher"],
-  })}/v1/fetch`;
+  })}`;
 
   return {
     async load(context) {
+      if (context.signal.aborted) throw readerFailure("permission_revoked");
+      const request = ReadRequestSchema.parse({request_ref: context.requestRef ?? randomUUID(),
+        attempt_ref: context.attemptRef ?? randomUUID(), sourceKind: sourceKind(context.source), url: context.outboundUrl});
+      const signal = AbortSignal.any([context.signal, AbortSignal.timeout(90_000)]);
       let response: Response;
       try {
-        response = await fetchImplementation(endpoint, {
-          body: JSON.stringify({
-            mode: "metadata",
-            sourceKind: sourceKind(context.source),
-            url: context.outboundUrl,
-          }),
+        const init = {
           headers: {
             authorization: `Bearer ${secret}`,
             "content-type": "application/json",
           },
           method: "POST",
-          redirect: "error",
-          signal: AbortSignal.any([context.signal, AbortSignal.timeout(12_000)]),
-        });
+          redirect: "error" as const,
+          signal,
+        };
+        response = await fetchImplementation(`${endpoint}/v1/read`, {...init, body: JSON.stringify(request)});
+        if (response.status !== 404) {
+          if (!response.ok) throw await fetcherFailure(response);
+          const parsed = ReadResultSchema.safeParse(await boundedJson(response, 256 * 1024, signal));
+          if (!parsed.success) throw readerFailure("unknown_reader_error");
+          const result = parsed.data;
+          if (result.request_ref !== request.request_ref || result.attempt_ref !== request.attempt_ref ||
+            (result.outcome === "ready" && (result.source_kind !== request.sourceKind ||
+              (new URL(request.url).protocol === "https:" && new URL(result.final_public_url).protocol !== "https:")))) {
+            throw readerFailure("unknown_reader_error");
+          }
+          if (context.signal.aborted) throw readerFailure("permission_revoked");
+          return {readResult: result, html: "", status: 200,
+            finalUrl: result.outcome === "ready" ? result.final_public_url : context.outboundUrl};
+        }
+        await response.body?.cancel();
+        response = await fetchImplementation(`${endpoint}/v1/fetch`, {...init,
+          body: JSON.stringify({mode: "metadata", sourceKind: request.sourceKind, url: request.url})});
       } catch (error) {
+        if (context.signal.aborted) throw readerFailure("permission_revoked");
+        if (error instanceof JobExecutionError) throw error;
         if (error instanceof Error &&
           (error.name === "AbortError" || error.name === "TimeoutError")) {
           throw readerFailure("network_timeout");
@@ -133,7 +157,7 @@ export function createFetcherDocumentLoader(
       if (!response.ok) {
         throw await fetcherFailure(response);
       }
-      const payload = await response.json().catch(() => null) as {
+      const payload = await boundedJson(response, 3 * 1024 * 1024, signal).catch(() => null) as {
         body?: unknown;
         finalUrl?: unknown;
         status?: unknown;
@@ -142,12 +166,32 @@ export function createFetcherDocumentLoader(
         !Number.isInteger(payload.status) || payload.status < 100 || payload.status > 599 ||
         (payload.body !== undefined && typeof payload.body !== "string") ||
         typeof payload.finalUrl !== "string" ||
-        (typeof payload.body === "string" && payload.body.length > 2 * 1024 * 1024)) {
+        (typeof payload.body === "string" && Buffer.byteLength(payload.body) > 2 * 1024 * 1024)) {
         throw readerFailure("unknown_reader_error");
       }
+      if (context.signal.aborted) throw readerFailure("permission_revoked");
       return { finalUrl: payload.finalUrl, html: payload.body ?? "", status: payload.status };
     },
   };
+}
+
+async function boundedJson(response: Response, limit: number, signal: AbortSignal): Promise<unknown> {
+  const reader = response.body?.getReader();
+  if (!reader) throw readerFailure("unknown_reader_error");
+  const chunks: Uint8Array[] = []; let length = 0;
+  const cancel = () => {void reader.cancel().catch(() => undefined);};
+  signal.addEventListener("abort", cancel, {once: true});
+  try {
+    signal.throwIfAborted();
+    while (true) {
+      const item = await reader.read(); signal.throwIfAborted();
+      if (item.done) break;
+      length += item.value.byteLength;
+      if (length > limit) {await reader.cancel(); throw readerFailure("unknown_reader_error");}
+      chunks.push(item.value);
+    }
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  } finally {signal.removeEventListener("abort", cancel); reader.releaseLock();}
 }
 
 function providerUrl(rawUrl: string): string {
@@ -188,6 +232,17 @@ function classifyLoadedDocument(
   document: LoadedDocument,
   context: ContentHandlerContext,
 ): DocumentEvidence {
+  if (document.readResult) {
+    const result = document.readResult;
+    const metadata = result.outcome === "skipped" ? null : result.metadata;
+    return {kind: result.outcome === "ready" ? "article" : "blocked",
+      code: result.outcome === "ready" ? null : result.outcome === "skipped" ? "content_ineligible" : result.code,
+      author: metadata?.author ?? null, title: metadata?.title ?? null, description: metadata?.description ?? null,
+      publishedAt: metadata?.published_at ? new Date(metadata.published_at) : null,
+      text: result.outcome === "ready" ? result.temporary_text : null,
+      extractionMethod: result.outcome === "ready" ? result.extraction_method : "none",
+      truncated: result.outcome === "ready" && result.truncated};
+  }
   return classifyDocument({
     finalUrl: document.finalUrl,
     html: document.html,
@@ -227,6 +282,12 @@ export function createProductionHandlers(options: {
         throw new JobExecutionError("summary_handler_not_configured", { retryable: false });
       }
       const document = await loadDocument(documentLoader, context);
+      if (context.signal.aborted) throw readerFailure("permission_revoked");
+      const read = document.readResult;
+      if (read && read.outcome !== "ready") {
+        if (read.outcome === "skipped") throw readerFailure("content_ineligible");
+        throw new JobExecutionError(read.code, {retryable: read.recovery === "retry_later", retryAfterMs: read.retry_after_ms});
+      }
       const extracted = classifyLoadedDocument(document, context);
       if (extracted.kind !== "article" || !extracted.text) {
         throw readerFailure(extracted.code ?? "evidence_insufficient");
@@ -250,8 +311,10 @@ export function createProductionHandlers(options: {
             url: providerUrl(document?.finalUrl ?? context.outboundUrl),
           }),
         });
+        if (context.signal.aborted) throw readerFailure("permission_revoked");
         return parseGeneratedSummary(generated);
       } catch (error) {
+        if (error instanceof JobExecutionError) throw error;
         if (error instanceof AiProviderError) {
           throw new JobExecutionError(error.code, { retryable: error.retryable });
         }

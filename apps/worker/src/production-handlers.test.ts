@@ -2,10 +2,16 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ContentHandlerContext } from "./handlers";
 import {
-  createFetcherDocumentLoader,
+  createFetcherDocumentLoader as createDefaultFetcherDocumentLoader,
   createProductionHandlers,
   extractDocument,
 } from "./production-handlers";
+
+// These pre-reader fixtures exercise an old Fetcher whose /v1/read is absent.
+function createFetcherDocumentLoader(env: NodeJS.ProcessEnv, transport: typeof fetch) {
+  return createDefaultFetcherDocumentLoader(env, async (url, init) =>
+    String(url).endsWith("/v1/read") ? new Response(null, {status: 404}) : transport(url, init));
+}
 
 function context(overrides: Partial<ContentHandlerContext> = {}): ContentHandlerContext {
   return {
@@ -189,7 +195,7 @@ describe("production enrichment handlers", () => {
   });
 
   it("rejects a remote clear-text Fetcher endpoint before sending its bearer secret", () => {
-    expect(() => createFetcherDocumentLoader({
+    expect(() => createDefaultFetcherDocumentLoader({
       FETCHER_BASE_URL: "http://fetcher.example/v1",
       FETCHER_SHARED_SECRET: "s".repeat(32),
     })).toThrow(/HTTPS/u);

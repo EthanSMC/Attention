@@ -4,7 +4,7 @@ import {createDatabase, type DatabaseHandle} from "@attention/db";
 import {migrateDatabase} from "@attention/db/migrate";
 import type {ReadRequest, ReadResult} from "@attention/content-reader-contracts";
 import {createApiCredential, resolveApiCredential, revokeApiCredential, issueSession, resolveSession, revokeSession} from "@attention/auth";
-import {handleSourceReadRequest} from "../app/api/collections/[collectionId]/source-read/route";
+import {handleSourceReadRequest} from "./collection-source-read-route";
 import {createAttentionToolRegistry, type AttentionToolCoreDependencies} from "./attention-tool-registry";
 import {createAttentionMcpServer} from "./mcp-tool-adapter";
 import {Client} from "@modelcontextprotocol/sdk/client/index.js";

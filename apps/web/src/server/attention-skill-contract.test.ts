@@ -23,6 +23,7 @@ const expectedPublicTools = [
   "attention_list_collections",
   "attention_list_moderation_cases",
   "attention_list_public_content",
+  "attention_read_collection_source",
   "attention_report_content",
   "attention_search_content",
   "attention_select_collection_candidate",
@@ -44,7 +45,7 @@ describe("public Attention Skill contract", () => {
     const skill = await readPublicSkill();
     const registryNames = [...ATTENTION_PUBLIC_TOOL_NAMES].sort();
 
-    expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe("1.6.0");
+    expect(ATTENTION_TOOL_CONTRACT_VERSION).toBe("1.7.0");
     expect(skill).toContain("Skill ID: `attention`");
     expect(skill).toContain(
       `Skill version: \`${ATTENTION_SKILL_PACKAGE_VERSION}\``,
@@ -60,7 +61,7 @@ describe("public Attention Skill contract", () => {
     const skill = await readPublicSkill();
 
     expect(skill).toMatch(/`reuse_summary`[\s\S]*do not read the source[\s\S]*do not call `attention_submit_content_enrichment`/u);
-    expect(skill).toMatch(/`generate_summary`[\s\S]*publicly accessible source/u);
+    expect(skill).toMatch(/`generate_summary`[\s\S]*public-reader selection/u);
     expect(skill).toMatch(/summary[^\n]*2,000 characters/u);
     expect(skill).toMatch(/between 1 and 8 normalized tags/u);
     expect(skill).toMatch(/`title`, `resolved_url`, `summary`, and `tags`/u);
@@ -92,14 +93,14 @@ describe("public Attention Skill contract", () => {
     expect(skill).toMatch(/Never guess from the original multi-link share text/u);
   });
 
-  it("automatically recovers an eligible missing summary from owner-scoped status", async () => {
+  it("documents separate status and explicit recovery entrypoints", async () => {
     const skill = await readPublicSkill();
 
     expect(skill).toMatch(
-      /attention_get_collection_status[\s\S]*generate_summary[\s\S]*do not ask for another confirmation/u,
+      /status-only question[\s\S]*without reading or submitting/u,
     );
     expect(skill).toMatch(
-      /exact absolute `content\.public_read_url`[\s\S]*attention_submit_content_enrichment/u,
+      /explicit request[\s\S]*public-reader selection[\s\S]*exact content ID/u,
     );
     expect(skill).toMatch(
       /reuse_summary[\s\S]*do not read or submit[\s\S]*none[\s\S]*unavailable[\s\S]*hidden/u,
@@ -112,13 +113,13 @@ describe("public Attention Skill contract", () => {
 
     expect(skill).toMatch(/stable, opaque `idempotency_key`/u);
     expect(skill).toMatch(/For every tool call, include `client_context`/u);
-    expect(skill).toMatch(/one opaque `workflow_run_id` reused across that user workflow/u);
+    expect(skill).toMatch(/one opaque `workflow_run_id` reused unchanged across that user workflow/u);
     expect(skill).toMatch(/reuse it for every retry/u);
     expect(skill).toMatch(/For `ambiguous`[\s\S]*ask the user to choose/u);
     expect(skill).toMatch(/Never guess a candidate/u);
     expect(skill).toMatch(/at most two automatic retries/u);
     expect(skill).toMatch(/Pass every established result[\s\S]*same established-result handler/u);
-    expect(skill).toMatch(/Agent's own minimum public-web reader/u);
+    expect(skill).toMatch(/host's minimum public reader/u);
     expect(skill).toMatch(/bounded enrichment submission may include only its grounded title, final public URL, summary, and tags/u);
     expect(skill).toMatch(/Only an active Filter may make a collection public/u);
     expect(skill).toMatch(/Do not invent allegations/u);

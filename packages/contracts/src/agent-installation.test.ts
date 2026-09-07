@@ -21,7 +21,7 @@ import { CHANNEL_RUNTIME_SCOPES } from "./channel-runtime";
 
 describe("Agent installation manifests", () => {
   it("publishes a versioned infrastructure-only catalog for all v1 hosts", () => {
-    expect(ATTENTION_SKILL_PACKAGE_VERSION).toBe("1.9.0");
+    expect(ATTENTION_SKILL_PACKAGE_VERSION).toBe("1.10.0");
     expect(() =>
       AgentInstallationCatalogSchema.parse(agentInstallationCatalog),
     ).not.toThrow();

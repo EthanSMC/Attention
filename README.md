@@ -89,7 +89,11 @@ pnpm dev:wechat
 
 当前 Worker 默认完成确定性元数据整理；未设置 `ATTENTION_AI_MODEL` 时，不调度托管摘要，已有待处理摘要保持 pending，托管 AI 检索使用关键词降级。配置 `ATTENTION_AI_MODEL`、可选的 `ATTENTION_AI_BASE_URL` 和 `ATTENTION_AI_API_KEY` 后，Worker 会通过隔离 Fetcher 临时读取受限页面内容并生成摘要/标签，检索服务会基于当前账号可访问的引用生成回答。原文正文不会写入数据库，供应商失败也不会伪装成生成成功。
 
-Worker 使用共享内容读取包解析 HTML 和文章 JSON-LD 中的元数据与正文，用 Readability 去除导航等噪声，并将临时正文限制为 12,000 字符、标记截断。摘要必须有文章正文证据；非 2xx 响应、登录或验证页、仅元数据的页面和相互矛盾的正文会产生明确的读取失败，不会调用摘要模型。读取失败、AI 依赖故障或过期任务耗尽重试时，不会把共享 Content 永久标记为 unavailable，并保留已有 ready/hidden 状态。目前仍是静态 HTML 读取，不执行网页脚本，也不提供浏览器渲染。
+Worker 使用共享内容读取包解析 HTML 和文章 JSON-LD 中的元数据与正文，用 Readability 去除导航等噪声，并将临时正文限制为 12,000 字符、标记截断。默认通过 Fetcher `/v1/read` 验证结构化结果，只有旧 Fetcher 返回 404 时回退 `/v1/fetch` 静态读取；注入的 HTML loader 保持兼容。摘要必须有文章正文证据；非 2xx 响应、登录或验证页、仅元数据的页面和相互矛盾的正文不会调用摘要模型。读取失败或恢复预算耗尽不会把共享 Content 永久标记为 unavailable，并保留已有 ready/hidden 状态。Worker 没有账号浏览器授权，动态页返回明确的暂停原因。
+
+本地候选增加可选的 `attention_read_collection_source`，由 Core 校验当前收藏归属、权益和状态。Bridge 继续使用本地 Codex 生成摘要；状态查询不会隐式触发读取，读取 `ready` 也不等于 Core 摘要完成。匿名浏览器的真实 OCI 隔离验收尚未完成，当前不得启用。部署门、样例结果和候选兼容性见 [公开内容读取状态](docs/public-content-reading-recovery-status.md)；未来 Hosted 的适配合同见 [H2 reader handoff](docs/handoffs/hosted-reader-contract.md)。
+
+只读匿名诊断可用现有 Fetcher 的 tsx loader 执行 `scripts/check-public-reader.ts --url <public-url>`。它只打印状态、分类、读取方式和正文长度；未取得文章证据时退出非零，不收藏、不提交摘要、不发送微信，也不加载 `.env`。
 
 普通本地开发与 Domain 日报可使用 `ATTENTION_EMAIL_PROVIDER=console`，验证码只写入服务端终端，浏览器和 API 响应永远不会收到验证码。登录邮件 E2E 必须配置原生 Resend 并实际调用 Resend 服务；生产 Web 登录验证码也可使用原生 Resend 或 webhook provider。Worker 日报目前仍只使用 webhook adapter。日报请求使用 `template=attention-daily-digest-v1`，并以 delivery UUID 同时填充 `message_id` 与 `Idempotency-Key`。供应商必须按该键去重重试；仓库不包含供应商密钥。
 

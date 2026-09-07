@@ -1723,6 +1723,7 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     const tools = await client.listTools();
     expect(client.getServerVersion()?.name).toBe("attention-mcp-server");
     expect(tools.tools.map((tool) => tool.name)).toEqual([
+      "attention_read_collection_source",
       "attention_get_my_account",
       "attention_get_membership_status",
       "attention_list_collections",

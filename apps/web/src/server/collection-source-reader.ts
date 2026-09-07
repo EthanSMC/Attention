@@ -2,6 +2,7 @@ import "server-only";
 import {createHash} from "node:crypto";
 import {setTimeout as delay} from "node:timers/promises";
 import {z} from "zod";
+import {AttentionSkillVersionSchema} from "@attention/contracts";
 import {OwnedReadResultSchema, ReadResultSchema, SafeReferenceSchema, SourceKindSchema, readFailurePolicy,
   type ReadFailureCode, type ReadRequest, type ReadResult, type OwnedReadResult} from "@attention/content-reader-contracts";
 import type {AttentionDatabase} from "@attention/db";
@@ -10,7 +11,7 @@ import {createSourceReadCoordinator, SourceReadMemory, type SourceReadCoordinato
 import {readExternalSource, FetcherClientError} from "./fetcher-client";
 
 export const collectionSourceRequestSchema = z.object({collection_id: z.string().uuid(), attempt_ref: SafeReferenceSchema,
-  client_context: z.object({skill_id: z.literal("attention").optional(), skill_version: z.string().regex(/^1\.[0-9]\.0$/u).optional(),
+  client_context: z.object({skill_id: z.literal("attention").optional(), skill_version: AttentionSkillVersionSchema.optional(),
     workflow_run_id: SafeReferenceSchema.optional()}).strict().optional(),
 }).strict();
 export interface SourceReadPrincipal {accountId: string; scopes: readonly string[]; isMember: boolean; isFilter: boolean}

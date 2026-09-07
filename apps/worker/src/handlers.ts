@@ -22,6 +22,8 @@ import type { ClaimedJob } from "./job-repository.js";
 import { buildSummaryReadyNotificationEvent } from "./summary-notification.js";
 
 export interface ContentHandlerContext {
+  requestRef?: string;
+  attemptRef?: string;
   author: string | null;
   contentId: string;
   outboundUrl: string;
@@ -431,6 +433,8 @@ export async function executeClaimedJob(
   const payload = parsePayload(job);
   const content = await loadEligibleContent(db, payload.contentId);
   const context: ContentHandlerContext = {
+    requestRef: job.id,
+    attemptRef: `${job.id}:${job.attempts}`,
     author: content.author,
     contentId: content.id,
     outboundUrl: content.outboundUrl,
