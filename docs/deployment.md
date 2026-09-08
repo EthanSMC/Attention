@@ -11,6 +11,8 @@ Novelty Studio ECS 上的隔离 staging 部署使用专用的
 
 ## 构建产物
 
+Web 的正式构建入口固定为 `next build --webpack`，因此根目录 `pnpm build`、CI 和 Docker 使用同一条已验证的构建路径。当前共享 TypeScript 包保留 Node 风格的 `.js` 导入，需要 Webpack 的 `experimental.extensionAlias`；不要将生产构建改回默认 Turbopack，除非先完成对应的模块解析和完整镜像验收。
+
 根目录 `Dockerfile` 使用固定的 Node.js 24.11.1 与 pnpm 11.9.0，通过 lockfile 冻结安装，并提供以下 multi-stage target：
 
 | Target | 进程 | 监听与健康检查 |
