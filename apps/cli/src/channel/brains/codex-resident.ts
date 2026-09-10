@@ -319,7 +319,8 @@ export function createCodexResidentBrain(
 
   const initialize = async (): Promise<void> => {
     await rpc.request("initialize", {
-      capabilities: null,
+      // runtimeWorkspaceRoots on scoped thread start/resume requires opt-in.
+      capabilities: options.localControl ? { experimentalApi: true } : null,
       clientInfo: {
         name: "attention-channel",
         title: "Attention",

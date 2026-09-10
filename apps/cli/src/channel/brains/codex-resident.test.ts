@@ -20,6 +20,7 @@ it("scopes local Shell on both new and resumed threads without trusting caller c
   const brain = createCodexResidentBrain({ rpc, mcpUrl: "https://attention.example/mcp", localControl });
   try {
     await brain.start();
+    expect(rpc.requests.find(r => r.method === "initialize")?.params).toMatchObject({ capabilities: { experimentalApi: true } });
     await brain.invoke({ cwd: "/unsafe", prompt: "帮我看看版本", sessionId: null });
     await brain.invoke({ cwd: "/unsafe", prompt: "检查更新", sessionId: "resumed-thread" });
     for (const method of ["thread/start", "thread/resume"]) {
@@ -29,6 +30,22 @@ it("scopes local Shell on both new and resumed threads without trusting caller c
       expect((request as { developerInstructions: string }).developerInstructions).toContain("/safe/attention.mjs");
     }
     for (const turn of rpc.requests.filter(r => r.method === "turn/start")) expect(turn.params).toMatchObject({ cwd: localControl.workspace, approvalPolicy: "never", sandboxPolicy: { type: "workspaceWrite", writableRoots: [localControl.workspace, localControl.requests], networkAccess: false, excludeSlashTmp: true, excludeTmpdirEnvVar: true } });
+  } finally { await brain.shutdown(); }
+});
+
+it.each([false, true])("negotiates scoped experimental fields across restarts (local=%s)", async enabled => {
+  const rpc = new ScriptedRpc();
+  const localControl = { workspace: "/safe/workspace", requests: "/safe/requests", command: ["/safe/node", "/safe/attention.mjs"] as const };
+  const brain = createCodexResidentBrain({ rpc, mcpUrl: "https://attention.example/mcp", ...(enabled ? { localControl } : {}) });
+  try {
+    for (const sessionId of [null, "resumed-thread"]) {
+      await brain.start();
+      expect(await brain.invoke({ cwd: "/safe/workspace", prompt: "status", sessionId })).toMatchObject({ ok: true });
+      await brain.shutdown();
+    }
+    const initializations = rpc.requests.filter(r => r.method === "initialize");
+    expect(initializations).toHaveLength(2);
+    for (const request of initializations) expect(request.params).toMatchObject({ capabilities: enabled ? { experimentalApi: true } : null });
   } finally { await brain.shutdown(); }
 });
 
@@ -74,6 +91,10 @@ class ScriptedRpc implements CodexResidentRpc {
   async request<T>(method: string, params: unknown): Promise<T> {
     this.requests.push({ method, params });
     if (method === "initialize") return {} as T;
+    if ((method === "thread/start" || method === "thread/resume") && "runtimeWorkspaceRoots" in (params as object)) {
+      const initialization = this.requests.findLast(r => r.method === "initialize")?.params as { capabilities?: { experimentalApi?: boolean } };
+      if (!initialization?.capabilities?.experimentalApi) throw new CodexAppServerRpcError("request_failed", "runtimeWorkspaceRoots requires experimentalApi capability");
+    }
     if (method === "mcpServerStatus/list") {
       if (this.statusFailure) {
         throw new CodexAppServerRpcError(
