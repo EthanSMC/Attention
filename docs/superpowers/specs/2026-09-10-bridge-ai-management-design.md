@@ -1,5 +1,7 @@
 # Bridge AI 管理对话设计
 
+> 已被用户后续架构决定替代。现行设计见 `2026-09-10-attention-cli-shell-management-design.md`：能力归 Attention，Codex 直接调用 CLI，Bridge 不新增 AI 意图解释/措辞模块。本文件保留作设计历史，不作为实现依据。
+
 日期：2026-09-10。基线：main84ea7ed，已发布并运行的 CLI/Bridge0.3.17。
 状态：用户已同意“AI 理解请求、尝试操作、自然回复，固定命令只兜底”的方向；本文等待书面审阅。此文不代表代码或线上行为已变更。
 
