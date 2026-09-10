@@ -43,6 +43,7 @@ export interface BridgeUpdaterOptions {
   readonly now?: () => Date;
   readonly origin: string;
   readonly runner?: CommandRunner;
+  readonly signal?: AbortSignal;
 }
 
 class BridgeUpdateError extends Error {
@@ -107,6 +108,7 @@ export async function prepareBridgeUpdate(
   manifest: BridgeUpdateManifest,
   approvedIdentity?: string,
 ): Promise<PreparedBridgeUpdate> {
+  options.signal?.throwIfAborted();
   if (compareSemanticVersions(manifest.version,options.currentVersion)<=0) throw new BridgeUpdateError("candidate_not_newer");
   const identity = releaseIdentity(options.origin, manifest, options.currentVersion, options.currentPermissionProfileSha256);
   const latest = await fetchAttentionReleaseManifest({...options, timeoutMs: FETCH_TIMEOUT_MS});
@@ -122,6 +124,7 @@ export async function prepareBridgeUpdate(
     throw new BridgeUpdateError("bridge_update_state_changed");
   }
   const artifact = await fetchAttentionReleaseArtifact({...options, manifest, timeoutMs: FETCH_TIMEOUT_MS});
+  options.signal?.throwIfAborted();
   const candidatePath = join(managedBridgePaths(options.homeDirectory).versionsDirectory, `attention-${manifest.version}.mjs`);
   let created = false;
   try {
@@ -133,13 +136,16 @@ export async function prepareBridgeUpdate(
     await atomicWrite(candidatePath, artifact);
     created = true;
   }
-  const probe = await (options.runner ?? runCommand)({args:[candidatePath,"--bridge-update-probe"],executable:options.nodeExecutable ?? process.execPath},{timeoutMs:PROBE_TIMEOUT_MS});
+  options.signal?.throwIfAborted();
+  const probe = await (options.runner ?? runCommand)({args:[candidatePath,"--bridge-update-probe"],executable:options.nodeExecutable ?? process.execPath},{timeoutMs:PROBE_TIMEOUT_MS,...(options.signal?{signal:options.signal}:{})});
+  options.signal?.throwIfAborted();
   const probeIdentity = parseProbeOutput(probe.stdout);
   if (probe.exitCode !== 0 || probe.timedOut || probeIdentity?.version !== manifest.version || probeIdentity.permissionProfileSha256 !== manifest.permission_profile_sha256) {
     if (created) await rm(candidatePath, {force:true});
     throw new BridgeUpdateError("candidate_probe_failed");
   }
-  const protocol = await (options.runner ?? runCommand)({args:[candidatePath,"--bridge-update-protocol"],executable:options.nodeExecutable ?? process.execPath},{timeoutMs:PROBE_TIMEOUT_MS});
+  const protocol = await (options.runner ?? runCommand)({args:[candidatePath,"--bridge-update-protocol"],executable:options.nodeExecutable ?? process.execPath},{timeoutMs:PROBE_TIMEOUT_MS,...(options.signal?{signal:options.signal}:{})});
+  options.signal?.throwIfAborted();
   let compatible = false;
   try {
     const value = JSON.parse(protocol.stdout.trim()) as Record<string,unknown>;

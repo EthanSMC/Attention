@@ -4,6 +4,6 @@
   "node": ">=22.16.0",
   "permission_profile_sha256": "6a4881f53686b4551dc721f5e9824a5a64911f05df7801908cbb0ca3765bc91f",
   "schema_version": 2,
-  "sha256": "9535e6c66f116e8c997bff534bfd1d997db9812c2c2dffac1b7f72dc4655631e",
+  "sha256": "4fd5f4d07fffb280402c9bf2418c3b18ac3a53d970712551bc8f638f88f6fd5d",
   "version": "0.3.17"
 }

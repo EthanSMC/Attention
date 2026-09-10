@@ -33976,6 +33976,7 @@ var MAXIMUM_CAPTURE_BYTES = 65536;
 var runCommand = async (invocation, options = {}) => {
   const timeoutMs = options.timeoutMs ?? 15e3;
   const executable = await resolveHostExecutable(invocation.executable);
+  options.signal?.throwIfAborted();
   return await new Promise((resolve5) => {
     const child = spawn(executable, [...invocation.args], {
       env: {
@@ -34008,13 +34009,20 @@ var runCommand = async (invocation, options = {}) => {
       stderr.push(Buffer.from(error101.message));
     });
     let forceKillTimer;
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const terminate = () => {
+      if (forceKillTimer) return;
       child.kill("SIGTERM");
       forceKillTimer = setTimeout(() => child.kill("SIGKILL"), 1e3);
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      terminate();
     }, timeoutMs);
+    options.signal?.addEventListener("abort", terminate, { once: true });
+    if (options.signal?.aborted) terminate();
     child.on("close", (exitCode2, signal) => {
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", terminate);
       if (forceKillTimer) clearTimeout(forceKillTimer);
       resolve5({
         exitCode: exitCode2,
@@ -37338,6 +37346,7 @@ function stableErrorCode(error101) {
   return error101 instanceof BridgeUpdateError || error101 instanceof AttentionReleaseError ? error101.code : "bridge_update_unexpected";
 }
 async function prepareBridgeUpdate(options, manifest, approvedIdentity) {
+  options.signal?.throwIfAborted();
   if (compareSemanticVersions(manifest.version, options.currentVersion) <= 0) throw new BridgeUpdateError("candidate_not_newer");
   const identity = releaseIdentity(options.origin, manifest, options.currentVersion, options.currentPermissionProfileSha256);
   const latest = await fetchAttentionReleaseManifest({ ...options, timeoutMs: FETCH_TIMEOUT_MS });
@@ -37353,6 +37362,7 @@ async function prepareBridgeUpdate(options, manifest, approvedIdentity) {
     throw new BridgeUpdateError("bridge_update_state_changed");
   }
   const artifact = await fetchAttentionReleaseArtifact({ ...options, manifest, timeoutMs: FETCH_TIMEOUT_MS });
+  options.signal?.throwIfAborted();
   const candidatePath = join5(managedBridgePaths(options.homeDirectory).versionsDirectory, `attention-${manifest.version}.mjs`);
   let created = false;
   try {
@@ -37364,13 +37374,16 @@ async function prepareBridgeUpdate(options, manifest, approvedIdentity) {
     await atomicWrite2(candidatePath, artifact);
     created = true;
   }
-  const probe = await (options.runner ?? runCommand)({ args: [candidatePath, "--bridge-update-probe"], executable: options.nodeExecutable ?? process.execPath }, { timeoutMs: PROBE_TIMEOUT_MS });
+  options.signal?.throwIfAborted();
+  const probe = await (options.runner ?? runCommand)({ args: [candidatePath, "--bridge-update-probe"], executable: options.nodeExecutable ?? process.execPath }, { timeoutMs: PROBE_TIMEOUT_MS, ...options.signal ? { signal: options.signal } : {} });
+  options.signal?.throwIfAborted();
   const probeIdentity = parseProbeOutput(probe.stdout);
   if (probe.exitCode !== 0 || probe.timedOut || probeIdentity?.version !== manifest.version || probeIdentity.permissionProfileSha256 !== manifest.permission_profile_sha256) {
     if (created) await rm4(candidatePath, { force: true });
     throw new BridgeUpdateError("candidate_probe_failed");
   }
-  const protocol = await (options.runner ?? runCommand)({ args: [candidatePath, "--bridge-update-protocol"], executable: options.nodeExecutable ?? process.execPath }, { timeoutMs: PROBE_TIMEOUT_MS });
+  const protocol = await (options.runner ?? runCommand)({ args: [candidatePath, "--bridge-update-protocol"], executable: options.nodeExecutable ?? process.execPath }, { timeoutMs: PROBE_TIMEOUT_MS, ...options.signal ? { signal: options.signal } : {} });
+  options.signal?.throwIfAborted();
   let compatible = false;
   try {
     const value = JSON.parse(protocol.stdout.trim());
@@ -37618,7 +37631,7 @@ var BridgeUpdateController = class {
   }
   jobOptions() {
     const signal = this.abort.signal;
-    return { ...this.options, fetchImpl: async (input, init) => {
+    return { ...this.options, signal, fetchImpl: async (input, init) => {
       signal.throwIfAborted();
       return await (this.options.fetchImpl ?? fetch)(input, { ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal });
     } };

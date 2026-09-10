@@ -51,7 +51,7 @@ export class BridgeUpdateController {
     private event(j: UpdateJournal, owner: string, key: string, text: string): void { addUpdateEvent(j, owner, key, text); }
     private jobOptions(): BridgeUpdaterOptions {
         const signal = this.abort!.signal;
-        return { ...this.options, fetchImpl: async (input, init) => {
+        return { ...this.options, signal, fetchImpl: async (input, init) => {
                 signal.throwIfAborted();
                 return await (this.options.fetchImpl ?? fetch)(input, { ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal });
             } };

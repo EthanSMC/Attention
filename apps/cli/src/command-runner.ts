@@ -20,7 +20,7 @@ export interface CommandResult {
 
 export type CommandRunner = (
   invocation: CommandInvocation,
-  options?: { readonly timeoutMs?: number },
+  options?: { readonly timeoutMs?: number; readonly signal?: AbortSignal },
 ) => Promise<CommandResult>;
 
 export const runCommand: CommandRunner = async (
@@ -29,6 +29,7 @@ export const runCommand: CommandRunner = async (
 ): Promise<CommandResult> => {
   const timeoutMs = options.timeoutMs ?? 15_000;
   const executable = await resolveHostExecutable(invocation.executable);
+  options.signal?.throwIfAborted();
   return await new Promise((resolve) => {
     const child = spawn(executable, [...invocation.args], {
       env: {
@@ -68,14 +69,21 @@ export const runCommand: CommandRunner = async (
     });
 
     let forceKillTimer: NodeJS.Timeout | undefined;
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const terminate = () => {
+      if (forceKillTimer) return;
       child.kill("SIGTERM");
       forceKillTimer = setTimeout(() => child.kill("SIGKILL"), 1_000);
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      terminate();
     }, timeoutMs);
+    options.signal?.addEventListener("abort",terminate,{once:true});
+    if (options.signal?.aborted) terminate();
 
     child.on("close", (exitCode, signal) => {
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort",terminate);
       if (forceKillTimer) clearTimeout(forceKillTimer);
       resolve({
         exitCode,
