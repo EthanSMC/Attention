@@ -27,6 +27,8 @@ export interface UpdateEvent {
     expiresAt?: number;
 }
 export interface UpdateJournal {
+    lastManualWasReadOnly?: boolean;
+    lastVerified?: { version: string; checkedAt: number };
     schemaVersion: 1;
     operation: UpdateOperation | null;
     events: UpdateEvent[];
@@ -45,6 +47,8 @@ function validate(value: unknown): UpdateJournal {
     if (!value || typeof value !== "object" || Array.isArray(value))
         return invalid();
     const j = value as UpdateJournal;
+    if (j.lastManualWasReadOnly !== undefined && typeof j.lastManualWasReadOnly !== "boolean") return invalid();
+    if (j.lastVerified !== undefined && (!j.lastVerified || !/^\d+\.\d+\.\d+$/u.test(j.lastVerified.version) || !finite(j.lastVerified.checkedAt))) return invalid();
     if (j.schemaVersion !== 1 || !Array.isArray(j.events) || !Array.isArray(j.consumed) || !Array.isArray(j.quarantine) ||
         !j.consumed.every(sha) || !j.quarantine.every(sha) || !finite(j.nextCheckAt) || !(j.lastManualCheckAt === null || finite(j.lastManualCheckAt)) ||
         !(j.lastErrorCode === null || typeof j.lastErrorCode === "string" && /^[a-z_]{1,80}$/u.test(j.lastErrorCode)))

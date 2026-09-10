@@ -1,4 +1,23 @@
 {
+  "host_overrides": {
+    "codex": {
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "allow": [
+        "shell",
+        "code_execution",
+        "scoped_filesystem_write"
+      ],
+      "writable_roots": [
+        "attention_codex_workspace",
+        "attention_control_requests"
+      ],
+      "network_access": false,
+      "approval_policy": "never"
+    }
+  },
   "capabilities": {
     "allow_mcp_servers": [
       "attention"

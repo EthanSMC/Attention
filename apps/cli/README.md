@@ -137,6 +137,38 @@ facts from this device only.
 
 ## Diagnose
 
+### 本机 Bridge 管理（0.3.18）
+
+```bash
+attention channel update status --json
+attention channel update check --json
+attention channel update request --json
+attention channel update status <request-id> --json
+attention channel update cancel --json
+attention channel update defer --json
+```
+
+这些命令直接读取本机运行快照或提交有界本机请求，不依赖 MCP/OAuth、不联网。
+`check` 只检查；`request` 请求升级，不能批准新增权限。`submitted` 仅表示入队，
+不表示已执行或已升级。Agent 提交后应结束当前 turn，待 Bridge 循环处理，再查询结果。
+`cliVersion` 是本次执行的 CLI 版本；`runningVersion` 只有存活检查通过才返回。
+沙箱禁止进程探测时 `online` 为 `null`，仅提供 `lastKnownVersion` / `observedAt`；
+入队回执会标记 `serviceLiveness: unverified`。超出 10 分钟的快照不再用于提交。
+
+后台 Codex 使用独立 `~/.attention/codex-workspace`，仅该目录和
+`~/.attention/control/requests` 可写。审批日志、凭据、控制结果与安装产物不向
+Agent 开放写权限；Shell 网络关闭、审批策略为 never。Claude 保持原无 Shell 策略。
+本机控制使用 POSIX 的权限与 no-follow 保证：macOS 已做实际宿主验收，Linux 仍需目标机验收；
+Windows 保留旧只读宿主模式，新增本机命令返回 `local_control_platform_unsupported`。
+这不等于秘密文件的完整读取隔离。普通本机启动不改变用户其他 Codex 会话或全局配置。
+
+0.3.18 使用权限描述 schema 3，明确区分 Codex 与 Claude。0.3.17 无法解释此新增
+权限，需要一次电脑端明确批准/重新安装；不会通过微信文本伪造批准或覆盖历史产物。
+全局 `attention update` 与 Bridge 更新仍独立；该受限 Shell 不承诺更新全局 CLI。
+
+宿主验收脚本：`scripts/check-codex-local-control-sandbox.ts`。它只使用临时测试目录，
+不需要真实 OAuth、不替换运行服务；验证真实 app-server 的 CLI 读写、目录与网络拒绝。
+
 ```bash
 attention doctor codex \
   --origin https://attention.example.com

@@ -1,6 +1,6 @@
 import type { InboundMessage } from "./messages";
 export type UpdateCommand = {
-    kind: "check" | "status" | "defer" | "cancel" | "confirm_help";
+    kind: "check" | "upgrade" | "status" | "defer" | "cancel" | "confirm_help";
 } | {
     kind: "confirm";
     version: string;
@@ -15,7 +15,7 @@ export function matchUpdateCommand(message: InboundMessage, owner: string | null
         !item.text_item || typeof item.text_item.text !== "string")
         return null;
     const text = item.text_item.text.normalize("NFKC").trim();
-    const commands: Record<string, UpdateCommand["kind"]> = { "检查更新": "check", "升级状态": "status", "稍后升级": "defer", "取消升级": "cancel", "确认升级": "confirm_help" };
+    const commands: Record<string, UpdateCommand["kind"]> = { "升级": "upgrade", "升级 Bridge": "upgrade", "升级bridge": "upgrade", "升级brige": "upgrade", "检查更新": "check", "升级状态": "status", "稍后升级": "defer", "取消升级": "cancel", "确认升级": "confirm_help" };
     const kind = Object.hasOwn(commands, text) ? commands[text] : undefined;
     if (kind && kind !== "confirm")
         return { kind };

@@ -31,6 +31,8 @@ import {
   runtimeAccessToken,
 } from "../runtime-oauth";
 import { ATTENTION_CLI_VERSION } from "../version";
+import { LocalControlService } from "../local-control-service";
+import { prepareCodexLocalControl, type CodexLocalControl } from "./codex-local-control";
 import { createBrainAdapter, type BrainAdapter } from "./brain";
 import { BridgeUpdateController } from "./bridge-update-controller";
 import { matchUpdateCommand } from "./bridge-update-control";
@@ -165,6 +167,7 @@ export interface ChannelCommandOptions {
   readonly brainFactory?: (
     hostId: ChannelBridgeHost,
     options: {
+      readonly localControl?: CodexLocalControl;
       readonly codexHomeDirectory?: string;
       readonly mcpUrl: string;
       readonly runtimeDirectory?: string;
@@ -575,7 +578,11 @@ export async function channelStart(
   try {
     const state = await loadChannelState(options.baseDirectory);
     persistedState = state;
-    const cwd = channelStateDirectory(options.baseDirectory);
+    // POSIX no-follow/mode guarantees are required. Windows keeps the previous read-only host profile.
+    const localControlProfile = hostId === "codex" && process.platform !== "win32" && options.service && !options.brainFactory && !options.bridgeUpdateChecker
+      ? await prepareCodexLocalControl(options.baseDirectory)
+      : undefined;
+    const cwd = localControlProfile?.workspace ?? channelStateDirectory(options.baseDirectory);
     await mkdir(cwd, { mode: 0o700, recursive: true });
     const mcpUrl = resolveAttentionPublicUrl(options.origin, "/mcp");
     const shouldPrepareCodexHome =
@@ -590,6 +597,7 @@ export async function channelStart(
         })
       : undefined;
     const activeBrain = (options.brainFactory ?? createBrainAdapter)(hostId, {
+      ...(localControlProfile ? { localControl: localControlProfile } : {}),
       ...(codexHomeDirectory ? { codexHomeDirectory } : {}),
       mcpUrl,
       runtimeDirectory: cwd,
@@ -997,6 +1005,20 @@ export async function channelStart(
           ...(options.fetchImpl ? {fetchImpl:options.fetchImpl} : {}),
         })
       : null;
+    const localControl = updateController && process.platform !== "win32" ? new LocalControlService({ home: managedBridgeHome, controller: updateController }) : null;
+    let localControlFailed = false;
+    const tickLocalControl = async () => {
+      try { await localControl?.tick(runtime.state); localControlFailed = false; }
+      catch {
+        if (!localControlFailed) runtime.log("Attention 本机管理请求暂不可用；微信桥继续运行，请检查本机控制目录权限或存储状态。");
+        localControlFailed = true;
+      }
+    };
+    const betweenTurns = async (): Promise<boolean> => {
+      await tickLocalControl();
+      await updateController?.tick(runtime.state, persist);
+      return updateController?.pausesBusiness ?? false;
+    };
     if (options.service) {
       // Validate the new lifecycle journal before declaring a candidate healthy.
       if (updateController) await loadUpdateJournal(managedBridgeHome);
@@ -1117,6 +1139,7 @@ export async function channelStart(
         }
 
         await updateController?.tick(runtime.state,persist);
+        await tickLocalControl();
         await flushPendingOutbound(runtime,persist);
         if (await maybeStageBridgeUpdate()) return BRIDGE_UPDATE_RESTART_EXIT_CODE;
 
@@ -1144,6 +1167,7 @@ export async function channelStart(
           activeMcpSupervisor,
           reporterSlot.current,
           updateController !== null,
+          localControl ? betweenTurns : undefined,
         );
         if (!client.token) continue;
         const summaryRetryResult = updateController?.pausesBusiness ? "idle" : await processDueSummaryRetry({
@@ -1217,6 +1241,7 @@ export async function channelStart(
           );
         }
         await updateController?.tick(runtime.state,persist);
+        await tickLocalControl();
         if (!updateController?.pausesBusiness) await processPendingInbound(
           runtime,
           activeBrain,
@@ -1225,10 +1250,12 @@ export async function channelStart(
           activeMcpSupervisor,
           reporterSlot.current,
           updateController !== null,
+          localControl ? betweenTurns : undefined,
         );
         await flushPendingOutbound(runtime, persist);
       }
     } finally {
+      try { await localControl?.stop(); } catch { /* The PID and bounded heartbeat still prevent stale success. */ }
       await updateController?.stop();
       process.removeListener("SIGINT", shutdown);
       process.removeListener("SIGTERM", shutdown);
@@ -1263,12 +1290,15 @@ async function processPendingInbound(
   mcpSupervisor: McpRecoverySupervisor,
   reporterRuntime: ReporterRuntime | null = null,
   hasUpdateController = false,
+  betweenTurns?: () => Promise<boolean>,
 ): Promise<void> {
   const batch = runtime.state.pendingInbound.slice(0, MAXIMUM_PENDING_MESSAGES);
   let businessQueueBlocked = Boolean(
     batch[0] && inboundRetryIsCoolingDown(batch[0], runtime.state),
   );
   for (const pending of batch) {
+    if (await betweenTurns?.()) return;
+    if (!runtime.state.pendingInbound.includes(pending)) continue;
     if (hasUpdateController && matchUpdateCommand(pending.message,runtime.state.ownerUserId)) continue;
     if (
       pending.blockedBy === "attention_mcp" &&
@@ -1479,6 +1509,7 @@ async function processPendingInbound(
     await flushPendingOutbound(runtime, persist);
     if (!runtime.client.token) return;
   }
+  await betweenTurns?.();
 }
 
 function mcpRecoveryReply(

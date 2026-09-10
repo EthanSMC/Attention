@@ -209,12 +209,22 @@
     ],
     "denied_capabilities": [
       "arbitrary_mcp",
-      "browser_automation",
-      "code_execution",
-      "filesystem_write",
-      "shell"
+      "browser_automation"
     ],
     "required": true,
+    "local_management": {
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "adapter": "attention_cli",
+      "writable_roots": [
+        "attention_codex_workspace",
+        "attention_control_requests"
+      ],
+      "network_access": false,
+      "approval_policy": "never"
+    },
     "template_path": "/skills/attention/installations/v1/templates/restricted-profile.json"
   },
   "runtime_reporting": {

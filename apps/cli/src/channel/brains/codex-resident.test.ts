@@ -14,6 +14,24 @@ interface RecordedRequest {
   readonly params: unknown;
 }
 
+it("scopes local Shell on both new and resumed threads without trusting caller cwd", async () => {
+  const rpc = new ScriptedRpc();
+  const localControl = { workspace: "/safe/workspace", requests: "/safe/control/requests", command: ["/safe/node", "/safe/attention.mjs"] as const };
+  const brain = createCodexResidentBrain({ rpc, mcpUrl: "https://attention.example/mcp", localControl });
+  try {
+    await brain.start();
+    await brain.invoke({ cwd: "/unsafe", prompt: "帮我看看版本", sessionId: null });
+    await brain.invoke({ cwd: "/unsafe", prompt: "检查更新", sessionId: "resumed-thread" });
+    for (const method of ["thread/start", "thread/resume"]) {
+      const request = rpc.requests.find(r => r.method === method)!.params;
+      expect(request).toMatchObject({ cwd: localControl.workspace, runtimeWorkspaceRoots: [localControl.workspace], approvalPolicy: "never", sandbox: "workspace-write" });
+      expect((request as { developerInstructions: string }).developerInstructions).toContain("submitted means a file is queued");
+      expect((request as { developerInstructions: string }).developerInstructions).toContain("/safe/attention.mjs");
+    }
+    for (const turn of rpc.requests.filter(r => r.method === "turn/start")) expect(turn.params).toMatchObject({ cwd: localControl.workspace, approvalPolicy: "never", sandboxPolicy: { type: "workspaceWrite", writableRoots: [localControl.workspace, localControl.requests], networkAccess: false, excludeSlashTmp: true, excludeTmpdirEnvVar: true } });
+  } finally { await brain.shutdown(); }
+});
+
 class ScriptedRpc implements CodexResidentRpc {
   readonly requests: RecordedRequest[] = [];
   closeCount = 0;

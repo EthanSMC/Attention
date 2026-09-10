@@ -12,7 +12,8 @@ import {
   type BrainRuntimeSnapshot,
 } from "../brain";
 import { BRAIN_TIMEOUT_MS, CODEX_RESTART_BACKOFF_MS } from "../limits";
-import { CHANNEL_HOST_SYSTEM_POLICY } from "../prompt";
+import { CHANNEL_HOST_SYSTEM_POLICY, channelHostSystemPolicy } from "../prompt";
+import { localControlInstructions, localControlSandbox, localControlThreadConfig, type CodexLocalControl } from "../codex-local-control";
 import { ATTENTION_CLI_VERSION } from "../../version";
 import {
   applyAttentionToolResult,
@@ -75,6 +76,7 @@ export interface CodexResidentRpc {
 }
 
 export interface CodexResidentBrainOptions {
+  readonly localControl?: CodexLocalControl;
   readonly healthCheckIntervalMs?: number;
   readonly mcpUrl: string;
   readonly restartBackoffMs?: readonly number[];
@@ -437,11 +439,17 @@ export function createCodexResidentBrain(
   };
 
   const attachThread = async (input: BrainInvokeInput): Promise<string> => {
+    const local = options.localControl;
+    const localThread = local ? {
+      ...localControlThreadConfig(local),
+      developerInstructions: channelHostSystemPolicy(true) + localControlInstructions(local),
+    } : {};
     if (input.sessionId) {
       if (attachedThreadId === input.sessionId) return input.sessionId;
       transition("recovering_thread", null, snapshot.retryAttempt);
       const result = await rpc.request<ThreadResult>("thread/resume", {
         threadId: input.sessionId,
+        ...localThread,
       });
       const threadId = requiredString(result.thread?.id, "thread id");
       currentThreadId = threadId;
@@ -455,6 +463,7 @@ export function createCodexResidentBrain(
       developerInstructions: CHANNEL_DEVELOPER_INSTRUCTIONS,
       model: CODEX_MODEL,
       sandbox: "read-only",
+      ...localThread,
     });
     const threadId = requiredString(result.thread?.id, "thread id");
     currentThreadId = threadId;
@@ -493,7 +502,8 @@ export function createCodexResidentBrain(
         // Native Responses web search is configured independently by
         // `web_search="live"`. Keep ordinary sandbox networking closed so no
         // shell or future local tool can turn this into general egress.
-        sandboxPolicy: { networkAccess: false, type: "readOnly" },
+        sandboxPolicy: options.localControl ? localControlSandbox(options.localControl) : { networkAccess: false, type: "readOnly" },
+        ...(options.localControl ? { cwd: options.localControl.workspace, approvalPolicy: "never" } : {}),
         threadId,
       });
       turnId = requiredString(result.turn?.id, "turn id");

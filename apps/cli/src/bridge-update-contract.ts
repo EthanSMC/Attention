@@ -27,10 +27,8 @@ export const ATTENTION_BRIDGE_PERMISSION_PROFILE = {
   local: {
     deny: [
       "browser_automation",
-      "code_execution",
       "filesystem_outside_attention",
       "other_mcp",
-      "shell",
     ],
     write: [
       "attention_state",
@@ -38,8 +36,22 @@ export const ATTENTION_BRIDGE_PERMISSION_PROFILE = {
       "user_service_config",
     ],
   },
+  hosts: {
+    codex: {
+      local_control_platforms: ["darwin", "linux"],
+      tools: ["attention_mcp", "public_web_reader", "shell", "code_execution"],
+      write: ["attention_codex_workspace", "attention_control_requests"],
+      deny: ["shell_network", "elevation", "approval_journal_write", "credentials_write", "managed_artifact_write"],
+    },
+    claude_code: {
+      local_control_platforms: [],
+      tools: ["attention_mcp", "public_web_reader"],
+      write: [],
+      deny: ["shell", "code_execution", "filesystem_write"],
+    },
+  },
   native_network: ["public_web_reader"],
-  schema_version: 2,
+  schema_version: 3,
 } as const;
 
 export const ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256 = createHash("sha256")

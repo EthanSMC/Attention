@@ -9,6 +9,8 @@ import { loadUpdateJournal } from "./bridge-update-journal";
 import { bootstrapManagedBridge, loadManagedBridgeUpdateState } from "./managed-bridge";
 import { defaultChannelState } from "./state";
 import { enqueueInbound } from "./queue";
+import { LocalControlService } from "../local-control-service";
+import { submitLocalControl, readLocalControlStatus } from "../local-control";
 const homes: string[] = [];
 afterEach(async () => { await Promise.all(homes.splice(0).map(p => rm(p, { recursive: true, force: true }))); });
 async function fixture() {
@@ -57,6 +59,35 @@ it("notifies once, processes control beyond five OAuth-blocked messages and stat
     await f.settle();
     expect(f.state.pendingOutbound).toHaveLength(2);
 });
+it("executes CLI requests against the real journal once, and cannot smuggle an approval", async () => {
+    const f = await fixture(); await f.settle();
+    const control = new LocalControlService({ home: f.home, controller: f.controller });
+    try {
+        await control.tick(f.state);
+        const queued = await submitLocalControl("cancel", { home: f.home });
+        await control.tick(f.state);
+        expect((await loadUpdateJournal(f.home)).operation?.phase).toBe("cancelled");
+        expect((await readLocalControlStatus({ home: f.home, requestId: queued.requestId })).request).toMatchObject({ status: "accepted", code: "cancelled" });
+        expect(await f.controller.dispatch({ kind: "cancel" }, `cli:${queued.requestId}`, f.state)).toMatchObject({ status: "already_processed" });
+        await expect(f.controller.dispatch({ kind: "confirm" } as never, "forged", f.state)).rejects.toThrow("invalid_control_action");
+        await expect(f.controller.dispatch({ kind: "upgrade", version: "9.0.0" } as never, "forged", f.state)).rejects.toThrow("invalid_control_action");
+    } finally { await control.stop(); await f.controller.stop(); }
+});
+it("cancels discovery before a candidate exists and discards its delayed result", async () => {
+    const f = await fixture();
+    let aborted = false;
+    const controller = new BridgeUpdateController({ ...f.options, fetchImpl: async (_input, init) => {
+        await new Promise<void>(resolve => init!.signal!.addEventListener("abort", () => { aborted = true; resolve(); }, { once: true }));
+        throw new Error("aborted");
+    } });
+    await controller.tick(f.state, f.persist);
+    expect(controller.snapshot().phase).toBe("checking");
+    expect(await controller.dispatch({ kind: "cancel" }, "cancel-discovery", f.state)).toEqual({ status: "accepted", code: "cancelled" });
+    await controller.stop(); await controller.tick(f.state, f.persist);
+    expect(aborted).toBe(true);
+    expect(controller.snapshot().phase).toBe("idle");
+    expect((await loadUpdateJournal(f.home)).operation).toBeNull();
+});
 it("expires offers, limits bad confirmation attempts, and consumes duplicate commands only once", async () => {
     const f = await fixture();
     await f.settle();
@@ -66,7 +97,7 @@ it("expires offers, limits bad confirmation attempts, and consumes duplicate com
     }
     expect((await loadUpdateJournal(f.home)).operation?.phase).toBe("expired");
     f.advance(61000);
-    f.send("检查更新", "check2");
+    f.send("升级", "check2");
     await f.settle();
     const text = f.state.pendingOutbound.findLast(p => p.text.includes("确认升级 0.3.18"))!.text;
     const command = text.match(/确认升级 0\.3\.18 [A-Z0-9]{6}/u)![0];
@@ -75,6 +106,18 @@ it("expires offers, limits bad confirmation attempts, and consumes duplicate com
     await f.controller.tick(f.state, f.persist);
     expect((await loadUpdateJournal(f.home)).operation?.phase).toBe("expired");
     expect((await loadManagedBridgeUpdateState(f.home)).current.version).toBe("0.3.17");
+});
+it("manual checks do not install or create approval offers; a subsequent upgrade may proceed", async () => {
+    const f = await fixture();
+    f.send("检查更新", "readonly");
+    await f.settle();
+    expect((await loadUpdateJournal(f.home)).operation).toBeNull();
+    expect(f.state.pendingOutbound.at(-1)!.text).toContain("没有发起安装");
+    expect((await loadUpdateJournal(f.home)).lastVerified?.version).toBe("0.3.18");
+    f.send("升级", "install");
+    await f.settle();
+    expect((await loadUpdateJournal(f.home)).operation?.phase).toBe("offered");
+    expect(f.state.pendingOutbound.at(-1)!.text).toContain("确认升级 0.3.18");
 });
 it("persists one-use approval before download, allows cancellation without touching the selected artifact", async () => {
     const f = await fixture();
