@@ -6,7 +6,8 @@ import { join, resolve } from "node:path";
 import { createServer } from "node:net";
 import { CodexAppServerRpc } from "../apps/cli/src/channel/codex-app-server-rpc";
 import { localControlPaths, prepareLocalControl, writeControlJson } from "../apps/cli/src/local-control";
-import { localControlSandbox, localControlThreadConfig } from "../apps/cli/src/channel/codex-local-control";
+import { localControlSandbox } from "../apps/cli/src/channel/codex-local-control";
+import { createCodexResidentBrain } from "../apps/cli/src/channel/brains/codex-resident";
 
 const [codexExecutable, cliBundle] = process.argv.slice(2);
 assert(codexExecutable && cliBundle, "usage: check-codex-local-control-sandbox <codex> <built-cli>");
@@ -27,9 +28,30 @@ async function exec(command: string[]) {
   return await rpc.request<{ exitCode: number; stdout: string; stderr: string }>("command/exec", { command, cwd: paths.workspace, sandboxPolicy: policy, timeoutMs: 10000, outputBytesCap: 4000, env: { HOME: home } });
 }
 try {
-  await rpc.start();
-  await rpc.request("initialize", { clientInfo: { name: "attention_sandbox_acceptance", version: "1" }, capabilities: { experimentalApi: true } });
-  const thread = await rpc.request<{ thread: { id: string }; sandbox: typeof policy }>("thread/start", { ...localControlThreadConfig(localProfile), model: "gpt-5.6-luna" });
+  // Exercise production initialization and thread attachment, not a more
+  // permissive test-only handshake. Stub only MCP metadata and stop before any
+  // model turn: this acceptance intentionally needs no login/provider calls.
+  let attachedThread: { thread: { id: string }; sandbox: typeof policy } | undefined;
+  const brain = createCodexResidentBrain({ mcpUrl: "https://attention.example/mcp", localControl: localProfile, rpc: {
+    start: () => rpc.start(), close: async () => {}, snapshot: () => rpc.snapshot(),
+    onNotification: listener => rpc.onNotification(listener),
+    async request<T>(method: string, params: unknown, timeoutMs?: number): Promise<T> {
+      if (method === "mcpServerStatus/list") return { data: [{ name: "attention" }] } as T;
+      if (method === "turn/start") throw new Error("acceptance_stops_before_model_turn");
+      const result = await rpc.request<T>(method, params, timeoutMs);
+      if (method === "thread/start") attachedThread = result as typeof attachedThread;
+      return result;
+    },
+  } });
+  try {
+    await brain.start();
+    await brain.invoke({ cwd: home, prompt: "startup acceptance only", sessionId: null });
+    assert(attachedThread, "production Bridge failed to attach its scoped thread");
+  } finally {
+    // Remove the adapter health timer while retaining the RPC for sandbox probes.
+    await brain.shutdown();
+  }
+  const thread = attachedThread;
   assert.equal(thread.sandbox.type, policy.type);
   assert.equal(thread.sandbox.networkAccess, false);
   // A new zero-turn thread has no persisted rollout in some hosts; resume is

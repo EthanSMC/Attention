@@ -29,8 +29,8 @@ describe("Attention CLI", () => {
     expect(await runAttentionCli(["--bridge-update-protocol"],{output:capture.output})).toBe(0);
     expect(capture.logs).toEqual([JSON.stringify({channel_state_schema:1,update_journal_schema:1,wechat_update_protocol:1})]);
   });
-  it("reports the 0.3.18 Bridge release identity", () => {
-    expect(ATTENTION_CLI_VERSION).toBe("0.3.18");
+  it("reports the 0.3.19 Bridge release identity", () => {
+    expect(ATTENTION_CLI_VERSION).toBe("0.3.19");
   });
 
   it("reports the exact side-effect-free identity used to probe an update candidate", async () => {
