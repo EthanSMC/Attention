@@ -309,6 +309,30 @@ describe("channel subcommands", () => {
     expect(state.summaryRetries[0]!.nextAttemptAt).toBeNull();
   });
 
+  it("keeps the AI verification explanation without invoking another model for the pause notice", async () => {
+    const state = dueSummaryState();
+    const reply = "来源要求验证，暂时没拿到正文；自动重试已暂停，需要先解决读取环境的验证问题。";
+    const prompts: string[] = [];
+    const brain = summaryBrain([]);
+    brain.invoke = async ({ prompt }) => {
+      prompts.push(prompt);
+      return {
+        ...summaryControlOutcome({ enrichmentAction: "generate_summary", enrichmentCompleted: false, reply, summaryStatus: "pending" }),
+        readAttemptControl: {
+          collectionId: SUMMARY_COLLECTION_ID,
+          attemptRef: /summary-retry-[a-f0-9]+/u.exec(prompt)![0],
+          outcome: "failed", methods: ["static"], failureCode: "verification_required",
+          failureScope: "source", recovery: "needs_action", retryAfterMs: null,
+        },
+      };
+    };
+    expect(await processDueSummaryRetry({ brain, cwd: "/tmp/channel", now: () => new Date("2026-09-04T08:02:00.000Z"), persist: async () => {}, state })).toBe("paused");
+    expect(prompts).toHaveLength(1);
+    expect(state.pendingOutbound).toHaveLength(1);
+    expect(state.pendingOutbound[0]?.text).toBe(reply);
+    expect(state.summaryRetries[0]?.reader?.lastRead?.failureCode).toBe("verification_required");
+  });
+
   it("bounds correlated reader dependency calls and produces distinct retry references", async () => {
     const state = dueSummaryState(); const refs: string[] = [];
     const brain = summaryBrain([]);
@@ -449,7 +473,7 @@ describe("channel subcommands", () => {
     expect(state.brainSession.sessionId).not.toBe("disposable-notice-thread");
     expect(state.pendingOutbound).toHaveLength(1);
     expect(state.pendingOutbound[0]?.text).toBe(
-      "这轮自动重试仍未补全摘要，现已暂停；你可以随时再让我重试。",
+      "摘要尚未补全，当前自动重试已暂停。",
     );
     expect(state.pendingOutbound[0]?.id).not.toContain(SUMMARY_COLLECTION_ID);
   });
@@ -480,7 +504,7 @@ describe("channel subcommands", () => {
     });
 
     expect(state.pendingOutbound[0]?.text).toBe(
-      "这轮自动重试仍未补全摘要，现已暂停；你可以随时再让我重试。",
+      "摘要尚未补全，当前自动重试已暂停。",
     );
     expect(JSON.stringify(state.pendingOutbound)).not.toContain(
       "https://secret.example/raw",
@@ -2189,7 +2213,7 @@ describe("channel subcommands", () => {
                   client_id: "message-retry-auth",
                   context_token: "ctx-owner",
                   from_user_id: "owner",
-                  item_list: [{ text_item: { text: "重试一下" }, type: 1 }],
+                  item_list: [{ text_item: { text: "重新连接" }, type: 1 }],
                 }],
                 ret: 0,
               }));
@@ -2309,7 +2333,7 @@ describe("channel subcommands", () => {
 
     expect(invocation).toBe(2);
     expect(sentTexts).toContain(
-      "Attention MCP 需要重新授权；这条操作已保留。请在电脑完成授权后发送“重试”。",
+      "Attention MCP 需要重新授权；这条操作已保留。请在电脑完成授权后发送“重新连接”。",
     );
     expect(sentTexts).toContain("我还在，可以继续聊。");
     expect(sentTexts).not.toContain("模型误称已收藏");

@@ -78,7 +78,7 @@ describe("channel intent", () => {
     expect(prompt).toMatch(
       /attention_get_collection_status[\s\S]*enrichment_action=`generate_summary`[\s\S]*public_read_url/u,
     );
-    expect(prompt).toMatch(/无需再次询问或确认/u);
+    expect(prompt).toMatch(/正在讨论某条摘要时是摘要恢复，不是 MCP 重连/u);
     expect(prompt).toMatch(
       /attention_read_collection_source[\s\S]*collection_id[\s\S]*temporary_text/u,
     );

@@ -7,6 +7,7 @@ import { Agent, buildConnector, fetch } from "undici";
 
 import { FetcherError } from "./errors.js";
 import { isPublicAddress } from "./ip-policy.js";
+import { isWechatVerificationRedirect } from "./verification-redirect.js";
 import {
   assertNoHttpsDowngrade,
   parseAndValidateUrl,
@@ -271,7 +272,13 @@ async function fetchPinned(
             throw new FetcherError("redirect_limit", "Redirect limit exceeded");
           }
 
-          const next = parseAndValidateUrl(new URL(location, current).toString(), sourceKind);
+          const redirectTarget = new URL(location, current);
+          // Report the known upstream verification gate without following it or
+          // granting an exception to token, address, or redirect validation.
+          if (mode === "read" && sourceKind === "wechat_official_article" && isWechatVerificationRedirect(current, redirectTarget)) {
+            throw new FetcherError("verification_required", "Source requires verification");
+          }
+          const next = parseAndValidateUrl(redirectTarget.toString(), sourceKind);
           assertNoHttpsDowngrade(current, next);
           current = next;
           continue;

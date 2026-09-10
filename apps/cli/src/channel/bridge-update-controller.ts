@@ -107,7 +107,7 @@ export class BridgeUpdateController {
             if (op.phase === "switching" && this.options.currentVersion === op.manifest.version && this.options.currentPermissionProfileSha256 === op.manifest.permission_profile_sha256 && managed.current.version === op.manifest.version && !managed.pending) {
                 op.phase = "started";
                 if (op.explicit)
-                    this.event(next, op.owner, `${op.id}:started`, `Bridge 已升级并启动：${this.options.currentVersion}。微信登录和待处理消息已保留；后续业务对话将按新版本建立会话。${state.attentionMcp.status === "ready" ? "Attention MCP 当前已连接。" : "Attention MCP 授权/连接仍需恢复，可发送「重试」。"}这不代表收藏摘要已补全。`);
+                    this.event(next, op.owner, `${op.id}:started`, `Bridge 已升级并启动：${this.options.currentVersion}。微信登录和待处理消息已保留；后续业务对话将按新版本建立会话。${state.attentionMcp.status === "ready" ? "Attention MCP 当前已连接。" : "Attention MCP 授权/连接仍需恢复，可发送「重新连接」。"}这不代表收藏摘要已补全。`);
             }
             else {
                 op.phase = managed.status === "rolled_back" && managed.latestVersion === op.manifest.version ? "rolled_back" : "failed";

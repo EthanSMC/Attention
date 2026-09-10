@@ -14,6 +14,18 @@ import { safeFetch, safeFetchResource, readLimitedBytes, type AddressResolver } 
 afterEach(() => vi.resetAllMocks());
 const publicResolver: AddressResolver = async () => [{address: "93.184.216.34", family: 4}];
 
+it("reports the WeChat captcha redirect without following or accepting its token URL", async () => {
+  remote.fetch.mockImplementation(async () => new Response(null, { status: 302, headers: {
+    location: "https://mp.weixin.qq.com/mp/wappoc_appmsgcaptcha?poc_token=synthetic&target_url=synthetic",
+  } }));
+  await expect(safeFetch("https://mp.weixin.qq.com/s/example", "wechat_official_article", "read", { resolveAddresses: publicResolver }))
+    .rejects.toMatchObject({ code: "verification_required" });
+  expect(remote.fetch).toHaveBeenCalledOnce();
+  await expect(safeFetch("https://mp.weixin.qq.com/s/example", "wechat_official_article", "metadata", { resolveAddresses: publicResolver }))
+    .rejects.toMatchObject({ code: "unsafe_credentials" });
+  expect(remote.fetch).toHaveBeenCalledTimes(2);
+});
+
 it("preserves target refusal status for read mode while preserving legacy HTML rejection", async () => {
   remote.fetch.mockImplementation(async () => new Response("refused", {status: 429, headers: {"content-type": "application/json", "retry-after": "30"}}));
   await expect(safeFetch("https://example.com/", "generic_web", "read", {resolveAddresses: publicResolver}))

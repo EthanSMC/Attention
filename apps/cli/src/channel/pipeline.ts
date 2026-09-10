@@ -114,20 +114,15 @@ const ALWAYS_LOCAL_COMMANDS: Readonly<Record<string, ControlCommand>> = {
   "连接状态": "status",
   "重新连接": "retry",
   "状态": "status",
-  "重试": "retry",
   "重置会话": "reset_confirmation",
 };
 
 const RETRY_COMMANDS: ReadonlySet<string> = new Set([
   "/retry",
-  "再试一次",
   "帮我重连一下",
-  "帮我重试一下",
   "重新连接",
   "重新连接一下",
   "重连",
-  "重试",
-  "重试一下",
 ]);
 
 /** Derives a bounded idempotency reference from the complete message id. */
@@ -323,6 +318,7 @@ export async function handleInboundMessage(
         sensitiveFragments:
           outcome.collectionReplySensitiveFragments ?? [],
         ...(savedJob?.reader?.interrupted ? { interrupted: true } : outcome.readAttemptControl || savedJob?.reader?.lastRead ? { readRecovery: outcome.readAttemptControl?.recovery ?? savedJob?.reader?.lastRead?.recovery ?? null } : {}),
+        readFailureCode: outcome.readAttemptControl?.failureCode ?? savedJob?.reader?.lastRead?.failureCode ?? null,
         ...(savedJob ? { nextAttemptAt: savedJob.nextAttemptAt, now: completedAt.toISOString() } : {}),
       },
     );
@@ -347,12 +343,12 @@ function attentionMcpFailureReply(failure: AttentionMcpFailure): string {
   switch (failure.errorCode) {
     case "mcp_auth_required":
     case "mcp_token_refresh_failed":
-      return "Attention MCP 需要重新授权；这条操作已保留。请在电脑完成授权后发送“重试”。";
+      return "Attention MCP 需要重新授权；这条操作已保留。请在电脑完成授权后发送“重新连接”。";
     case "mcp_server_unreachable":
       return "Attention MCP 暂时不可达；这条操作已保留并会在恢复后重试。";
     case "mcp_account_probe_failed":
     case "mcp_protocol_failed":
-      return "Attention MCP 工具异常；这条操作已保留，请稍后发送“重试”。";
+      return "Attention MCP 工具异常；这条操作已保留，请稍后发送“重新连接”。";
   }
 }
 

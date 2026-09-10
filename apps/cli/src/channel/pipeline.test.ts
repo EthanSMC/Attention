@@ -185,12 +185,14 @@ describe("handleInboundMessage", () => {
     await handleInboundMessage({ brain: fakeBrain("codex"), cwd: "/tmp", state, message, invokeBrain: async () => recoveryOutcome("补一下摘要", { enrichmentAction: "generate_summary", enrichmentCompleted: false, summaryStatus: "pending" }) });
     expect(state.summaryRetries).toEqual([]);
   });
-  it("keeps bare retry as connection recovery even with a paused summary", async () => {
+  it("passes bare retry to the Agent without resetting a paused summary just from its wording", async () => {
     const state = defaultChannelState();
     state.summaryRetries.push({ automaticAttempts: 3, collectionId: "11111111-1111-4111-8111-111111111111", cycleStartedAt: "2026-09-04T07:00:00.000Z", lastFailureClass: "enrichment_incomplete", nextAttemptAt: null, status: "paused" });
     const before = structuredClone(state.summaryRetries);
-    const output = await handleInboundMessage({ brain: fakeBrain("codex"), cwd: "/tmp", state, message: textMessage("重试"), invokeBrain: async () => { throw new Error("connection command must not invoke the summary reader"); } });
-    expect(output.controlCommand).toBe("retry");
+    let invoked = false;
+    const output = await handleInboundMessage({ brain: fakeBrain("codex"), cwd: "/tmp", state, message: textMessage("重试"), invokeBrain: async () => { invoked = true; return okOutcome("需要先确认要重试哪项任务。"); } });
+    expect(output.controlCommand).toBeUndefined();
+    expect(invoked).toBe(true);
     expect(state.summaryRetries).toEqual(before);
   });
   it("uses the saved legacy deadline when duplicate collection remains incomplete", async () => {
@@ -1041,7 +1043,7 @@ describe("handleInboundMessage", () => {
       retryable: false,
     });
     expect(output.replies).toEqual([
-      "Attention MCP 需要重新授权；这条操作已保留。请在电脑完成授权后发送“重试”。",
+      "Attention MCP 需要重新授权；这条操作已保留。请在电脑完成授权后发送“重新连接”。",
     ]);
     expect(state.runtimeState.activeTurnMessageRef).not.toBeNull();
     expect(state.processedMessageIds).toEqual([]);
@@ -1101,16 +1103,16 @@ describe("matchControlCommand", () => {
     ["/status", "status"],
     ["帮助", "help"],
     ["/help", "help"],
-    ["重试", "retry"],
-    ["重试一下", "retry"],
-    ["再试一次", "retry"],
+    ["重试", null],
+    ["重试一下", null],
+    ["再试一次", null],
     ["重新连接", "retry"],
     ["重新连接一下", "retry"],
     ["重连", "retry"],
     ["帮我重连一下", "retry"],
-    ["帮我重试一下", "retry"],
+    ["帮我重试一下", null],
     ["帮我重连一下？", "retry"],
-    ["　重试一下！　", "retry"],
+    ["　重试一下！　", null],
     ["/retry", "retry"],
     ["继续", "continue"],
     ["/continue", "continue"],

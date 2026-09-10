@@ -9,6 +9,7 @@ export type FetcherErrorCode =
   | "redirect_missing_location"
   | "redirect_limit"
   | "https_downgrade"
+  | "verification_required"
   | "unsupported_content_type"
   | "response_too_large"
   | "timeout"

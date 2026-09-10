@@ -26,6 +26,7 @@ function failureCode(error: unknown): ReadFailureCode {
   switch (error.code) {
     case "timeout": return "network_timeout";
     case "dns_failure": return "dns_failure";
+    case "verification_required": return "verification_required";
     case "unsupported_content_type": return "reader_unsupported";
     case "invalid_url": case "unsupported_protocol": case "unsupported_port":
     case "unsafe_credentials": case "unsafe_hostname": case "unsafe_address":
