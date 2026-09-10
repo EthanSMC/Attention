@@ -344,7 +344,9 @@ export async function processDueSummaryRetry(input: {
     const next = Math.max(Date.parse(running.nextAttemptAt!), ...[state.attentionMcp.nextRetryAt, state.runtimeState.nextRetryAt].map((v) => v ? Date.parse(v) || 0 : 0));
     running.nextAttemptAt = new Date(Math.min(next, deadline)).toISOString();
   }
-  if (settled !== "scheduled" && validControl) await enqueueSummaryRetryNotice({ brain, control: validControl, cwd: input.cwd, cycleStartedAt: running.cycleStartedAt, phase: settled === "terminal" ? "terminal" : "paused", state, generate: false, readRecovery: failure.recovery });
+  if (settled !== "scheduled" && validControl) await enqueueSummaryRetryNotice({ brain, control: validControl, cwd: input.cwd, cycleStartedAt: running.cycleStartedAt, phase: settled === "terminal" ? "terminal" : "paused", state, generate: false, readRecovery: failure.recovery,
+    candidateReply: outcome.ok && !outcome.attentionMcpFailure ? outcome.reply : "",
+    sensitiveFragments: outcome.collectionReplySensitiveFragments ?? [] });
   await input.persist();
   return settled === "scheduled" && failure.failureScope === "dependency" ? "dependency_failure" : settled;
 }
@@ -358,23 +360,26 @@ async function enqueueSummaryRetryNotice(input: {
   readonly state: ChannelState;
   readonly generate?: boolean;
   readonly readRecovery?: ReadAttemptControl["recovery"];
+  readonly candidateReply?: string;
+  readonly sensitiveFragments?: readonly string[];
 }): Promise<void> {
   const notice = input.generate === false ? null : await input.brain.invoke({
     cwd: input.cwd,
-    prompt: buildSummaryRetryNoticePrompt({ phase: input.phase }),
+    prompt: buildSummaryRetryNoticePrompt({ phase: input.phase, readRecovery: input.readRecovery ?? null, readFailureCode: input.state.summaryRetries.find(job => job.collectionId === input.control.collectionId)?.reader?.lastRead?.failureCode ?? null }),
     sessionId: null,
   });
   syncRuntimeCheckpoint(input.state, input.brain);
-  const candidate =
+  const candidate = input.candidateReply ?? (
     notice?.ok &&
     !notice.attentionMcpFailure &&
     !notice.collectionReplyControl
       ? notice.reply
-      : "";
+      : "");
   const checked = safeCollectionReply(input.control, candidate, {
     phase: input.phase,
-    sensitiveFragments: [],
+    sensitiveFragments: input.sensitiveFragments ?? [],
     ...(input.readRecovery ? { readRecovery: input.readRecovery } : {}),
+    readFailureCode: input.state.summaryRetries.find(job => job.collectionId === input.control.collectionId)?.reader?.lastRead?.failureCode ?? null,
   });
   const toUserId = input.state.ownerUserId;
   const contextToken = toUserId
@@ -1520,13 +1525,13 @@ function mcpRecoveryReply(
     case "ready":
       return "Attention MCP 已恢复，并已验证当前账号。";
     case "auth_required":
-      return `Attention MCP 需要重新授权；微信对话仍可用。请在本机运行 attention configure ${hostId} --apply --login，完成后回复“重试”。`;
+      return `Attention MCP 需要重新授权；微信对话仍可用。请在本机运行 attention configure ${hostId} --apply --login，完成后回复“重新连接”。`;
     case "cooldown":
       return `Attention MCP 正在限制频繁重试；微信对话仍可用。可在 ${outcome.retryAt} 后再试。`;
     case "scheduled":
       return `Attention MCP 暂未恢复（${outcome.errorCode}）；微信对话仍可用，已安排在 ${outcome.nextRetryAt} 自动重试。`;
     case "failed":
-      return `Attention MCP 暂未恢复（${outcome.errorCode}）；微信对话仍可用，请检查本机配置后再发送“重试”。`;
+      return `Attention MCP 暂未恢复（${outcome.errorCode}）；微信对话仍可用，请检查本机配置后再发送“重新连接”。`;
   }
 }
 
@@ -1582,7 +1587,7 @@ async function applyRuntimeControl(
     state.runtimeState.phase = "degraded_runtime";
     state.runtimeState.lastErrorCode = "brain_restart_failed";
     state.runtimeState.lastTransitionAt = new Date().toISOString();
-    return "本地 Agent 仍未恢复。请稍后发送“重试”，或在电脑上查看 attention channel status。";
+    return "本地 Agent 仍未恢复。请稍后发送“重新连接”，或在电脑上查看 attention channel status。";
   }
 }
 
@@ -1722,7 +1727,7 @@ function startupMcpFailureMessage(
   if (recovery.kind === "auth_required") {
     return (
       "Attention MCP 需要重新授权；微信桥和普通对话仍可用。\n" +
-      `请在电脑运行 attention configure ${hostId} --apply --login，完成后在微信发送“重试”。\n`
+      `请在电脑运行 attention configure ${hostId} --apply --login，完成后在微信发送“重新连接”。\n`
     );
   }
   if (recovery.kind === "scheduled") {
@@ -1733,7 +1738,7 @@ function startupMcpFailureMessage(
   }
   return (
     `Attention MCP 账号实测失败（${probe.errorCode}），微信桥和普通对话仍可用。\n` +
-    "可在微信发送“重试”，或在电脑运行 attention channel status 查看分层状态。\n"
+    "可在微信发送“重新连接”，或在电脑运行 attention channel status 查看分层状态。\n"
   );
 }
 

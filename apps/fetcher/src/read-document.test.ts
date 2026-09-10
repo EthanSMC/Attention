@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ReadResultSchema } from "@attention/content-reader-contracts";
 import { readDocument, parseRetryAfter, BrowserUnavailableError } from "./read-document.js";
+import { FetcherError } from "./errors.js";
 
 const input = {url: "https://example.com/article", sourceKind: "generic_web" as const,
   request_ref: "request1", attempt_ref: "attempt1", signal: new AbortController().signal};
@@ -9,6 +10,12 @@ const shell = {body: '<html><body><div id="app"></div><script src="/app.js"></sc
 const article = {html: "<html><body><article><p>A controlled synthetic article about public reading and bounded resource handling.</p></article></body></html>", finalUrl: input.url, status: 200};
 
 describe("readDocument", () => {
+  it("reports an upstream verification redirect as needs_action, never security-stop or browser fallback", async () => {
+    const read = vi.fn(async () => article);
+    const result = await readDocument(input, { staticRead: async () => { throw new FetcherError("verification_required", "Source requires verification"); }, browser: { read }, now: () => 100 });
+    expect(result).toMatchObject({ outcome: "failed", code: "verification_required", scope: "source", recovery: "needs_action", evidence_kind: "none", attempts: [{ method: "static" }] });
+    expect(read).not.toHaveBeenCalled();
+  });
   it.each([429, 503])("retains new-reader dependency retry and source Retry-After for HTTP %s", async status => {
     const read = vi.fn(async () => article);
     expect(await readDocument(input, {staticRead: async () => ({...shell, status, body: "", retryAfter: "30"}), browser: {read}, now: () => 100}))

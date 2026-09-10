@@ -295,6 +295,7 @@ export type CollectionReplyRejectionReason =
   | "reply_missing_pause_state"
   | "reply_missing_retry_plan"
   | "reply_inaccurate_retry_plan"
+  | "reply_inaccurate_failure_reason"
   | "reply_missing_terminal_state"
   | "reply_retry_queue_full"
   | "reply_too_long"
@@ -309,6 +310,7 @@ export interface SafeCollectionReplyResult {
 export interface CollectionReplySafetyContext {
   readonly interrupted?: boolean;
   readonly readRecovery?: ReadAttemptControl["recovery"];
+  readonly readFailureCode?: ReadAttemptControl["failureCode"];
   readonly nextAttemptAt?: string | null;
   readonly now?: string;
   readonly phase:
@@ -327,6 +329,7 @@ function fallbackCollectionReply(
   readRecovery?: ReadAttemptControl["recovery"],
   now?: string,
   interrupted?: boolean,
+  readFailureCode?: ReadAttemptControl["failureCode"],
 ): string {
   if (control.kind === "fixed") return control.reply;
   if (phase === "initial_incomplete") {
@@ -337,8 +340,10 @@ function fallbackCollectionReply(
   }
   if (phase === "paused") {
     if (interrupted) return "上次读取尝试中断，结果尚未确认；自动重试已暂停，需要时可再让我重试。";
-    if (readRecovery === "needs_action") return "这次没有补全摘要，读取需要你处理访问条件；自动重试已暂停，需要时可再让我重试。";
-    return "这轮自动重试仍未补全摘要，现已暂停；你可以随时再让我重试。";
+    if (readRecovery === "needs_action") return readFailureCode === "verification_required"
+      ? "来源要求验证，尚未取得正文来补全标题和摘要；自动重试已暂停。需要先解决当前读取环境的验证要求，重新连接 MCP 不能代替验证。"
+      : "这次没有补全摘要，自动重试已暂停；需要先处理来源的访问条件，再继续读取。";
+    return "摘要尚未补全，当前自动重试已暂停。";
   }
   if (phase === "queue_full") {
     return control.kind === "established"
@@ -346,6 +351,7 @@ function fallbackCollectionReply(
       : "本地重试队列已满，暂时无法安排自动重试。";
   }
   if (phase === "terminal") {
+    if (readFailureCode === "unsafe_source") return "文章读取被安全检查拦截，标题和摘要尚未补全；自动重试已停止，需要先排查拦截原因。重新连接 MCP 不会解决这项读取问题。";
     if (readRecovery === "stop") return "这次没有补全摘要；根据当前读取结果，自动重试已停止。";
     return "这项收藏当前已不再符合摘要补全条件，自动重试已停止。";
   }
@@ -386,6 +392,10 @@ function rejectionReason(
   context: CollectionReplySafetyContext,
 ): CollectionReplyRejectionReason | null {
   if (context.phase === "queue_full") return "reply_retry_queue_full";
+  if ((context.readRecovery === "stop" || context.readRecovery === "needs_action") &&
+    /次数.{0,8}(?:耗尽|用完|达到|上限)|(?:耗尽|用完).{0,8}次数/u.test(candidate)) return "reply_inaccurate_failure_reason";
+  if (context.readRecovery === "stop" && /(?:随时|直接|再让我|请).{0,8}重试/u.test(candidate) &&
+    !/(?:先|后).{0,12}(?:排查|处理|校验)|(?:排查|处理|校验).{0,12}(?:后|再)/u.test(candidate)) return "reply_inaccurate_retry_plan";
   if (context.interrupted && !/中断|结果.{0,3}未确认/u.test(candidate)) return "reply_missing_pause_state";
   if (context.sensitiveFragments.includes(SENSITIVE_FRAGMENT_OVERFLOW)) return "reply_contains_sensitive_fragment";
   const futurePlan = candidate.replace(/自动重试(?:已(?:经)?(?:暂停|停止|终止)|不再继续)/gu, "");
@@ -445,12 +455,11 @@ function rejectionReason(
     }
   }
   if (context.phase === "paused") {
-    if (!/暂停/u.test(candidate)) return "reply_missing_pause_state";
-    if (!/重试/u.test(candidate)) return "reply_missing_retry_plan";
+    if (!/(?:暂停|停止|暂时|暂不|需要.{0,24}(?:后才能|先|处理|验证|排查)|继续.{0,12}不会)/u.test(candidate)) return "reply_missing_pause_state";
   }
   if (
     context.phase === "terminal" &&
-    !/(?:停止|终止|不再|不可用|无法继续)/u.test(candidate)
+    !/(?:停止|终止|不再|不可用|无法继续|拦截|无法读取|不能继续)/u.test(candidate)
   ) {
     return "reply_missing_terminal_state";
   }
@@ -470,12 +479,16 @@ export function safeCollectionReply(
     };
   }
   const candidate = candidateReply.trim();
-  const reason = rejectionReason(candidate, context);
+  // A persisted terminal read stays terminal on later status-only turns.
+  // "paused" is a scheduler storage state, not evidence of retry exhaustion.
+  const effectiveContext = context.readRecovery === "stop" && context.phase === "paused"
+    ? { ...context, phase: "terminal" as const } : context;
+  const reason = rejectionReason(candidate, effectiveContext);
   return reason
     ? {
         accepted: false,
         reason,
-        text: fallbackCollectionReply(control, context.phase, context.nextAttemptAt, context.readRecovery, context.now, context.interrupted),
+        text: fallbackCollectionReply(control, effectiveContext.phase, context.nextAttemptAt, context.readRecovery, context.now, context.interrupted, context.readFailureCode),
       }
     : { accepted: true, reason: null, text: candidate };
 }
