@@ -7,6 +7,7 @@ import {
   type CodexAppServerRpcOptions,
 } from "../codex-app-server-rpc";
 import type { BrainAdapter } from "../brain";
+import type { CodexLocalControl } from "../codex-local-control";
 import {
   createCodexResidentBrain,
   type CodexResidentRpc,
@@ -54,6 +55,7 @@ export const ATTENTION_CHANNEL_APPROVED_WRITE_TOOLS = [
 ] as const satisfies readonly (typeof ATTENTION_CHANNEL_MCP_TOOL_NAMES)[number][];
 
 export interface CodexBrainOptions {
+  readonly localControl?: CodexLocalControl;
   readonly codexHomeDirectory?: string;
   readonly mcpUrl: string;
   readonly rpcFactory?: (options: CodexAppServerRpcOptions) => CodexResidentRpc;
@@ -68,11 +70,13 @@ export interface CodexBrainOptions {
  */
 export function createCodexBrain(options: CodexBrainOptions): BrainAdapter {
   const rpcOptions: CodexAppServerRpcOptions = {
+    ...(options.localControl ? { cwd: options.localControl.workspace } : {}),
     args: [
-      ...DISABLED_NON_ATTENTION_FEATURES.flatMap((feature) => [
+      ...DISABLED_NON_ATTENTION_FEATURES.filter(feature => !options.localControl || (feature !== "shell_tool" && feature !== "unified_exec")).flatMap((feature) => [
         "--disable",
         feature,
       ]),
+      ...(options.localControl ? ["--enable", "shell_tool", "--enable", "unified_exec"] : []),
       ...codexAttentionMcpOverrideArgs(options.mcpUrl),
       "-c",
       `mcp_servers.attention.enabled_tools=${JSON.stringify(ATTENTION_CHANNEL_MCP_TOOL_NAMES)}`,
@@ -98,5 +102,5 @@ export function createCodexBrain(options: CodexBrainOptions): BrainAdapter {
   const rpc = (options.rpcFactory ?? ((input) => new CodexAppServerRpc(input)))(
     rpcOptions,
   );
-  return createCodexResidentBrain({ mcpUrl: options.mcpUrl, rpc });
+  return createCodexResidentBrain({ mcpUrl: options.mcpUrl, rpc, ...(options.localControl ? { localControl: options.localControl } : {}) });
 }

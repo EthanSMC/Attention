@@ -1,0 +1,79 @@
+{
+  "cloud": {
+    "mcp_server": "attention_only",
+    "runtime_oauth": {
+      "resource": "attention-channel-runtime",
+      "scopes": [
+        "runtime:register",
+        "runtime:heartbeat",
+        "channel:bind:report",
+        "channel:disconnect:report",
+        "channel:notifications:read"
+      ]
+    },
+    "tools": [
+      "attention_get_my_account",
+      "attention_list_collections",
+      "attention_collect_content",
+      "attention_submit_content_enrichment",
+      "attention_select_collection_candidate",
+      "attention_get_collection_status",
+      "attention_read_collection_source",
+      "attention_update_collection"
+    ]
+  },
+  "local": {
+    "deny": [
+      "browser_automation",
+      "filesystem_outside_attention",
+      "other_mcp"
+    ],
+    "write": [
+      "attention_state",
+      "managed_bridge_artifacts",
+      "user_service_config"
+    ]
+  },
+  "hosts": {
+    "codex": {
+      "local_control_platforms": [
+        "darwin",
+        "linux"
+      ],
+      "tools": [
+        "attention_mcp",
+        "public_web_reader",
+        "shell",
+        "code_execution"
+      ],
+      "write": [
+        "attention_codex_workspace",
+        "attention_control_requests"
+      ],
+      "deny": [
+        "shell_network",
+        "elevation",
+        "approval_journal_write",
+        "credentials_write",
+        "managed_artifact_write"
+      ]
+    },
+    "claude_code": {
+      "local_control_platforms": [],
+      "tools": [
+        "attention_mcp",
+        "public_web_reader"
+      ],
+      "write": [],
+      "deny": [
+        "shell",
+        "code_execution",
+        "filesystem_write"
+      ]
+    }
+  },
+  "native_network": [
+    "public_web_reader"
+  ],
+  "schema_version": 3
+}

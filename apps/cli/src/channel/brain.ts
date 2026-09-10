@@ -3,8 +3,9 @@
  * restricted subprocess. Two adapters ship in this release (Codex CLI and
  * Claude Code); both must honor the restricted profile semantics from
  * `installations/v1/templates/restricted-profile.json`: only the Attention
- * MCP plus the minimum conditional public-web reader, no shell/code
- * execution/filesystem write, no inherited session or working directory.
+ * MCP plus the minimum conditional public-web reader. Codex may additionally
+ * receive the dedicated local-control sandbox; Claude retains the no-shell
+ * profile. Neither inherits a user's existing session or working directory.
  */
 
 import { spawn } from "node:child_process";
@@ -13,6 +14,7 @@ import { resolveHostExecutable } from "../host-executable";
 import { boundedDiagnosticOutput } from "../redact";
 import { createClaudeCodeBrain } from "./brains/claude-code";
 import { createCodexBrain } from "./brains/codex";
+import type { CodexLocalControl } from "./codex-local-control";
 import { BRAIN_TIMEOUT_MS } from "./limits";
 import type { CollectionReplyControl } from "./collection-reply-control";
 import type { ReadAttemptControl } from "./read-attempt-control";
@@ -171,6 +173,7 @@ export async function execBrain(
 export function createBrainAdapter(
   hostId: "codex" | "claude-code",
   options: {
+    readonly localControl?: CodexLocalControl;
     readonly codexHomeDirectory?: string;
     readonly mcpUrl: string;
     readonly runtimeDirectory?: string;
@@ -184,6 +187,7 @@ export function createBrainAdapter(
           : {}),
       })
     : createCodexBrain({
+        ...(options.localControl ? { localControl: options.localControl } : {}),
         ...(options.codexHomeDirectory
           ? { codexHomeDirectory: options.codexHomeDirectory }
           : {}),

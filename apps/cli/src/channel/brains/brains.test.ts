@@ -158,6 +158,17 @@ class CompletingRpc implements CodexResidentRpc {
 }
 
 describe("codex brain", () => {
+  it("enables only the scoped Codex shell surface when local control is supplied", async () => {
+    let captured: CodexAppServerRpcOptions | undefined;
+    const brain = createCodexBrain({ mcpUrl: "https://attention.example/mcp", localControl: { workspace: "/safe/workspace", requests: "/safe/requests", command: ["/safe/node", "/safe/attention.mjs"] }, rpcFactory: options => { captured = options; return new CompletingRpc(); } });
+    try {
+      await brain.invoke({ cwd: "/unsafe", prompt: "查询升级状态", sessionId: null });
+      expect(captured?.cwd).toBe("/safe/workspace");
+      const args = captured!.args;
+      for (const feature of ["shell_tool", "unified_exec"]) expect(args[args.indexOf(feature) - 1]).toBe("--enable");
+      for (const feature of ["browser_use", "computer_use", "multi_agent"]) expect(args[args.indexOf(feature) - 1]).toBe("--disable");
+    } finally { await brain.shutdown(); }
+  });
   it("delegates to app-server with an isolated home and restricted global policy", async () => {
     const captured: { rpcOptions: CodexAppServerRpcOptions | null } = {
       rpcOptions: null,

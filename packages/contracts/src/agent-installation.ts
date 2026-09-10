@@ -133,6 +133,13 @@ const RestrictedProfileSchema = z
       ]),
     ),
     required: z.boolean(),
+    local_management: z.object({
+      platforms: z.tuple([z.literal("darwin"), z.literal("linux")]),
+      adapter: z.literal("attention_cli"),
+      writable_roots: z.tuple([z.literal("attention_codex_workspace"), z.literal("attention_control_requests")]),
+      network_access: z.literal(false),
+      approval_policy: z.literal("never"),
+    }).strict().optional(),
     template_path: z.literal(ATTENTION_RESTRICTED_PROFILE_PUBLIC_PATH).nullable(),
   })
   .strict();
@@ -723,6 +730,15 @@ export type AgentInstallationCatalog = z.infer<
 
 export const RestrictedAgentProfileTemplateSchema = z
   .object({
+    host_overrides: z.object({
+      codex: z.object({
+        platforms: z.tuple([z.literal("darwin"), z.literal("linux")]),
+        allow: z.tuple([z.literal("shell"), z.literal("code_execution"), z.literal("scoped_filesystem_write")]),
+        writable_roots: z.tuple([z.literal("attention_codex_workspace"), z.literal("attention_control_requests")]),
+        network_access: z.literal(false),
+        approval_policy: z.literal("never"),
+      }).strict(),
+    }).strict().optional(),
     capabilities: z
       .object({
         allow_mcp_servers: z.array(z.literal("attention")).length(1),
@@ -1312,7 +1328,7 @@ function createInstallationProfile(
     release_stage: "infrastructure_only",
     restricted_profile: {
       allowed_mcp_servers: bridge ? ["attention"] : [],
-      denied_capabilities: bridge
+      denied_capabilities: bridge && integration.id === "codex" ? ["arbitrary_mcp", "browser_automation"] : bridge
         ? [
             "arbitrary_mcp",
             "browser_automation",
@@ -1322,6 +1338,10 @@ function createInstallationProfile(
           ]
         : [],
       required: bridge,
+      ...(bridge && integration.id === "codex" ? { local_management: {
+        platforms: ["darwin", "linux"],
+        adapter: "attention_cli", writable_roots: ["attention_codex_workspace", "attention_control_requests"], network_access: false, approval_policy: "never",
+      } } : {}),
       template_path: bridge
         ? ATTENTION_RESTRICTED_PROFILE_PUBLIC_PATH
         : null,
@@ -1418,6 +1438,9 @@ export const agentInstallationCatalog: AgentInstallationCatalog =
 
 export const restrictedAgentProfileTemplate: RestrictedAgentProfileTemplate =
   RestrictedAgentProfileTemplateSchema.parse({
+    host_overrides: {
+      codex: { platforms: ["darwin", "linux"], allow: ["shell", "code_execution", "scoped_filesystem_write"], writable_roots: ["attention_codex_workspace", "attention_control_requests"], network_access: false, approval_policy: "never" },
+    },
     capabilities: {
       allow_mcp_servers: ["attention"],
       allow_mcp_tool_prefixes: ["attention_"],

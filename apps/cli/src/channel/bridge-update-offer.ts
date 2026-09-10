@@ -15,8 +15,10 @@ export interface PermissionProfile {
         write: readonly string[];
     };
     native_network: readonly string[];
+    hosts?: { codex: HostPermissions; claude_code: HostPermissions };
     schema_version: number;
 }
+interface HostPermissions { local_control_platforms: readonly string[]; tools: readonly string[]; write: readonly string[]; deny: readonly string[] }
 const TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
     attention_get_my_account: "查看你的 Attention 账号与权益",
     attention_list_collections: "查询你的收藏",
@@ -44,15 +46,23 @@ function words(value: unknown): string[] {
 function word(value: unknown): string { return words([value])[0]!; }
 /** Rebuilds the original constant's key order; never hashes arbitrary JSON key order. */
 export function parsePermissionProfile(value: unknown, expectedSha: string): PermissionProfile {
-    const root = object(value, ["cloud", "local", "native_network", "schema_version"]);
+    const schema = (value as { schema_version?: unknown } | null)?.schema_version;
+    const root = object(value, ["cloud", "local", ...(schema === 3 ? ["hosts"] : []), "native_network", "schema_version"]);
     const cloud = object(root.cloud, ["mcp_server", "runtime_oauth", "tools"]);
     const oauth = object(cloud.runtime_oauth, ["resource", "scopes"]);
     const local = object(root.local, ["deny", "write"]);
-    if (root.schema_version !== 2)
+    if (root.schema_version !== 2 && root.schema_version !== 3)
         throw new Error("permission_profile_invalid");
+    const parseHost = (raw: unknown): HostPermissions => {
+        const h = object(raw, ["local_control_platforms", "tools", "write", "deny"]);
+        return { local_control_platforms: words(h.local_control_platforms), tools: words(h.tools), write: words(h.write), deny: words(h.deny) };
+    };
+    const hosts = schema === 3 ? object(root.hosts, ["codex", "claude_code"]) : null;
     const profile: PermissionProfile = {
         cloud: { mcp_server: word(cloud.mcp_server), runtime_oauth: { resource: word(oauth.resource), scopes: words(oauth.scopes) }, tools: words(cloud.tools) },
-        local: { deny: words(local.deny), write: words(local.write) }, native_network: words(root.native_network), schema_version: 2,
+        local: { deny: words(local.deny), write: words(local.write) },
+        ...(hosts ? { hosts: { codex: parseHost(hosts.codex), claude_code: parseHost(hosts.claude_code) } } : {}),
+        native_network: words(root.native_network), schema_version: root.schema_version,
     };
     if (updateDigest(profile) !== expectedSha)
         throw new Error("permission_profile_digest_mismatch");

@@ -26,7 +26,10 @@ describe("Bridge update contract", () => {
   });
   it("keeps the new reader permission inside the existing restricted boundary", () => {
     expect(ATTENTION_BRIDGE_PERMISSION_PROFILE.cloud.mcp_server).toBe("attention_only");
-    expect(ATTENTION_BRIDGE_PERMISSION_PROFILE.local.deny).toEqual(["browser_automation", "code_execution", "filesystem_outside_attention", "other_mcp", "shell"]);
+    expect(ATTENTION_BRIDGE_PERMISSION_PROFILE.local.deny).toEqual(["browser_automation", "filesystem_outside_attention", "other_mcp"]);
+    expect(ATTENTION_BRIDGE_PERMISSION_PROFILE.hosts.codex.tools).toContain("shell");
+    expect(ATTENTION_BRIDGE_PERMISSION_PROFILE.hosts.codex.deny).toContain("shell_network");
+    expect(ATTENTION_BRIDGE_PERMISSION_PROFILE.hosts.claude_code.deny).toContain("shell");
     expect(ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256).toMatch(/^[a-f0-9]{64}$/u);
   });
 

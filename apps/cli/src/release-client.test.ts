@@ -43,7 +43,7 @@ describe("Attention release client", () => {
     expect(result).toEqual(profile);
   });
   it.each(["missing","redirect","tampered","oversized"])("rejects %s permission metadata without trusting remote prose",async(kind)=>{
-    await expect(fetchAttentionPermissionProfile({origin,sha256:profileSha,timeoutMs:1000,fetchImpl:async(input)=>responseAt(kind==="redirect"?"https://other.example/profile.json":String(input),kind==="oversized"?" ".repeat(16385):JSON.stringify(kind==="tampered"?{...profile,schema_version:3}:profile),{status:kind==="missing"?404:200,headers:{"content-type":"application/json"}})})).rejects.toThrow();
+    await expect(fetchAttentionPermissionProfile({origin,sha256:profileSha,timeoutMs:1000,fetchImpl:async(input)=>responseAt(kind==="redirect"?"https://other.example/profile.json":String(input),kind==="oversized"?" ".repeat(16385):JSON.stringify(kind==="tampered"?{...profile,schema_version:99}:profile),{status:kind==="missing"?404:200,headers:{"content-type":"application/json"}})})).rejects.toThrow();
   });
   it("cancels a chunked body as soon as it exceeds the manifest byte limit",async()=>{
     let cancelled=false;

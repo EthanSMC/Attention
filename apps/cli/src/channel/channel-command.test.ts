@@ -35,6 +35,7 @@ import {
 } from "./managed-bridge";
 import { buildMessageRef, handleInboundMessage } from "./pipeline";
 import { scheduleSummaryRetry } from "./summary-retry";
+import { readLocalControlStatus, submitLocalControl } from "../local-control";
 
 function brainLifecycle() {
   return {
@@ -135,6 +136,34 @@ function failedAccountProbe() {
 }
 
 describe("channel subcommands", () => {
+  it("processes a submitted CLI request between two messages in the same WeChat batch", async () => {
+    const base = await makeTempBase();
+    const state = defaultChannelState(); state.token = "local-test-token"; state.ownerUserId = "owner"; state.contextTokens.owner = "ctx-owner";
+    await saveChannelState(state, base);
+    let turns = 0, polls = 0, requestId = "";
+    const result = await channelStart("codex", {
+      baseDirectory: base, service: true, origin: "https://attention.example", hostCliCheck: async () => true,
+      bridgeHealthyMarker: async () => undefined, runtimeCredentialLoader: async () => false,
+      accountVerifier: async () => verifiedAccountProbe(), writeOutput: () => undefined,
+      brainFactory: () => ({ ...brainLifecycle(), hostId: "codex", invoke: async () => {
+        turns++;
+        if (turns === 1) requestId = (await submitLocalControl("cancel", { home: base })).requestId;
+        else expect((await readLocalControlStatus({ home: base, requestId })).request).not.toBeNull();
+        return { ok: true, reply: "已查询本机结果。", resumeFailed: false, sessionId: "thread-local", timedOut: false };
+      } }),
+      fetchImpl: async input => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith("manifest.json")) return new Response("unavailable", { status: 503 });
+        if (path.endsWith("/sendmessage")) return new Response(JSON.stringify({ ret: 0, errcode: 0 }));
+        if (path.endsWith("/getupdates")) {
+          polls++;
+          return new Response(JSON.stringify(polls === 1 ? { ret: 0, errcode: 0, get_updates_buf: "cursor", msgs: ["先帮我取消吧", "处理了吗"].map((text, i) => ({ client_id: `local-${i}`, context_token: "ctx-owner", from_user_id: "owner", item_list: [{ type: 1, text_item: { text } }] })) } : { ret: 0, errcode: -14 }));
+        }
+        throw new Error("unexpected test request");
+      },
+    });
+    expect(result).toBe(0); expect(turns).toBe(2);
+  });
   const tempDirs: string[] = [];
 
   const makeTempBase = async (): Promise<string> => {

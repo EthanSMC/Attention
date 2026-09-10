@@ -14,7 +14,7 @@ interface CliManifest {
 }
 
 describe("public Attention CLI artifact", () => {
-  it("retains only the current public bundle, manifest, and permission sidecars", () => {
+  it("retains the current bundle and immutable released artifacts without temporary files", () => {
     const manifest = JSON.parse(
       readFileSync(
         new URL("../../../web/public/cli/manifest.json", import.meta.url),
@@ -26,16 +26,21 @@ describe("public Attention CLI artifact", () => {
     ).sort();
 
     expect(publicCliFiles).toEqual([
+      "attention-0.3.17.mjs",
       `attention-${manifest.version}.mjs`,
       "manifest.json",
       "permissions",
     ]);
+    expect(createHash("sha256").update(readFileSync(new URL("../../public/cli/attention-0.3.17.mjs", import.meta.url))).digest("hex")).toBe("4fd5f4d07fffb280402c9bf2418c3b18ac3a53d970712551bc8f638f88f6fd5d");
   });
 
   it("publishes the strict permission profile matching the manifest fingerprint",()=>{
     const manifest=JSON.parse(readFileSync(new URL("../../public/cli/manifest.json",import.meta.url),"utf8")) as CliManifest;
     const profile=JSON.parse(readFileSync(new URL(`../../public/cli/permissions/${manifest.permission_profile_sha256}.json`,import.meta.url),"utf8"));
-    expect(Object.keys(profile)).toEqual(["cloud","local","native_network","schema_version"]);
+    expect(Object.keys(profile)).toEqual(["cloud","local","hosts","native_network","schema_version"]);
+    expect(profile.schema_version).toBe(3);
+    expect(profile.hosts.codex.deny).toContain("shell_network");
+    expect(profile.hosts.claude_code.deny).toContain("shell");
     expect(createHash("sha256").update(JSON.stringify(profile)).digest("hex")).toBe(manifest.permission_profile_sha256);
   });
 

@@ -16,6 +16,7 @@ type Discovery = {
 type JobResult = {
     kind: "check";
     manual: boolean;
+    readonly: boolean;
     value: Discovery;
 } | {
     kind: "prepare";
@@ -28,6 +29,7 @@ type JobResult = {
 };
 const ACTIVE = new Set(["approved", "downloading", "waiting_safe_point", "switching"]);
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+export interface LocalUpdateOutcome { status: "accepted" | "not_started" | "already_processed"; code: string }
 /** One tick on the service loop owns all durable writes. Network jobs only return values. */
 export class BridgeUpdateController {
     private journal: UpdateJournal | null = null;
@@ -56,7 +58,7 @@ export class BridgeUpdateController {
                 return await (this.options.fetchImpl ?? fetch)(input, { ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal });
             } };
     }
-    private startCheck(manual: boolean): void {
+    private startCheck(manual: boolean, readonly = false): void {
         this.abort = new AbortController();
         const options = this.jobOptions();
         this.job = (async () => {
@@ -78,7 +80,7 @@ export class BridgeUpdateController {
                         }
                     }
                 }
-                this.result = { kind: "check", manual, value: { manifest, changes, consent } };
+                this.result = { kind: "check", manual, readonly, value: { manifest, changes, consent } };
             }
             catch {
                 this.result = { kind: "error", id: null, manual };
@@ -121,7 +123,7 @@ export class BridgeUpdateController {
     private status(): string {
         const op = this.journal!.operation;
         const labels: Record<string, string> = { offered: "等待精确确认", approved: "已批准", downloading: "下载和校验中", waiting_safe_point: "等待出站消息发送完成", switching: "正在重启", started: "已启动", deferred: "已推迟", expired: "确认已失效", cancelled: "已取消", failed: "失败，旧版继续运行", rolled_back: "已回滚" };
-        return `运行 Bridge：${this.options.currentVersion}（全局 CLI 单独升级）。${op ? `候选 ${op.manifest.version}：${labels[op.phase]}。` : "暂无升级操作。"}${this.journal!.lastErrorCode ? "最近检查/安装未完成；可发送「检查更新」。" : ""}可用：检查更新、升级状态、稍后升级、取消升级。`;
+        return `运行 Bridge：${this.options.currentVersion}。${op ? `候选 ${op.manifest.version}：${labels[op.phase]}。` : "暂无升级操作。"}${this.journal!.lastErrorCode ? "最近检查/安装未完成，可以再检查一次。" : ""}`;
     }
     private async command(command: UpdateCommand, inboundId: string, owner: string): Promise<void> {
         const next = this.copy(), ref = updateDigest(["inbound", inboundId]);
@@ -136,15 +138,17 @@ export class BridgeUpdateController {
                 reply = this.status();
                 break;
             case "check":
+            case "upgrade":
                 if (this.job || op && ACTIVE.has(op.phase))
                     reply = "升级检查或安装正在进行，可发送「升级状态」查看；不需要重复提交。";
-                else if (next.lastManualCheckAt !== null && this.now() - next.lastManualCheckAt < 60000)
+                else if (next.lastManualCheckAt !== null && this.now() - next.lastManualCheckAt < 60000 && !(command.kind === "upgrade" && next.lastManualWasReadOnly))
                     reply = "刚检查过更新，请稍后再试；「升级状态」可立即查看本地进度。";
                 else {
                     next.lastManualCheckAt = this.now();
+                    next.lastManualWasReadOnly = command.kind === "check";
                     next.nextCheckAt = this.now() + 3600000;
                     check = true;
-                    reply = "正在检查 Bridge 更新；这一步不会批准新增权限。";
+                    reply = command.kind === "check" ? "我会检查 Bridge 是否有新版，本次查询不会发起安装。" : "我会检查并尝试升级 Bridge；如果需要新增权限，会先请你确认。";
                 }
                 break;
             case "confirm_help":
@@ -176,6 +180,12 @@ export class BridgeUpdateController {
                     this.discardResult = !!this.job;
                     reply = "本次升级已撤销，当前版本继续运行；下载任务若尚未退出，会先停止并完成清理。需要时发送「检查更新」。";
                 }
+                else if (this.job) {
+                    this.abort?.abort();
+                    this.discardResult = true;
+                    next.nextCheckAt = this.now() + 3600000;
+                    reply = "本次更新检查已取消，不会根据该检查结果发起安装；当前版本继续运行。";
+                }
                 else
                     reply = "当前没有可取消的升级操作。";
                 break;
@@ -183,7 +193,7 @@ export class BridgeUpdateController {
         this.event(next, owner, `command:${ref}`, reply);
         await this.commit(next);
         if (check)
-            this.startCheck(true);
+            this.startCheck(true, command.kind === "check");
     }
     private async acceptResult(owner: string): Promise<void> {
         const result = this.result;
@@ -201,9 +211,14 @@ export class BridgeUpdateController {
             const { manifest, changes, consent } = result.value;
             const identity = releaseIdentity(this.options.origin, manifest, this.options.currentVersion, this.options.currentPermissionProfileSha256);
             const old = next.operation;
+            next.lastVerified = { version: manifest.version, checkedAt: this.now() };
+            next.lastErrorCode = null;
             if (compareSemanticVersions(manifest.version, this.options.currentVersion) <= 0) {
                 if (result.manual)
                     this.event(next, owner, `current:${next.lastManualCheckAt}`, `运行 Bridge ${this.options.currentVersion} 已是当前可用版本；不会降级。`);
+            }
+            else if (result.readonly) {
+                this.event(next, owner, `checked:${next.lastManualCheckAt}`, `发现 Bridge ${manifest.version}，当前运行 ${this.options.currentVersion}。本次只检查，没有发起安装；需要安装时可以直接说“升级”。${consent ? "安装前还需要核对新增权限。" : ""}`);
             }
             else if (!result.manual && (old?.identity === identity || old?.phase === "deferred" && old.manifest.version === manifest.version || next.quarantine.includes(identity))) {
                 // A deferred, failed, expired, or already offered candidate is never hourly-spammed.
@@ -377,4 +392,22 @@ export class BridgeUpdateController {
         }
     }
     async stop(): Promise<void> { this.abort?.abort(); await this.job; }
+    /** Restricted callers supply a native command, never a shell command or approval. */
+    async dispatch(command: { kind: "check" | "upgrade" | "cancel" | "defer" }, inboundId: string, state: ChannelState): Promise<LocalUpdateOutcome> {
+        if (!command || Object.keys(command).join() !== "kind" || !["check", "upgrade", "cancel", "defer"].includes(command.kind)) throw new Error("invalid_control_action");
+        if (!this.journal || !state.ownerUserId) throw new Error("update_controller_not_ready");
+        if (this.journal.consumed.includes(updateDigest(["inbound", inboundId]))) return { status: "already_processed", code: "request_consumed" };
+        const op = this.journal.operation;
+        let outcome: LocalUpdateOutcome = { status: "accepted", code: command.kind === "check" || command.kind === "upgrade" ? "checking" : command.kind === "cancel" ? "cancelled" : "deferred" };
+        if (command.kind === "check" || command.kind === "upgrade") {
+            if (this.job || op && ACTIVE.has(op.phase)) outcome = { status: "not_started", code: "update_busy" };
+            else if (this.journal.lastManualCheckAt !== null && this.now() - this.journal.lastManualCheckAt < 60000 && !(command.kind === "upgrade" && this.journal.lastManualWasReadOnly)) outcome = { status: "not_started", code: "check_rate_limited" };
+        } else if (op?.phase === "switching") outcome = { status: "not_started", code: "switch_committed" };
+        else if (!this.job && (!op || !(op.phase === "offered" || ACTIVE.has(op.phase)))) outcome = { status: "not_started", code: "no_update_operation" };
+        await this.command(command, inboundId, ownerFingerprint(state.ownerUserId));
+        return outcome;
+    }
+    snapshot() {
+        return { runningVersion: this.options.currentVersion, candidateVersion: this.journal?.operation?.manifest.version ?? null, phase: this.job && (!this.journal?.operation || !ACTIVE.has(this.journal.operation.phase)) ? "checking" : this.journal?.operation?.phase ?? "idle", latestVerified: this.journal?.lastVerified ?? null, lastErrorCode: this.journal?.lastErrorCode ?? null };
+    }
 }

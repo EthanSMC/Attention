@@ -30,6 +30,7 @@ import { ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256, ATTENTION_BRIDGE_UPDATE_PRO
 import { requireAttentionOrigin } from "./origin";
 import { authorizeRuntime, type RuntimeAuthorizer } from "./runtime-oauth";
 import { ATTENTION_CLI_VERSION } from "./version";
+import { CONTROL_ACTIONS, readLocalControlStatus, submitLocalControl, type ControlAction } from "./local-control";
 
 interface OutputWriter {
   readonly error: (value: string) => void;
@@ -37,6 +38,7 @@ interface OutputWriter {
 }
 
 export interface AttentionCliDependencies {
+  readonly localControlHome?: string;
   readonly applyConfigure?: (
     plan: ReturnType<typeof buildConfigurePlan>,
     options: ApplyConfigureOptions,
@@ -88,6 +90,7 @@ Usage:
   attention channel start <codex|claude-code> --origin <https-origin>
                           [--background]
   attention channel status [--json]
+  attention channel update <status [request-id]|check|request|cancel|defer> [--json]
   attention channel logout
   attention device sync enable --origin <https-origin>
 
@@ -98,7 +101,8 @@ Channel:
   attention channel start runs the local attention-channel bridge: after a
   one-time QR scan it polls WeChat through the official iLink API and
   invokes the selected host Agent in a restricted profile (Attention MCP
-  only; shell, code execution, filesystem write, and other MCP denied).
+  only plus the conditional public reader; Codex permits sandboxed local
+  Attention CLI management, while Claude denies shell/code/filesystem write).
   Sending a link or share text into that WeChat conversation collects it.
   OpenClaw, Hermes, and WorkBuddy use their host-managed WeChat channels
   instead; see attention configure <host> output and /doc/<host>.
@@ -117,6 +121,11 @@ Safety:
   privacy-safe health checkpoints through the dedicated Runtime credential.
   update explicitly downloads, verifies, probes, and atomically selects a new
   Attention-managed standalone CLI. Package-manager installations are not overwritten.
+  channel update manages only the running local Bridge. check discovers updates
+  without installing; request asks the existing updater to upgrade. Requests are
+  asynchronous and cannot approve additional permissions. After submission end
+  the current Agent turn, then query status with the request ID. No origin, MCP
+  OAuth, or network access is needed by these local CLI commands.
 
 Origin:
   Pass --origin or set ATTENTION_ORIGIN. Non-loopback origins must use HTTPS.
@@ -435,7 +444,8 @@ export async function runAttentionCli(
     );
     return 0;
   }
-  if (args[0] !== "update" && dependencies.checkCliUpdate) {
+  const localChannel = args[0] === "channel" && (args[1] === "status" || args[1] === "update");
+  if (args[0] !== "update" && !localChannel && dependencies.checkCliUpdate) {
     try {
       const notice = await dependencies.checkCliUpdate(
         explicitOriginArgument(args),
@@ -627,6 +637,16 @@ export async function runAttentionCli(
         );
       }
       const action = options.positionals[0];
+      if (action === "update") {
+        const controlAction = options.positionals[1];
+        if (options.background || options.service || options.origin || !controlAction || !(controlAction === "status" || CONTROL_ACTIONS.includes(controlAction as ControlAction)) || options.positionals.length > (controlAction === "status" ? 3 : 2)) throw new Error("invalid_control_arguments");
+        const localOptions = dependencies.localControlHome ? { home: dependencies.localControlHome } : {};
+        const result = controlAction === "status"
+          ? await readLocalControlStatus({ ...localOptions, ...(options.positionals[2] ? { requestId: options.positionals[2] } : {}) })
+          : await submitLocalControl(controlAction as ControlAction, localOptions);
+        output.log(JSON.stringify({ cliVersion: ATTENTION_CLI_VERSION, ...result }, null, options.json ? undefined : 2));
+        return 0;
+      }
       const runChannel = dependencies.runChannel ?? defaultRunChannel;
       if (action === "start") {
         const hostId = options.positionals[1];
@@ -688,6 +708,12 @@ export async function runAttentionCli(
 
     throw new Error(`Unknown command: ${String(command)}.`);
   } catch (error) {
+    if (args[0] === "channel" && args[1] === "update" && args.includes("--json")) {
+      const message = error instanceof Error ? error.message : "local_control_failed";
+      const code = /^[a-z_]{1,80}$/.test(message) ? message : (error as NodeJS.ErrnoException).code === "ENOENT" ? "bridge_offline" : "local_control_failed";
+      output.log(JSON.stringify({ status: "error", code, cliVersion: ATTENTION_CLI_VERSION }));
+      return 2;
+    }
     output.error(error instanceof Error ? error.message : "Attention CLI failed.");
     output.error("Run attention --help for usage.");
     return 2;

@@ -6,6 +6,12 @@ import { matchUpdateCommand } from "./bridge-update-control";
 const digest = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 const manifest: BridgeUpdateManifest = { artifact_path: "/cli/attention-0.3.18.mjs", minimum_supported_version: "0.3.5", node: ">=22.16.0", permission_profile_sha256: digest(profile), schema_version: 2, sha256: "a".repeat(64), version: "0.3.18" };
 describe("WeChat update authority", () => {
+    it("reads legacy schema 2 but requires computer-side permission approval for scoped Shell", () => {
+        const legacy = { cloud: profile.cloud, local: { deny: ["browser_automation", "code_execution", "filesystem_outside_attention", "other_mcp", "shell"], write: profile.local.write }, native_network: profile.native_network, schema_version: 2 };
+        expect(parsePermissionProfile(legacy, digest(legacy))).toEqual(legacy);
+        expect(permissionChanges(legacy, profile)).toBeNull();
+        expect(profile.hosts.claude_code.deny).toContain("shell");
+    });
     it("strictly validates the permission sidecar against its existing fingerprint", () => {
         expect(parsePermissionProfile(profile, digest(profile))).toEqual(profile);
         expect(() => parsePermissionProfile(profile, "b".repeat(64))).toThrow();
