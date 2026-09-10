@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatInvocation, shellQuote } from "./command-runner";
+import { formatInvocation, shellQuote, runCommand } from "./command-runner";
 import { boundedDiagnosticOutput, redactSecrets } from "./redact";
 
 describe("command diagnostics", () => {
@@ -34,4 +34,17 @@ describe("command diagnostics", () => {
       "xxxxxxxxxx\n… output truncated",
     );
   });
+});
+
+it("terminates a running candidate when its update operation is cancelled",async()=>{
+ const abort=new AbortController();
+ const timer=setTimeout(()=>abort.abort(),100);
+ try{
+   const result=await runCommand({executable:process.execPath,args:["-e","setInterval(()=>{},1000)"]},{timeoutMs:5000,signal:abort.signal});
+   expect(result.signal).toBe("SIGTERM");expect(result.timedOut).toBe(false);
+ }finally{clearTimeout(timer);}
+});
+it("does not spawn after cancellation",async()=>{
+ const abort=new AbortController();abort.abort();
+ await expect(runCommand({executable:process.execPath,args:["-e","throw new Error('must not execute')"]},{signal:abort.signal})).rejects.toThrow();
 });

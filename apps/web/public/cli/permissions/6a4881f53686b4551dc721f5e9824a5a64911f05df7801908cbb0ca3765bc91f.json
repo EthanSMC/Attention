@@ -1,0 +1,43 @@
+{
+  "cloud": {
+    "mcp_server": "attention_only",
+    "runtime_oauth": {
+      "resource": "attention-channel-runtime",
+      "scopes": [
+        "runtime:register",
+        "runtime:heartbeat",
+        "channel:bind:report",
+        "channel:disconnect:report",
+        "channel:notifications:read"
+      ]
+    },
+    "tools": [
+      "attention_get_my_account",
+      "attention_list_collections",
+      "attention_collect_content",
+      "attention_submit_content_enrichment",
+      "attention_select_collection_candidate",
+      "attention_get_collection_status",
+      "attention_read_collection_source",
+      "attention_update_collection"
+    ]
+  },
+  "local": {
+    "deny": [
+      "browser_automation",
+      "code_execution",
+      "filesystem_outside_attention",
+      "other_mcp",
+      "shell"
+    ],
+    "write": [
+      "attention_state",
+      "managed_bridge_artifacts",
+      "user_service_config"
+    ]
+  },
+  "native_network": [
+    "public_web_reader"
+  ],
+  "schema_version": 2
+}

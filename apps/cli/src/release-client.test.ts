@@ -2,11 +2,12 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import type { BridgeUpdateManifest } from "./bridge-update-contract";
+import {ATTENTION_BRIDGE_PERMISSION_PROFILE as profile, ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256 as profileSha, type BridgeUpdateManifest} from "./bridge-update-contract";
 import {
   fetchAttentionReleaseArtifact,
   fetchAttentionReleaseManifest,
   nodeRuntimeSatisfies,
+  fetchAttentionPermissionProfile,
 } from "./release-client";
 
 const origin = "https://attention.example";
@@ -34,6 +35,22 @@ function responseAt(
 }
 
 describe("Attention release client", () => {
+  it("loads the exact same-origin permission sidecar and checks its fingerprint",async()=>{
+    const result=await fetchAttentionPermissionProfile({origin,sha256:profileSha,timeoutMs:1000,fetchImpl:async(input,init)=>{
+      expect(String(input)).toBe(`${origin}/cli/permissions/${profileSha}.json`);
+      expect(init?.redirect).toBe("error");return responseAt(String(input),JSON.stringify(profile),{headers:{"content-type":"application/json"}});
+    }});
+    expect(result).toEqual(profile);
+  });
+  it.each(["missing","redirect","tampered","oversized"])("rejects %s permission metadata without trusting remote prose",async(kind)=>{
+    await expect(fetchAttentionPermissionProfile({origin,sha256:profileSha,timeoutMs:1000,fetchImpl:async(input)=>responseAt(kind==="redirect"?"https://other.example/profile.json":String(input),kind==="oversized"?" ".repeat(16385):JSON.stringify(kind==="tampered"?{...profile,schema_version:3}:profile),{status:kind==="missing"?404:200,headers:{"content-type":"application/json"}})})).rejects.toThrow();
+  });
+  it("cancels a chunked body as soon as it exceeds the manifest byte limit",async()=>{
+    let cancelled=false;
+    const stream=new ReadableStream<Uint8Array>({pull(controller){controller.enqueue(new Uint8Array(16385));},cancel(){cancelled=true;}});
+    await expect(fetchAttentionReleaseManifest({origin,timeoutMs:1000,fetchImpl:async()=>responseAt(manifestUrl,stream,{headers:{"content-type":"application/json"}})})).rejects.toMatchObject({code:"manifest_too_large"});
+    expect(cancelled).toBe(true);
+  });
   it("loads a strict JSON manifest from the exact requested origin", async () => {
     const requested: string[] = [];
 

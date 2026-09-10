@@ -32,6 +32,9 @@ import {
 } from "../runtime-oauth";
 import { ATTENTION_CLI_VERSION } from "../version";
 import { createBrainAdapter, type BrainAdapter } from "./brain";
+import { BridgeUpdateController } from "./bridge-update-controller";
+import { matchUpdateCommand } from "./bridge-update-control";
+import { loadUpdateJournal } from "./bridge-update-journal";
 import {
   type BridgeUpdateCheckResult,
   checkAndStageBridgeUpdate,
@@ -984,7 +987,19 @@ export async function channelStart(
     const managedBridgeHome = options.baseDirectory ?? homedir();
     const bridgeUpdateClock = options.bridgeUpdateClock ?? (() => new Date());
     let bridgeUpdateDueAt = initialBridgeUpdateCheckAt();
+    const updateController = options.service && !options.bridgeUpdateChecker
+      ? new BridgeUpdateController({
+          currentVersion: ATTENTION_CLI_VERSION,
+          currentPermissionProfileSha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+          homeDirectory: managedBridgeHome,
+          origin: options.origin as string,
+          now: bridgeUpdateClock,
+          ...(options.fetchImpl ? {fetchImpl:options.fetchImpl} : {}),
+        })
+      : null;
     if (options.service) {
+      // Validate the new lifecycle journal before declaring a candidate healthy.
+      if (updateController) await loadUpdateJournal(managedBridgeHome);
       await (
         options.bridgeHealthyMarker ??
         (async () =>
@@ -996,6 +1011,21 @@ export async function channelStart(
     }
 
     const maybeStageBridgeUpdate = async (): Promise<boolean> => {
+      if (updateController) {
+        return await updateController.activateIfSafe(runtime.state,persist,()=>!outboundFlushes.has(runtime),async()=>{
+          // Stop callback producers before the final empty-outbox barrier. The
+          // next loop recreates the Reporter if activation is refused.
+          await settleReporterRetirement();
+          const reporting=reporterSlot.current;
+          if (reporting) {
+            reporting.terminal=true;
+            await reporting.reporter.stop();
+            reporterSlot.current=null;
+          }
+          await flushPendingPersistence();
+          await flushPendingOutbound(runtime,persist);
+        });
+      }
       if (
         !options.service ||
         runtime.state.pendingInbound.length > 0 ||
@@ -1050,6 +1080,7 @@ export async function channelStart(
       mcpSupervisor?.stop();
       runtime.log("正在退出，保存本地状态…");
       void settleReporterRetirement()
+        .then(() => updateController?.stop())
         .then(() => reporterSlot.current?.reporter.stop() ?? Promise.resolve())
         .then(() => activeBrain.shutdown())
         .catch(() => undefined)
@@ -1085,6 +1116,10 @@ export async function channelStart(
           await persist();
         }
 
+        await updateController?.tick(runtime.state,persist);
+        await flushPendingOutbound(runtime,persist);
+        if (await maybeStageBridgeUpdate()) return BRIDGE_UPDATE_RESTART_EXIT_CODE;
+
         await ensureReporter();
         reporterSlot.current?.reporter.transition(
           buildReporterSnapshot(runtime, activeBrain),
@@ -1101,16 +1136,17 @@ export async function channelStart(
 
         await flushPendingOutbound(runtime, persist);
         if (!client.token) continue;
-        await processPendingInbound(
+        if (!updateController?.pausesBusiness) await processPendingInbound(
           runtime,
           activeBrain,
           cwd,
           persist,
           activeMcpSupervisor,
           reporterSlot.current,
+          updateController !== null,
         );
         if (!client.token) continue;
-        const summaryRetryResult = await processDueSummaryRetry({
+        const summaryRetryResult = updateController?.pausesBusiness ? "idle" : await processDueSummaryRetry({
           brain: activeBrain,
           cwd,
           now: () => new Date(),
@@ -1180,17 +1216,20 @@ export async function channelStart(
             `已持久化 ${added} 条新消息，待处理 ${runtime.state.pendingInbound.length} 条`,
           );
         }
-        await processPendingInbound(
+        await updateController?.tick(runtime.state,persist);
+        if (!updateController?.pausesBusiness) await processPendingInbound(
           runtime,
           activeBrain,
           cwd,
           persist,
           activeMcpSupervisor,
           reporterSlot.current,
+          updateController !== null,
         );
         await flushPendingOutbound(runtime, persist);
       }
     } finally {
+      await updateController?.stop();
       process.removeListener("SIGINT", shutdown);
       process.removeListener("SIGTERM", shutdown);
     }
@@ -1223,12 +1262,14 @@ async function processPendingInbound(
   persist: () => Promise<void>,
   mcpSupervisor: McpRecoverySupervisor,
   reporterRuntime: ReporterRuntime | null = null,
+  hasUpdateController = false,
 ): Promise<void> {
   const batch = runtime.state.pendingInbound.slice(0, MAXIMUM_PENDING_MESSAGES);
   let businessQueueBlocked = Boolean(
     batch[0] && inboundRetryIsCoolingDown(batch[0], runtime.state),
   );
   for (const pending of batch) {
+    if (hasUpdateController && matchUpdateCommand(pending.message,runtime.state.ownerUserId)) continue;
     if (
       pending.blockedBy === "attention_mcp" &&
       runtime.state.attentionMcp.status !== "ready"
@@ -1558,7 +1599,20 @@ function buildReporterSnapshot(
   };
 }
 
+const outboundFlushes = new WeakMap<Runtime,Promise<void>>();
+
 async function flushPendingOutbound(
+  runtime: Runtime,
+  persist: () => Promise<void>,
+): Promise<void> {
+  const active=outboundFlushes.get(runtime);
+  if (active) return await active;
+  const flushing=drainPendingOutbound(runtime,persist);
+  outboundFlushes.set(runtime,flushing);
+  try {await flushing;} finally {outboundFlushes.delete(runtime);}
+}
+
+async function drainPendingOutbound(
   runtime: Runtime,
   persist: () => Promise<void>,
 ): Promise<void> {
@@ -1661,6 +1715,11 @@ export async function channelStatus(
     options.serviceInspector ?? defaultServiceInspector
   )();
   let managedUpdate: ManagedBridgeUpdateState | null = null;
+  let conversationalUpdate: {phase:string;candidateVersion:string;lastErrorCode:string|null}|null = null;
+  try {
+    const journal=await loadUpdateJournal(options.baseDirectory??homedir());
+    if (journal.operation) conversationalUpdate={phase:journal.operation.phase,candidateVersion:journal.operation.manifest.version,lastErrorCode:journal.lastErrorCode};
+  } catch { /* Update status remains usable even if the separate journal needs repair. */ }
   try {
     managedUpdate = await (
       options.bridgeUpdateStateLoader ??
@@ -1671,6 +1730,8 @@ export async function channelStatus(
     // Pre-managed installations remain valid; status must be local and robust.
   }
   const report = {
+    cliVersion: ATTENTION_CLI_VERSION,
+    conversationalUpdate,
     accountIdPrefix: state.accountId ? `${state.accountId.slice(0, 6)}…` : null,
     brainSession: state.brainSession
       ? {
@@ -1717,6 +1778,8 @@ export async function channelStatus(
     return 0;
   }
   write(`已登录: ${report.loggedIn ? "是" : "否"}\n`);
+  write(`当前命令 CLI: ${report.cliVersion}（与后台 Bridge 分开升级）\n`);
+  if (conversationalUpdate) write(`微信升级: ${conversationalUpdate.phase}，候选 ${conversationalUpdate.candidateVersion}\n`);
   write(`后台桥已配置: ${report.backgroundConfigured ? "是" : "否"}\n`);
   if (report.accountIdPrefix) write(`账号前缀: ${report.accountIdPrefix}\n`);
   if (report.ownerUserIdPrefix) {
@@ -1982,7 +2045,7 @@ async function safeSend(
   try {
     return await runtime.client.sendMessage({
       clientId: message.id,
-      contextToken: message.contextToken,
+      contextToken: runtime.state.contextTokens[message.toUserId] ?? message.contextToken,
       text: message.text,
       toUserId: message.toUserId,
     });

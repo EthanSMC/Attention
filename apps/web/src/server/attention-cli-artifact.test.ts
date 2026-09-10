@@ -14,7 +14,7 @@ interface CliManifest {
 }
 
 describe("public Attention CLI artifact", () => {
-  it("retains only the current public bundle and its manifest", () => {
+  it("retains only the current public bundle, manifest, and permission sidecars", () => {
     const manifest = JSON.parse(
       readFileSync(
         new URL("../../../web/public/cli/manifest.json", import.meta.url),
@@ -28,7 +28,15 @@ describe("public Attention CLI artifact", () => {
     expect(publicCliFiles).toEqual([
       `attention-${manifest.version}.mjs`,
       "manifest.json",
+      "permissions",
     ]);
+  });
+
+  it("publishes the strict permission profile matching the manifest fingerprint",()=>{
+    const manifest=JSON.parse(readFileSync(new URL("../../public/cli/manifest.json",import.meta.url),"utf8")) as CliManifest;
+    const profile=JSON.parse(readFileSync(new URL(`../../public/cli/permissions/${manifest.permission_profile_sha256}.json`,import.meta.url),"utf8"));
+    expect(Object.keys(profile)).toEqual(["cloud","local","native_network","schema_version"]);
+    expect(createHash("sha256").update(JSON.stringify(profile)).digest("hex")).toBe(manifest.permission_profile_sha256);
   });
 
   it("ships a checksum-pinned executable bundle from the public documentation origin", () => {

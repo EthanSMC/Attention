@@ -67,7 +67,7 @@ export const RESET_CONFIRMATION_REPLY =
 
 /** Deterministic replies that remain available while the local Agent is offline. */
 export const CONTROL_HELP_REPLY =
-  "可用命令：状态、帮助、重试、重新连接；处理中断时可发送继续。清空对话请发送 /reset。";
+  "可用命令：状态、帮助、重试、重新连接；处理中断时可发送继续。升级管理：检查更新、升级状态、稍后升级、取消升级；新增权限需复制提示中的完整确认命令。清空对话请发送 /reset。";
 export const CONTROL_RETRY_REPLY =
   "已请求重新连接本地 Agent；恢复后会从本地断点继续。";
 export const CONTROL_CONTINUE_REPLY = "已请求从本地断点继续处理。";

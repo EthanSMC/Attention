@@ -48,6 +48,13 @@ export const ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256 = createHash("sha256")
 
 export const ATTENTION_BRIDGE_MINIMUM_SUPPORTED_VERSION = "0.3.5";
 
+/** Separate probe: preserve the strict legacy identity probe and manifest v2. */
+export const ATTENTION_BRIDGE_UPDATE_PROTOCOL = {
+  channel_state_schema: 1,
+  update_journal_schema: 1,
+  wechat_update_protocol: 1,
+} as const;
+
 export interface BridgeUpdateManifest {
   readonly artifact_path: string;
   readonly minimum_supported_version: string;
