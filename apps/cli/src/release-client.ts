@@ -6,6 +6,7 @@ import {
   resolveBridgeUpdateArtifactUrl,
 } from "./bridge-update-contract";
 import { normalizeAttentionOrigin } from "./origin";
+import {parsePermissionProfile, type PermissionProfile} from "./channel/bridge-update-offer";
 
 const MANIFEST_MAXIMUM_BYTES = 16_384;
 const ARTIFACT_MAXIMUM_BYTES = 16 * 1024 * 1024;
@@ -54,14 +55,35 @@ async function boundedResponseBytes(
   if (contentLength) {
     const parsed = Number(contentLength);
     if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > maximumBytes) {
+      await response.body?.cancel();
       throw new AttentionReleaseError(errorCode);
     }
   }
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.byteLength > maximumBytes) {
-    throw new AttentionReleaseError(errorCode);
-  }
-  return bytes;
+  const reader=response.body?.getReader();
+  if(!reader) return Buffer.alloc(0);
+  const chunks: Uint8Array[]=[];
+  let size=0;
+  try {
+    for(;;) {
+      const {value,done}=await reader.read();
+      if(done) break;
+      size+=value.byteLength;
+      if(size>maximumBytes) {await reader.cancel();throw new AttentionReleaseError(errorCode);}
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks,size);
+  } finally {reader.releaseLock();}
+}
+
+export async function fetchAttentionPermissionProfile(options: {
+  readonly origin: string; readonly sha256: string; readonly fetchImpl?: typeof fetch; readonly timeoutMs: number;
+}): Promise<PermissionProfile> {
+  if(!/^[a-f0-9]{64}$/u.test(options.sha256)) throw new AttentionReleaseError("permission_profile_invalid");
+  const url=new URL(`/cli/permissions/${options.sha256}.json`,normalizeAttentionOrigin(options.origin)).toString();
+  const result=await fetchExact(options.fetchImpl??fetch,url,16_384,"permission_profile",options.timeoutMs);
+  if(!/^application\/(?:[a-z0-9.+-]*\+)?json(?:\s*;|$)/iu.test(result.response.headers.get("content-type")??"")) throw new AttentionReleaseError("permission_profile_content_type");
+  try {return parsePermissionProfile(JSON.parse(result.bytes.toString("utf8")),options.sha256);}
+  catch {throw new AttentionReleaseError("permission_profile_invalid");}
 }
 
 async function fetchExact(
@@ -82,9 +104,11 @@ async function fetchExact(
     throw new AttentionReleaseError(`${errorCode}_fetch_failed`);
   }
   if (response.status !== 200) {
+    await response.body?.cancel();
     throw new AttentionReleaseError(`${errorCode}_http_status`);
   }
   if (!responseMatches(response, url)) {
+    await response.body?.cancel();
     throw new AttentionReleaseError(`${errorCode}_redirected`);
   }
   return {

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   ATTENTION_BRIDGE_MINIMUM_SUPPORTED_VERSION,
+  ATTENTION_BRIDGE_PERMISSION_PROFILE,
   ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
 } from "../apps/cli/src/bridge-update-contract.ts";
 
@@ -59,6 +60,7 @@ const manifest = Buffer.from(
 const artifacts = new Map<string, Buffer>([
   [artifactPath, bundle],
   [manifestPath, manifest],
+  [join(publicRoot,"permissions",`${ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256}.json`),Buffer.from(`${JSON.stringify(ATTENTION_BRIDGE_PERMISSION_PROFILE,null,2)}\n`)],
 ]);
 
 async function compareArtifacts(): Promise<void> {

@@ -12,8 +12,9 @@ import {
 import {
   bootstrapManagedBridge,
   loadManagedBridgeUpdateState,
+  saveManagedBridgeUpdateState,
 } from "./managed-bridge";
-import { checkAndStageBridgeUpdate } from "./bridge-updater";
+import { checkAndStageBridgeUpdate, prepareBridgeUpdate, activateBridgeUpdate } from "./bridge-updater";
 
 const temporaryDirectories: string[] = [];
 
@@ -42,6 +43,7 @@ async function setup(): Promise<{
 if (process.argv.includes("--bridge-update-probe")) {
   console.log(JSON.stringify({ permission_profile_sha256: ${JSON.stringify(ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256)}, version: "0.3.7" }));
 }
+if (process.argv.includes("--bridge-update-protocol")) console.log(JSON.stringify({channel_state_schema:1,update_journal_schema:1,wechat_update_protocol:1}));
 `);
   return {
     candidate,
@@ -59,6 +61,32 @@ if (process.argv.includes("--bridge-update-probe")) {
 }
 
 describe("Bridge update staging", () => {
+  it("prepares without switching and refuses a changed manifest at activation", async () => {
+    const { candidate, home, manifest } = await setup();
+    let changed = false;
+    const options = {currentVersion:"0.3.5",currentPermissionProfileSha256:ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+      homeDirectory:home,origin:"https://attention.example",fetchImpl:async (input: string | URL | Request) => {
+        const url=String(input);
+        return responseWithUrl(url.endsWith("manifest.json") ? JSON.stringify(changed ? {...manifest,node:">=24.0.0"}:manifest):candidate.toString(),url,{headers:{"content-type":url.endsWith("manifest.json")?"application/json":"text/javascript"}});
+      }};
+    const prepared=await prepareBridgeUpdate(options,manifest);
+    expect((await loadManagedBridgeUpdateState(home)).current.version).toBe("0.3.5");
+    changed=true;
+    await expect(activateBridgeUpdate(options,prepared)).rejects.toThrow("release_identity_changed");
+    expect((await loadManagedBridgeUpdateState(home)).current.version).toBe("0.3.5");
+  });
+
+  it("a late failed check cannot overwrite another operation's current artifact", async () => {
+    const {home}=await setup();
+    const result=await checkAndStageBridgeUpdate({currentVersion:"0.3.5",currentPermissionProfileSha256:ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,homeDirectory:home,origin:"https://attention.example",fetchImpl:async()=>{
+      const state=await loadManagedBridgeUpdateState(home);
+      state.current={...state.current,version:"0.3.9"};
+      await saveManagedBridgeUpdateState(state,home);
+      throw new Error("network failure");
+    }});
+    expect(result.status).toBe("error");
+    expect((await loadManagedBridgeUpdateState(home)).current.version).toBe("0.3.9");
+  });
   afterEach(async () => {
     await Promise.all(
       temporaryDirectories.splice(0).map(async (path) =>

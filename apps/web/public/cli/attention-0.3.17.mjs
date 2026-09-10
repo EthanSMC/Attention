@@ -217,9 +217,9 @@ function floatSafeRemainder(val, step) {
     return 0;
   return ratio - roundedRatio;
 }
-function defineLazy(object3, key, getter) {
+function defineLazy(object4, key, getter) {
   let value = void 0;
-  Object.defineProperty(object3, key, {
+  Object.defineProperty(object4, key, {
     get() {
       if (value === EVALUATING) {
         return void 0;
@@ -231,7 +231,7 @@ function defineLazy(object3, key, getter) {
       return value;
     },
     set(v) {
-      Object.defineProperty(object3, key, {
+      Object.defineProperty(object4, key, {
         value: v
         // configurable: true,
       });
@@ -6329,12 +6329,12 @@ var init_hu = __esm({
 function getArmenianPlural(count, one, many) {
   return Math.abs(count) === 1 ? one : many;
 }
-function withDefiniteArticle(word) {
-  if (!word)
+function withDefiniteArticle(word2) {
+  if (!word2)
     return "";
   const vowels = ["\u0561", "\u0565", "\u0568", "\u056B", "\u0578", "\u0578\u0582", "\u0585"];
-  const lastChar = word[word.length - 1];
-  return word + (vowels.includes(lastChar) ? "\u0576" : "\u0568");
+  const lastChar = word2[word2.length - 1];
+  return word2 + (vowels.includes(lastChar) ? "\u0576" : "\u0568");
 }
 function hy_default() {
   return {
@@ -17679,9 +17679,9 @@ function floatSafeRemainder2(val, step) {
     return 0;
   return ratio - roundedRatio;
 }
-function defineLazy2(object3, key, getter) {
+function defineLazy2(object4, key, getter) {
   let value = void 0;
-  Object.defineProperty(object3, key, {
+  Object.defineProperty(object4, key, {
     get() {
       if (value === EVALUATING2) {
         return void 0;
@@ -17693,7 +17693,7 @@ function defineLazy2(object3, key, getter) {
       return value;
     },
     set(v) {
-      Object.defineProperty(object3, key, {
+      Object.defineProperty(object4, key, {
         value: v
         // configurable: true,
       });
@@ -23791,12 +23791,12 @@ var init_hu2 = __esm({
 function getArmenianPlural2(count, one, many) {
   return Math.abs(count) === 1 ? one : many;
 }
-function withDefiniteArticle2(word) {
-  if (!word)
+function withDefiniteArticle2(word2) {
+  if (!word2)
     return "";
   const vowels = ["\u0561", "\u0565", "\u0568", "\u056B", "\u0578", "\u0578\u0582", "\u0585"];
-  const lastChar = word[word.length - 1];
-  return word + (vowels.includes(lastChar) ? "\u0576" : "\u0568");
+  const lastChar = word2[word2.length - 1];
+  return word2 + (vowels.includes(lastChar) ? "\u0576" : "\u0568");
 }
 function hy_default2() {
   return {
@@ -33227,7 +33227,7 @@ var init_limits = __esm({
     NON_TEXT_REPLY = "\u6682\u65F6\u53EA\u652F\u6301\u6587\u5B57\u6D88\u606F\u54E6\u3002\u8BF7\u53D1\u9001\u94FE\u63A5\u6216\u5206\u4EAB\u6587\u6848\uFF0C\u6211\u6765\u5E2E\u4F60\u6536\u85CF\u3002";
     RESET_REPLY = "\u5BF9\u8BDD\u5386\u53F2\u5DF2\u91CD\u7F6E\u3002";
     RESET_CONFIRMATION_REPLY = "\u5982\u9700\u6E05\u7A7A\u672C\u5730\u5BF9\u8BDD\u5386\u53F2\uFF0C\u8BF7\u53D1\u9001 /reset \u660E\u786E\u786E\u8BA4\u3002";
-    CONTROL_HELP_REPLY = "\u53EF\u7528\u547D\u4EE4\uFF1A\u72B6\u6001\u3001\u5E2E\u52A9\u3001\u91CD\u8BD5\u3001\u91CD\u65B0\u8FDE\u63A5\uFF1B\u5904\u7406\u4E2D\u65AD\u65F6\u53EF\u53D1\u9001\u7EE7\u7EED\u3002\u6E05\u7A7A\u5BF9\u8BDD\u8BF7\u53D1\u9001 /reset\u3002";
+    CONTROL_HELP_REPLY = "\u53EF\u7528\u547D\u4EE4\uFF1A\u72B6\u6001\u3001\u5E2E\u52A9\u3001\u91CD\u8BD5\u3001\u91CD\u65B0\u8FDE\u63A5\uFF1B\u5904\u7406\u4E2D\u65AD\u65F6\u53EF\u53D1\u9001\u7EE7\u7EED\u3002\u5347\u7EA7\u7BA1\u7406\uFF1A\u68C0\u67E5\u66F4\u65B0\u3001\u5347\u7EA7\u72B6\u6001\u3001\u7A0D\u540E\u5347\u7EA7\u3001\u53D6\u6D88\u5347\u7EA7\uFF1B\u65B0\u589E\u6743\u9650\u9700\u590D\u5236\u63D0\u793A\u4E2D\u7684\u5B8C\u6574\u786E\u8BA4\u547D\u4EE4\u3002\u6E05\u7A7A\u5BF9\u8BDD\u8BF7\u53D1\u9001 /reset\u3002";
     CONTROL_CONTINUE_REPLY = "\u5DF2\u8BF7\u6C42\u4ECE\u672C\u5730\u65AD\u70B9\u7EE7\u7EED\u5904\u7406\u3002";
     BRAIN_FAILURE_REPLY = "\u5904\u7406\u5931\u8D25\u4E86\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5\u3002";
   }
@@ -33419,8 +33419,8 @@ function buildIlinkHeaders(options) {
   }
   return headers;
 }
-function randomWechatUin(randomInt = (max) => Math.floor(Math.random() * max)) {
-  return String(randomInt(2 ** 32));
+function randomWechatUin(randomInt2 = (max) => Math.floor(Math.random() * max)) {
+  return String(randomInt2(2 ** 32));
 }
 var ILINK_BASE_URL, ILINK_SESSION_TIMEOUT_ERRCODE, ILINK_CHANNEL_VERSION, ILINK_BOT_TYPE, ILINK_APP_CLIENT_VERSION_HEADER, ILinkSessionExpiredError;
 var init_ilink_protocol = __esm({
@@ -33504,10 +33504,10 @@ __export(state_exports, {
   rememberProcessedMessage: () => rememberProcessedMessage,
   saveChannelState: () => saveChannelState
 });
-import { chmod as chmod4, mkdir as mkdir4, readFile as readFile4, rename as rename4, rm as rm4, writeFile as writeFile4 } from "node:fs/promises";
+import { chmod as chmod5, mkdir as mkdir5, readFile as readFile5, rename as rename5, rm as rm5, writeFile as writeFile5 } from "node:fs/promises";
 import { homedir as homedir4 } from "node:os";
-import { dirname as dirname4, join as join5 } from "node:path";
-import { randomUUID as randomUUID4 } from "node:crypto";
+import { dirname as dirname5, join as join6 } from "node:path";
+import { randomUUID as randomUUID5 } from "node:crypto";
 function defaultRuntimeCheckpoint() {
   return {
     activeTurnMessageRef: null,
@@ -33547,10 +33547,10 @@ function defaultChannelState() {
   };
 }
 function channelStateDirectory(baseDirectory) {
-  return join5(baseDirectory ?? homedir4(), ".attention", "channel");
+  return join6(baseDirectory ?? homedir4(), ".attention", "channel");
 }
 function channelStatePath(baseDirectory) {
-  return join5(channelStateDirectory(baseDirectory), "state.json");
+  return join6(channelStateDirectory(baseDirectory), "state.json");
 }
 function normalizeState(raw) {
   const base = defaultChannelState();
@@ -33771,7 +33771,7 @@ function normalizeBaseUrl(value) {
 async function loadChannelState(baseDirectory) {
   const path = channelStatePath(baseDirectory);
   try {
-    const raw = await readFile4(path, "utf8");
+    const raw = await readFile5(path, "utf8");
     return normalizeState(JSON.parse(raw));
   } catch (error101) {
     if (error101.code === "ENOENT") {
@@ -33782,21 +33782,21 @@ async function loadChannelState(baseDirectory) {
 }
 async function saveChannelState(state, baseDirectory) {
   const path = channelStatePath(baseDirectory);
-  await mkdir4(dirname4(path), { mode: 448, recursive: true });
-  await chmod4(dirname4(path), 448);
+  await mkdir5(dirname5(path), { mode: 448, recursive: true });
+  await chmod5(dirname5(path), 448);
   if (state.summaryRetries.some((job) => job.reader)) {
     try {
-      const original = await readFile4(path, "utf8");
+      const original = await readFile5(path, "utf8");
       const parsed = JSON.parse(original);
       if (!parsed.summaryRetries?.some((job) => job.reader)) {
-        await writeFile4(`${path}.pre-reader-v1.bak`, original, { encoding: "utf8", mode: 384, flag: "wx" });
+        await writeFile5(`${path}.pre-reader-v1.bak`, original, { encoding: "utf8", mode: 384, flag: "wx" });
       }
     } catch (error101) {
       if (!["ENOENT", "EEXIST"].includes(error101.code ?? "")) throw error101;
     }
   }
-  const temporaryPath = `${path}.tmp-${randomUUID4()}`;
-  await writeFile4(
+  const temporaryPath = `${path}.tmp-${randomUUID5()}`;
+  await writeFile5(
     temporaryPath,
     JSON.stringify(
       {
@@ -33812,12 +33812,12 @@ async function saveChannelState(state, baseDirectory) {
       mode: 384
     }
   );
-  await rename4(temporaryPath, path);
-  await chmod4(path, 384);
+  await rename5(temporaryPath, path);
+  await chmod5(path, 384);
 }
 async function clearChannelState(baseDirectory) {
   try {
-    await rm4(channelStatePath(baseDirectory), { force: true });
+    await rm5(channelStatePath(baseDirectory), { force: true });
   } catch (error101) {
     if (error101.code !== "ENOENT") throw error101;
   }
@@ -33896,8 +33896,8 @@ init_src2();
 
 // src/channel/channel-command.ts
 init_src2();
-import { createHash as createHash8, randomUUID as randomUUID8 } from "node:crypto";
-import { mkdir as mkdir8 } from "node:fs/promises";
+import { createHash as createHash9, randomUUID as randomUUID10 } from "node:crypto";
+import { mkdir as mkdir9 } from "node:fs/promises";
 import { homedir as homedir7, hostname as hostname5 } from "node:os";
 import { resolve as resolve2 } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -34078,6 +34078,11 @@ var ATTENTION_BRIDGE_PERMISSION_PROFILE = {
   schema_version: 2
 };
 var ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256 = createHash("sha256").update(JSON.stringify(ATTENTION_BRIDGE_PERMISSION_PROFILE)).digest("hex");
+var ATTENTION_BRIDGE_UPDATE_PROTOCOL = {
+  channel_state_schema: 1,
+  update_journal_schema: 1,
+  wechat_update_protocol: 1
+};
 var SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 var SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 var NODE_RANGE_PATTERN = /^>=\d+\.\d+\.\d+$/u;
@@ -34207,7 +34212,7 @@ import { homedir as homedir2 } from "node:os";
 import { dirname, join as join2 } from "node:path";
 
 // src/version.ts
-var ATTENTION_CLI_VERSION = "0.3.16";
+var ATTENTION_CLI_VERSION = "0.3.17";
 
 // src/runtime-oauth.ts
 var RUNTIME_CREDENTIAL_VERSION = 1;
@@ -36770,13 +36775,86 @@ function createBrainAdapter(hostId, options) {
   });
 }
 
-// src/channel/bridge-updater.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
-import { chmod as chmod3, mkdir as mkdir3, readFile as readFile3, rename as rename3, rm as rm3, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname3, join as join4 } from "node:path";
+// src/channel/bridge-update-controller.ts
+import { randomInt, randomUUID as randomUUID6 } from "node:crypto";
 
 // src/release-client.ts
+import { createHash as createHash4 } from "node:crypto";
+
+// src/channel/bridge-update-offer.ts
 import { createHash as createHash3 } from "node:crypto";
+var TOOL_DESCRIPTIONS = {
+  attention_get_my_account: "\u67E5\u770B\u4F60\u7684 Attention \u8D26\u53F7\u4E0E\u6743\u76CA",
+  attention_list_collections: "\u67E5\u8BE2\u4F60\u7684\u6536\u85CF",
+  attention_collect_content: "\u4FDD\u5B58\u4F60\u53D1\u9001\u7684\u6536\u85CF",
+  attention_submit_content_enrichment: "\u4E3A\u4F60\u7684\u6536\u85CF\u8865\u5168\u5171\u4EAB\u6458\u8981",
+  attention_select_collection_candidate: "\u786E\u8BA4\u4F60\u9009\u62E9\u7684\u6536\u85CF\u94FE\u63A5",
+  attention_get_collection_status: "\u67E5\u8BE2\u4F60\u7684\u6536\u85CF\u5904\u7406\u72B6\u6001",
+  attention_read_collection_source: "\u8BFB\u53D6\u4F60\u5DF2\u6536\u85CF\u7684\u516C\u5F00\u539F\u6587",
+  attention_update_collection: "\u8C03\u6574\u4F60\u7684\u6536\u85CF\u516C\u5F00\u6216\u79C1\u5BC6\u72B6\u6001"
+};
+function updateDigest(value) {
+  return createHash3("sha256").update(JSON.stringify(value)).digest("hex");
+}
+function object3(value, keys) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).sort().join(",") !== [...keys].sort().join(","))
+    throw new Error("permission_profile_invalid");
+  return value;
+}
+function words(value) {
+  if (!Array.isArray(value) || value.length > 32 || value.some((x) => typeof x !== "string" || !/^[a-z][a-z0-9_:-]{0,95}$/u.test(x)) || new Set(value).size !== value.length)
+    throw new Error("permission_profile_invalid");
+  return value;
+}
+function word(value) {
+  return words([value])[0];
+}
+function parsePermissionProfile(value, expectedSha) {
+  const root = object3(value, ["cloud", "local", "native_network", "schema_version"]);
+  const cloud = object3(root.cloud, ["mcp_server", "runtime_oauth", "tools"]);
+  const oauth = object3(cloud.runtime_oauth, ["resource", "scopes"]);
+  const local = object3(root.local, ["deny", "write"]);
+  if (root.schema_version !== 2)
+    throw new Error("permission_profile_invalid");
+  const profile = {
+    cloud: { mcp_server: word(cloud.mcp_server), runtime_oauth: { resource: word(oauth.resource), scopes: words(oauth.scopes) }, tools: words(cloud.tools) },
+    local: { deny: words(local.deny), write: words(local.write) },
+    native_network: words(root.native_network),
+    schema_version: 2
+  };
+  if (updateDigest(profile) !== expectedSha)
+    throw new Error("permission_profile_digest_mismatch");
+  return profile;
+}
+function permissionChanges(current, next) {
+  if (updateDigest({ ...current, cloud: { ...current.cloud, tools: [] } }) !== updateDigest({ ...next, cloud: { ...next.cloud, tools: [] } }) || next.cloud.tools.some((x) => !Object.hasOwn(TOOL_DESCRIPTIONS, x)) || current.cloud.tools.some((x) => !Object.hasOwn(TOOL_DESCRIPTIONS, x)))
+    return null;
+  return [
+    ...next.cloud.tools.filter((x) => !current.cloud.tools.includes(x)).map((x) => `\u65B0\u589E\uFF1A${TOOL_DESCRIPTIONS[x]}`),
+    ...current.cloud.tools.filter((x) => !next.cloud.tools.includes(x)).map((x) => `\u79FB\u9664\uFF1A${TOOL_DESCRIPTIONS[x]}`)
+  ];
+}
+function releaseIdentity(origin, manifest, currentVersion, currentPermissionSha) {
+  return updateDigest({
+    origin: normalizeAttentionOrigin(origin),
+    currentVersion,
+    currentPermissionSha,
+    manifest: {
+      artifact_path: manifest.artifact_path,
+      minimum_supported_version: manifest.minimum_supported_version,
+      node: manifest.node,
+      permission_profile_sha256: manifest.permission_profile_sha256,
+      schema_version: manifest.schema_version,
+      sha256: manifest.sha256,
+      version: manifest.version
+    }
+  });
+}
+function ownerFingerprint(owner) {
+  return updateDigest(["bridge-update-owner", owner]);
+}
+
+// src/release-client.ts
 var MANIFEST_MAXIMUM_BYTES = 16384;
 var ARTIFACT_MAXIMUM_BYTES = 16 * 1024 * 1024;
 var AttentionReleaseError = class extends Error {
@@ -36811,14 +36889,40 @@ async function boundedResponseBytes(response, maximumBytes, errorCode2) {
   if (contentLength) {
     const parsed = Number(contentLength);
     if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > maximumBytes) {
+      await response.body?.cancel();
       throw new AttentionReleaseError(errorCode2);
     }
   }
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.byteLength > maximumBytes) {
-    throw new AttentionReleaseError(errorCode2);
+  const reader = response.body?.getReader();
+  if (!reader) return Buffer.alloc(0);
+  const chunks = [];
+  let size = 0;
+  try {
+    for (; ; ) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maximumBytes) {
+        await reader.cancel();
+        throw new AttentionReleaseError(errorCode2);
+      }
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks, size);
+  } finally {
+    reader.releaseLock();
   }
-  return bytes;
+}
+async function fetchAttentionPermissionProfile(options) {
+  if (!/^[a-f0-9]{64}$/u.test(options.sha256)) throw new AttentionReleaseError("permission_profile_invalid");
+  const url3 = new URL(`/cli/permissions/${options.sha256}.json`, normalizeAttentionOrigin(options.origin)).toString();
+  const result = await fetchExact(options.fetchImpl ?? fetch, url3, 16384, "permission_profile", options.timeoutMs);
+  if (!/^application\/(?:[a-z0-9.+-]*\+)?json(?:\s*;|$)/iu.test(result.response.headers.get("content-type") ?? "")) throw new AttentionReleaseError("permission_profile_content_type");
+  try {
+    return parsePermissionProfile(JSON.parse(result.bytes.toString("utf8")), options.sha256);
+  } catch {
+    throw new AttentionReleaseError("permission_profile_invalid");
+  }
 }
 async function fetchExact(fetchImpl, url3, maximumBytes, errorCode2, timeoutMs) {
   let response;
@@ -36832,9 +36936,11 @@ async function fetchExact(fetchImpl, url3, maximumBytes, errorCode2, timeoutMs) 
     throw new AttentionReleaseError(`${errorCode2}_fetch_failed`);
   }
   if (response.status !== 200) {
+    await response.body?.cancel();
     throw new AttentionReleaseError(`${errorCode2}_http_status`);
   }
   if (!responseMatches(response, url3)) {
+    await response.body?.cancel();
     throw new AttentionReleaseError(`${errorCode2}_redirected`);
   }
   return {
@@ -36883,37 +36989,120 @@ async function fetchAttentionReleaseArtifact(options) {
     "artifact",
     options.timeoutMs
   );
-  const digest = createHash3("sha256").update(result.bytes).digest("hex");
+  const digest = createHash4("sha256").update(result.bytes).digest("hex");
   if (digest !== options.manifest.sha256) {
     throw new AttentionReleaseError("artifact_digest_mismatch");
   }
   return result.bytes;
 }
 
-// src/channel/managed-bridge.ts
+// src/channel/bridge-update-control.ts
+function matchUpdateCommand(message, owner) {
+  if (!owner || message.fromUserId !== owner || !Array.isArray(message.itemList) || message.itemList.length !== 1)
+    return null;
+  const item = message.itemList[0];
+  if (!item || typeof item !== "object" || item.type !== 1 || "ref_msg" in item || !item.text_item || typeof item.text_item.text !== "string")
+    return null;
+  const text = item.text_item.text.normalize("NFKC").trim();
+  const commands = { "\u68C0\u67E5\u66F4\u65B0": "check", "\u5347\u7EA7\u72B6\u6001": "status", "\u7A0D\u540E\u5347\u7EA7": "defer", "\u53D6\u6D88\u5347\u7EA7": "cancel", "\u786E\u8BA4\u5347\u7EA7": "confirm_help" };
+  const kind = Object.hasOwn(commands, text) ? commands[text] : void 0;
+  if (kind && kind !== "confirm")
+    return { kind };
+  const match = /^确认升级 (0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*) ([A-Z0-9]{6})$/u.exec(text);
+  return match ? { kind: "confirm", version: `${match[1]}.${match[2]}.${match[3]}`, code: match[4] } : null;
+}
+
+// src/channel/bridge-update-journal.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
+import { chmod as chmod2, mkdir as mkdir2, readFile as readFile2, rename as rename2, rm as rm2, writeFile as writeFile2 } from "node:fs/promises";
+import { dirname as dirname2, join as join3 } from "node:path";
+var updateJournalPath = (home) => join3(home, ".attention/update/wechat-update.json");
+var newUpdateJournal = () => ({ schemaVersion: 1, operation: null, events: [], consumed: [], quarantine: [], nextCheckAt: 0, lastManualCheckAt: null, lastErrorCode: null });
+var sha = (v) => typeof v === "string" && /^[a-f0-9]{64}$/u.test(v);
+var finite = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0;
+function validate(value) {
+  const invalid = () => {
+    throw new Error("update_journal_invalid");
+  };
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return invalid();
+  const j = value;
+  if (j.schemaVersion !== 1 || !Array.isArray(j.events) || !Array.isArray(j.consumed) || !Array.isArray(j.quarantine) || !j.consumed.every(sha) || !j.quarantine.every(sha) || !finite(j.nextCheckAt) || !(j.lastManualCheckAt === null || finite(j.lastManualCheckAt)) || !(j.lastErrorCode === null || typeof j.lastErrorCode === "string" && /^[a-z_]{1,80}$/u.test(j.lastErrorCode)))
+    return invalid();
+  if (j.events.some((e) => !e || !sha(e.id) || !sha(e.owner) || typeof e.text !== "string" || e.text.length > 2e3 || !["pending", "enqueued", "delivered", "superseded"].includes(e.delivery) || e.offerId !== void 0 && !sha(e.offerId) || e.expiresAt !== void 0 && !finite(e.expiresAt)))
+    return invalid();
+  if (j.operation !== null) {
+    const o = j.operation;
+    if (!o || !sha(o.id) || !sha(o.identity) || !sha(o.owner) || typeof o.explicit !== "boolean" || !(o.codeHash === null || sha(o.codeHash)) || !finite(o.expiresAt) || !(o.approvedUntil === null || finite(o.approvedUntil)) || !Number.isInteger(o.errors) || o.errors < 0 || o.errors > 3 || !sha(o.currentPermissionSha) || !/^\d+\.\d+\.\d+$/u.test(o.currentVersion) || !["offered", "approved", "downloading", "waiting_safe_point", "switching", "started", "deferred", "expired", "cancelled", "failed", "rolled_back"].includes(o.phase))
+      return invalid();
+    if (!parseBridgeUpdateManifest(o.manifest))
+      return invalid();
+  }
+  return j;
+}
+async function loadUpdateJournal(home) {
+  try {
+    const raw = await readFile2(updateJournalPath(home), "utf8");
+    if (raw.length > 1048576)
+      throw new Error("update_journal_invalid");
+    return validate(JSON.parse(raw));
+  } catch (error101) {
+    if (error101.code === "ENOENT")
+      return newUpdateJournal();
+    throw error101;
+  }
+}
+async function saveUpdateJournal(journal, home) {
+  validate(journal);
+  const delivered = journal.events.filter((e) => e.delivery === "delivered" || e.delivery === "superseded").slice(-8);
+  const output = { ...journal, events: journal.events.filter((e) => e.delivery !== "delivered" && e.delivery !== "superseded" || delivered.includes(e)), consumed: journal.consumed.slice(-256), quarantine: journal.quarantine.slice(-64) };
+  const path = updateJournalPath(home), directory = dirname2(path), temporary = `${path}.${randomUUID2()}.tmp`;
+  await mkdir2(directory, { recursive: true, mode: 448 });
+  await chmod2(directory, 448);
+  try {
+    await writeFile2(temporary, `${JSON.stringify(output)}
+`, { flag: "wx", mode: 384 });
+    await rename2(temporary, path);
+    Object.assign(journal, output);
+  } finally {
+    await rm2(temporary, { force: true });
+  }
+}
+function addUpdateEvent(journal, owner, key, text) {
+  const id = updateDigest(["wechat-update-event", owner, key]);
+  if (!journal.events.some((e) => e.id === id))
+    journal.events.push({ id, owner, text, delivery: "pending" });
+}
+
+// src/channel/bridge-updater.ts
+import { randomUUID as randomUUID4 } from "node:crypto";
+import { chmod as chmod4, mkdir as mkdir4, readFile as readFile4, rename as rename4, rm as rm4, writeFile as writeFile4 } from "node:fs/promises";
+import { dirname as dirname4, join as join5 } from "node:path";
+
+// src/channel/managed-bridge.ts
+import { randomUUID as randomUUID3 } from "node:crypto";
 import {
-  chmod as chmod2,
-  mkdir as mkdir2,
-  readFile as readFile2,
-  rename as rename2,
-  rm as rm2,
-  writeFile as writeFile2
+  chmod as chmod3,
+  mkdir as mkdir3,
+  readFile as readFile3,
+  rename as rename3,
+  rm as rm3,
+  writeFile as writeFile3
 } from "node:fs/promises";
 import { homedir as homedir3 } from "node:os";
-import { dirname as dirname2, isAbsolute, join as join3 } from "node:path";
+import { dirname as dirname3, isAbsolute, join as join4 } from "node:path";
 var BRIDGE_UPDATE_RESTART_EXIT_CODE = 75;
 var VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u;
 var SHA256_PATTERN2 = /^[a-f0-9]{64}$/u;
 function managedBridgePaths(homeDirectory = homedir3()) {
-  const rootDirectory = join3(homeDirectory, ".local", "share", "attention");
-  const stateDirectory = join3(homeDirectory, ".attention", "update");
+  const rootDirectory = join4(homeDirectory, ".local", "share", "attention");
+  const stateDirectory = join4(homeDirectory, ".attention", "update");
   return {
-    launcherPath: join3(rootDirectory, "launcher.mjs"),
+    launcherPath: join4(rootDirectory, "launcher.mjs"),
     rootDirectory,
     stateDirectory,
-    statePath: join3(stateDirectory, "state.json"),
-    versionsDirectory: join3(rootDirectory, "versions")
+    statePath: join4(stateDirectory, "state.json"),
+    versionsDirectory: join4(rootDirectory, "versions")
   };
 }
 function validArtifact(value) {
@@ -36935,26 +37124,26 @@ function parseManagedBridgeUpdateState(value) {
   return record4;
 }
 async function atomicWrite(path, contents, mode) {
-  await mkdir2(dirname2(path), { mode: 448, recursive: true });
-  await chmod2(dirname2(path), 448);
-  const temporary = `${path}.${process.pid}.${randomUUID2()}.tmp`;
+  await mkdir3(dirname3(path), { mode: 448, recursive: true });
+  await chmod3(dirname3(path), 448);
+  const temporary = `${path}.${process.pid}.${randomUUID3()}.tmp`;
   try {
-    await writeFile2(temporary, contents, { flag: "wx", mode });
-    await rename2(temporary, path);
-    await chmod2(path, mode);
+    await writeFile3(temporary, contents, { flag: "wx", mode });
+    await rename3(temporary, path);
+    await chmod3(path, mode);
   } finally {
-    await rm2(temporary, { force: true });
+    await rm3(temporary, { force: true });
   }
 }
 async function loadManagedBridgeUpdateState(homeDirectory = homedir3()) {
-  const raw = await readFile2(managedBridgePaths(homeDirectory).statePath, "utf8");
+  const raw = await readFile3(managedBridgePaths(homeDirectory).statePath, "utf8");
   return parseManagedBridgeUpdateState(JSON.parse(raw));
 }
 async function saveManagedBridgeUpdateState(state, homeDirectory = homedir3()) {
   const normalized = parseManagedBridgeUpdateState(state);
   const { stateDirectory, statePath: statePath2 } = managedBridgePaths(homeDirectory);
-  await mkdir2(stateDirectory, { mode: 448, recursive: true });
-  await chmod2(stateDirectory, 448);
+  await mkdir3(stateDirectory, { mode: 448, recursive: true });
+  await chmod3(stateDirectory, 448);
   await atomicWrite(statePath2, `${JSON.stringify(normalized, null, 2)}
 `, 384);
 }
@@ -36964,21 +37153,21 @@ async function bootstrapManagedBridge(input) {
   }
   const home = input.homeDirectory ?? homedir3();
   const paths = managedBridgePaths(home);
-  await mkdir2(paths.rootDirectory, { mode: 448, recursive: true });
-  await mkdir2(paths.versionsDirectory, { mode: 448, recursive: true });
-  await chmod2(paths.rootDirectory, 448);
-  await chmod2(paths.versionsDirectory, 448);
-  const artifactPath = join3(
+  await mkdir3(paths.rootDirectory, { mode: 448, recursive: true });
+  await mkdir3(paths.versionsDirectory, { mode: 448, recursive: true });
+  await chmod3(paths.rootDirectory, 448);
+  await chmod3(paths.versionsDirectory, 448);
+  const artifactPath = join4(
     paths.versionsDirectory,
     `attention-${input.version}.mjs`
   );
-  const currentContents = await readFile2(input.currentArtifactPath);
+  const currentContents = await readFile3(input.currentArtifactPath);
   try {
-    const existing = await readFile2(artifactPath);
+    const existing = await readFile3(artifactPath);
     if (!existing.equals(currentContents)) {
       throw new Error("Managed Bridge version already exists with different bytes.");
     }
-    await chmod2(artifactPath, 448);
+    await chmod3(artifactPath, 448);
   } catch (error101) {
     if (error101.code !== "ENOENT") throw error101;
     await atomicWrite(artifactPath, currentContents, 448);
@@ -37134,19 +37323,82 @@ function parseProbeOutput(stdout) {
   }
 }
 async function atomicWrite2(path, contents) {
-  await mkdir3(dirname3(path), { mode: 448, recursive: true });
-  await chmod3(dirname3(path), 448);
-  const temporary = `${path}.${process.pid}.${randomUUID3()}.tmp`;
+  await mkdir4(dirname4(path), { mode: 448, recursive: true });
+  await chmod4(dirname4(path), 448);
+  const temporary = `${path}.${process.pid}.${randomUUID4()}.tmp`;
   try {
-    await writeFile3(temporary, contents, { flag: "wx", mode: 448 });
-    await rename3(temporary, path);
-    await chmod3(path, 448);
+    await writeFile4(temporary, contents, { flag: "wx", mode: 448 });
+    await rename4(temporary, path);
+    await chmod4(path, 448);
   } finally {
-    await rm3(temporary, { force: true });
+    await rm4(temporary, { force: true });
   }
 }
 function stableErrorCode(error101) {
   return error101 instanceof BridgeUpdateError || error101 instanceof AttentionReleaseError ? error101.code : "bridge_update_unexpected";
+}
+async function prepareBridgeUpdate(options, manifest, approvedIdentity) {
+  if (compareSemanticVersions(manifest.version, options.currentVersion) <= 0) throw new BridgeUpdateError("candidate_not_newer");
+  const identity = releaseIdentity(options.origin, manifest, options.currentVersion, options.currentPermissionProfileSha256);
+  const latest = await fetchAttentionReleaseManifest({ ...options, timeoutMs: FETCH_TIMEOUT_MS });
+  if (releaseIdentity(options.origin, latest, options.currentVersion, options.currentPermissionProfileSha256) !== identity) {
+    throw new BridgeUpdateError("release_identity_changed");
+  }
+  if (!nodeRuntimeSatisfies(options.nodeVersion ?? process.versions.node, manifest.node)) throw new BridgeUpdateError("node_version_unsupported");
+  if (bridgeUpdateDecision({ ...options, manifest }) === "consent_required" && approvedIdentity !== identity) {
+    throw new BridgeUpdateError("approval_required");
+  }
+  const state = await loadManagedBridgeUpdateState(options.homeDirectory);
+  if (state.pending || state.current.version !== options.currentVersion || state.current.permissionProfileSha256 !== options.currentPermissionProfileSha256) {
+    throw new BridgeUpdateError("bridge_update_state_changed");
+  }
+  const artifact = await fetchAttentionReleaseArtifact({ ...options, manifest, timeoutMs: FETCH_TIMEOUT_MS });
+  const candidatePath = join5(managedBridgePaths(options.homeDirectory).versionsDirectory, `attention-${manifest.version}.mjs`);
+  let created = false;
+  try {
+    const existing = await readFile4(candidatePath);
+    if (!existing.equals(artifact)) throw new BridgeUpdateError("artifact_version_collision");
+    await chmod4(candidatePath, 448);
+  } catch (error101) {
+    if (error101.code !== "ENOENT") throw error101;
+    await atomicWrite2(candidatePath, artifact);
+    created = true;
+  }
+  const probe = await (options.runner ?? runCommand)({ args: [candidatePath, "--bridge-update-probe"], executable: options.nodeExecutable ?? process.execPath }, { timeoutMs: PROBE_TIMEOUT_MS });
+  const probeIdentity = parseProbeOutput(probe.stdout);
+  if (probe.exitCode !== 0 || probe.timedOut || probeIdentity?.version !== manifest.version || probeIdentity.permissionProfileSha256 !== manifest.permission_profile_sha256) {
+    if (created) await rm4(candidatePath, { force: true });
+    throw new BridgeUpdateError("candidate_probe_failed");
+  }
+  const protocol = await (options.runner ?? runCommand)({ args: [candidatePath, "--bridge-update-protocol"], executable: options.nodeExecutable ?? process.execPath }, { timeoutMs: PROBE_TIMEOUT_MS });
+  let compatible = false;
+  try {
+    const value = JSON.parse(protocol.stdout.trim());
+    compatible = protocol.exitCode === 0 && !protocol.timedOut && !!value && exactKeys(value, Object.keys(ATTENTION_BRIDGE_UPDATE_PROTOCOL)) && Object.entries(ATTENTION_BRIDGE_UPDATE_PROTOCOL).every(([key, version3]) => value[key] === version3);
+  } catch {
+  }
+  if (!compatible) {
+    if (created) await rm4(candidatePath, { force: true });
+    throw new BridgeUpdateError("candidate_update_protocol_unsupported");
+  }
+  return { manifest, candidatePath, originalCurrent: state.current, identity };
+}
+async function activateBridgeUpdate(options, prepared, mayActivate = () => true) {
+  const manifest = await fetchAttentionReleaseManifest({ ...options, timeoutMs: FETCH_TIMEOUT_MS });
+  if (releaseIdentity(options.origin, manifest, options.currentVersion, options.currentPermissionProfileSha256) !== prepared.identity) throw new BridgeUpdateError("release_identity_changed");
+  const bytes = await readFile4(prepared.candidatePath);
+  const { createHash: createHash11 } = await import("node:crypto");
+  if (createHash11("sha256").update(bytes).digest("hex") !== manifest.sha256) throw new BridgeUpdateError("artifact_digest_mismatch");
+  const state = await loadManagedBridgeUpdateState(options.homeDirectory);
+  if (state.pending || updateDigest(state.current) !== updateDigest(prepared.originalCurrent)) throw new BridgeUpdateError("bridge_update_state_changed");
+  if (!mayActivate()) throw new BridgeUpdateError("approval_expired_or_cancelled");
+  state.previous = state.current;
+  state.current = { artifactPath: prepared.candidatePath, permissionProfileSha256: manifest.permission_profile_sha256, version: manifest.version };
+  state.pending = { startedAt: (options.now?.() ?? /* @__PURE__ */ new Date()).toISOString(), version: manifest.version };
+  state.status = "restarting";
+  state.lastErrorCode = null;
+  state.latestVersion = manifest.version;
+  await saveManagedBridgeUpdateState(state, options.homeDirectory);
 }
 async function checkAndStageBridgeUpdate(options) {
   const now = options.now?.() ?? /* @__PURE__ */ new Date();
@@ -37186,65 +37438,526 @@ async function checkAndStageBridgeUpdate(options) {
     }
     state.status = decision;
     await saveManagedBridgeUpdateState(state, options.homeDirectory);
-    const artifact = await fetchAttentionReleaseArtifact({
-      ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {},
-      manifest,
-      origin,
-      timeoutMs: FETCH_TIMEOUT_MS
-    });
-    const paths = managedBridgePaths(options.homeDirectory);
-    const candidatePath = join4(paths.versionsDirectory, `attention-${manifest.version}.mjs`);
-    try {
-      const existing = await readFile3(candidatePath);
-      if (!existing.equals(artifact)) {
-        throw new BridgeUpdateError("artifact_version_collision");
-      }
-      await chmod3(candidatePath, 448);
-    } catch (error101) {
-      if (error101.code !== "ENOENT") throw error101;
-      await atomicWrite2(candidatePath, artifact);
-    }
-    const runner = options.runner ?? runCommand;
-    const probe = await runner(
-      {
-        args: [candidatePath, "--bridge-update-probe"],
-        executable: options.nodeExecutable ?? process.execPath
-      },
-      { timeoutMs: PROBE_TIMEOUT_MS }
-    );
-    const identity = parseProbeOutput(probe.stdout);
-    if (probe.exitCode !== 0 || probe.timedOut || !identity || identity.version !== manifest.version || identity.permissionProfileSha256 !== manifest.permission_profile_sha256) {
-      await rm3(candidatePath, { force: true });
-      throw new BridgeUpdateError("candidate_probe_failed");
-    }
-    state = await loadManagedBridgeUpdateState(options.homeDirectory);
-    if (state.current.version !== originalCurrent.version || state.current.artifactPath !== originalCurrent.artifactPath) {
-      throw new BridgeUpdateError("bridge_update_state_changed");
-    }
-    state.previous = state.current;
-    state.current = {
-      artifactPath: candidatePath,
-      permissionProfileSha256: manifest.permission_profile_sha256,
-      version: manifest.version
-    };
-    state.pending = { startedAt: checkedAt, version: manifest.version };
-    state.status = "restarting";
-    state.lastErrorCode = null;
-    state.latestVersion = manifest.version;
-    await saveManagedBridgeUpdateState(state, options.homeDirectory);
+    const prepared = await prepareBridgeUpdate(options, manifest);
+    await activateBridgeUpdate(options, prepared);
     return { status: "staged", version: manifest.version };
   } catch (error101) {
     state = await loadManagedBridgeUpdateState(options.homeDirectory);
-    state.current = originalCurrent;
-    state.pending = null;
-    state.previous = null;
-    state.status = "error";
-    state.lastCheckAt = checkedAt;
-    state.lastErrorCode = stableErrorCode(error101);
-    await saveManagedBridgeUpdateState(state, options.homeDirectory);
-    return { status: "error", errorCode: state.lastErrorCode };
+    const errorCode2 = stableErrorCode(error101);
+    if (updateDigest(state.current) === updateDigest(originalCurrent) && !state.pending) {
+      state.status = "error";
+      state.lastCheckAt = checkedAt;
+      state.lastErrorCode = errorCode2;
+      await saveManagedBridgeUpdateState(state, options.homeDirectory);
+    }
+    return { status: "error", errorCode: errorCode2 };
   }
 }
+
+// src/channel/queue.ts
+import { createHash as createHash6 } from "node:crypto";
+
+// src/channel/messages.ts
+import { createHash as createHash5 } from "node:crypto";
+function readString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+function extractText(itemList) {
+  if (!Array.isArray(itemList)) {
+    return { nonTextOnly: false, text: "" };
+  }
+  const parts = [];
+  let sawNonText = false;
+  let sawText = false;
+  const collect = (item, depth) => {
+    if (depth > 2) return;
+    const referencedTitle = readString(item.ref_msg?.title);
+    if (referencedTitle) {
+      parts.push(referencedTitle);
+      sawText = true;
+    }
+    if (item.ref_msg?.message_item) {
+      collect(item.ref_msg.message_item, depth + 1);
+    }
+    const itemType = Number(item.type ?? 0) || 0;
+    if (itemType === 1) {
+      const text = readString(item.text_item?.text);
+      if (text) {
+        parts.push(text);
+        sawText = true;
+      }
+    } else if (itemType === 3) {
+      const voiceText = readString(item.voice_item?.text);
+      if (voiceText) {
+        parts.push(voiceText);
+        sawText = true;
+      } else {
+        sawNonText = true;
+      }
+    } else if (itemType >= 2 && itemType <= 5) {
+      sawNonText = true;
+    }
+  };
+  for (const raw of itemList) {
+    if (raw === null || typeof raw !== "object") continue;
+    collect(raw, 0);
+  }
+  return {
+    nonTextOnly: sawNonText && !sawText,
+    text: parts.join("\n").trim()
+  };
+}
+var SHARED_LINK_RE = /(?:https?:\/\/|www\.)[^\s]+/iu;
+function shouldSendProcessingAcknowledgement(message) {
+  return SHARED_LINK_RE.test(extractText(message.itemList).text);
+}
+function messageIdentifier(message) {
+  const explicit = [
+    "client_id",
+    "msg_id",
+    "message_id",
+    "svr_id"
+  ].map((key) => readString(message.raw[key])).find((value) => value.length > 0);
+  if (explicit) return explicit;
+  const fingerprintSource = [
+    message.fromUserId,
+    message.contextToken,
+    JSON.stringify(message.itemList ?? null)
+  ].join("|");
+  return `fp-${createHash5("sha256").update(fingerprintSource, "utf8").digest("hex").slice(0, 32)}`;
+}
+function parseInboundMessage(raw) {
+  if (raw === null || typeof raw !== "object") return null;
+  const record4 = raw;
+  const fromUserId = readString(record4.from_user_id);
+  if (!fromUserId) return null;
+  return {
+    contextToken: readString(record4.context_token),
+    fromUserId,
+    itemList: record4.item_list,
+    raw: record4
+  };
+}
+
+// src/channel/queue.ts
+init_state();
+function enqueueInbound(state, messages) {
+  const known = /* @__PURE__ */ new Set([
+    ...state.processedMessageIds,
+    ...state.pendingInbound.map((item) => item.id)
+  ]);
+  let added = 0;
+  for (const message of messages) {
+    const id = messageIdentifier(message);
+    if (known.has(id)) continue;
+    state.pendingInbound.push({
+      acknowledged: false,
+      attempts: 0,
+      blockedBy: null,
+      id,
+      message
+    });
+    known.add(id);
+    added += 1;
+  }
+  return added;
+}
+function completeInbound(state, id) {
+  const index = state.pendingInbound.findIndex((item) => item.id === id);
+  if (index >= 0) state.pendingInbound.splice(index, 1);
+  if (!state.processedMessageIds.includes(id)) {
+    rememberProcessedMessage(state, id);
+  }
+}
+function enqueueOutbound(state, message) {
+  if (state.pendingOutbound.some((item) => item.id === message.id)) return;
+  state.pendingOutbound.push(message);
+}
+function markOutboundSent(state, id) {
+  const index = state.pendingOutbound.findIndex((item) => item.id === id);
+  if (index >= 0) state.pendingOutbound.splice(index, 1);
+}
+function outboundIdentifier(input) {
+  return `out-${createHash6("sha256").update(
+    `${input.inboundId}:${input.kind}:${String(input.index ?? 0)}`,
+    "utf8"
+  ).digest("hex").slice(0, 32)}`;
+}
+
+// src/channel/bridge-update-controller.ts
+var ACTIVE = /* @__PURE__ */ new Set(["approved", "downloading", "waiting_safe_point", "switching"]);
+var ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+var BridgeUpdateController = class {
+  constructor(options) {
+    this.options = options;
+  }
+  options;
+  journal = null;
+  job = null;
+  result = null;
+  abort = null;
+  prepared = null;
+  scanOffset = 0;
+  restart = false;
+  discardResult = false;
+  now() {
+    return (this.options.now?.() ?? /* @__PURE__ */ new Date()).getTime();
+  }
+  get pausesBusiness() {
+    return !!this.journal?.operation && ACTIVE.has(this.journal.operation.phase);
+  }
+  async commit(next) {
+    await saveUpdateJournal(next, this.options.homeDirectory);
+    this.journal = next;
+  }
+  copy() {
+    return structuredClone(this.journal);
+  }
+  event(j, owner, key, text) {
+    addUpdateEvent(j, owner, key, text);
+  }
+  jobOptions() {
+    const signal = this.abort.signal;
+    return { ...this.options, fetchImpl: async (input, init) => {
+      signal.throwIfAborted();
+      return await (this.options.fetchImpl ?? fetch)(input, { ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal });
+    } };
+  }
+  startCheck(manual) {
+    this.abort = new AbortController();
+    const options = this.jobOptions();
+    this.job = (async () => {
+      try {
+        const manifest = await fetchAttentionReleaseManifest({ ...options, timeoutMs: 15e3 });
+        if (!nodeRuntimeSatisfies(options.nodeVersion ?? process.versions.node, manifest.node))
+          throw new Error("node_version_unsupported");
+        const consent = bridgeUpdateDecision({ ...options, manifest }) === "consent_required";
+        let changes = [];
+        if (consent) {
+          if (manifest.version.split(".")[0] !== options.currentVersion.split(".")[0])
+            changes = null;
+          else {
+            try {
+              changes = permissionChanges(this.options.currentProfile ?? ATTENTION_BRIDGE_PERMISSION_PROFILE, await fetchAttentionPermissionProfile({ ...options, sha256: manifest.permission_profile_sha256, timeoutMs: 15e3 }));
+            } catch {
+              changes = null;
+            }
+          }
+        }
+        this.result = { kind: "check", manual, value: { manifest, changes, consent } };
+      } catch {
+        this.result = { kind: "error", id: null, manual };
+      }
+    })();
+  }
+  startPreparation(op) {
+    this.abort = new AbortController();
+    const options = this.jobOptions();
+    this.job = (async () => {
+      try {
+        this.result = { kind: "prepare", id: op.id, value: await prepareBridgeUpdate(options, op.manifest, op.codeHash ? op.identity : void 0) };
+      } catch {
+        this.result = { kind: "error", id: op.id, manual: op.explicit };
+      }
+    })();
+  }
+  async reconcile(state) {
+    const next = this.copy(), op = next.operation;
+    next.nextCheckAt = 0;
+    if (op && ACTIVE.has(op.phase)) {
+      const managed = await loadManagedBridgeUpdateState(this.options.homeDirectory);
+      if (op.phase === "switching" && this.options.currentVersion === op.manifest.version && this.options.currentPermissionProfileSha256 === op.manifest.permission_profile_sha256 && managed.current.version === op.manifest.version && !managed.pending) {
+        op.phase = "started";
+        if (op.explicit)
+          this.event(next, op.owner, `${op.id}:started`, `Bridge \u5DF2\u5347\u7EA7\u5E76\u542F\u52A8\uFF1A${this.options.currentVersion}\u3002\u5FAE\u4FE1\u767B\u5F55\u548C\u5F85\u5904\u7406\u6D88\u606F\u5DF2\u4FDD\u7559\uFF1B\u540E\u7EED\u4E1A\u52A1\u5BF9\u8BDD\u5C06\u6309\u65B0\u7248\u672C\u5EFA\u7ACB\u4F1A\u8BDD\u3002${state.attentionMcp.status === "ready" ? "Attention MCP \u5F53\u524D\u5DF2\u8FDE\u63A5\u3002" : "Attention MCP \u6388\u6743/\u8FDE\u63A5\u4ECD\u9700\u6062\u590D\uFF0C\u53EF\u53D1\u9001\u300C\u91CD\u8BD5\u300D\u3002"}\u8FD9\u4E0D\u4EE3\u8868\u6536\u85CF\u6458\u8981\u5DF2\u8865\u5168\u3002`);
+      } else {
+        op.phase = managed.status === "rolled_back" && managed.latestVersion === op.manifest.version ? "rolled_back" : "failed";
+        next.quarantine.push(op.identity);
+        next.lastErrorCode = op.phase === "rolled_back" ? "candidate_rolled_back" : "update_interrupted";
+        this.event(next, op.owner, `${op.id}:interrupted`, op.phase === "rolled_back" ? `Bridge ${op.manifest.version} \u542F\u52A8\u672A\u901A\u8FC7\uFF0C\u5DF2\u56DE\u6EDA\uFF1B\u5B9E\u9645\u8FD0\u884C ${this.options.currentVersion}\u3002\u8BE5\u5019\u9009\u5DF2\u6682\u505C\u81EA\u52A8\u5B89\u88C5\uFF0C\u53EF\u53D1\u9001\u300C\u68C0\u67E5\u66F4\u65B0\u300D\u91CD\u65B0\u68C0\u67E5\u3002` : `\u4E0A\u6B21 Bridge \u5347\u7EA7\u5728\u5B8C\u6210\u524D\u4E2D\u65AD\uFF0C\u5F53\u524D\u8FD0\u884C ${this.options.currentVersion}\uFF1B\u6CA1\u6709\u7EE7\u7EED\u4F7F\u7528\u65E7\u7684\u5347\u7EA7\u786E\u8BA4\u3002\u8BF7\u53D1\u9001\u300C\u68C0\u67E5\u66F4\u65B0\u300D\u3002`);
+      }
+    }
+    await this.commit(next);
+  }
+  status() {
+    const op = this.journal.operation;
+    const labels = { offered: "\u7B49\u5F85\u7CBE\u786E\u786E\u8BA4", approved: "\u5DF2\u6279\u51C6", downloading: "\u4E0B\u8F7D\u548C\u6821\u9A8C\u4E2D", waiting_safe_point: "\u7B49\u5F85\u51FA\u7AD9\u6D88\u606F\u53D1\u9001\u5B8C\u6210", switching: "\u6B63\u5728\u91CD\u542F", started: "\u5DF2\u542F\u52A8", deferred: "\u5DF2\u63A8\u8FDF", expired: "\u786E\u8BA4\u5DF2\u5931\u6548", cancelled: "\u5DF2\u53D6\u6D88", failed: "\u5931\u8D25\uFF0C\u65E7\u7248\u7EE7\u7EED\u8FD0\u884C", rolled_back: "\u5DF2\u56DE\u6EDA" };
+    return `\u8FD0\u884C Bridge\uFF1A${this.options.currentVersion}\uFF08\u5168\u5C40 CLI \u5355\u72EC\u5347\u7EA7\uFF09\u3002${op ? `\u5019\u9009 ${op.manifest.version}\uFF1A${labels[op.phase]}\u3002` : "\u6682\u65E0\u5347\u7EA7\u64CD\u4F5C\u3002"}${this.journal.lastErrorCode ? "\u6700\u8FD1\u68C0\u67E5/\u5B89\u88C5\u672A\u5B8C\u6210\uFF1B\u53EF\u53D1\u9001\u300C\u68C0\u67E5\u66F4\u65B0\u300D\u3002" : ""}\u53EF\u7528\uFF1A\u68C0\u67E5\u66F4\u65B0\u3001\u5347\u7EA7\u72B6\u6001\u3001\u7A0D\u540E\u5347\u7EA7\u3001\u53D6\u6D88\u5347\u7EA7\u3002`;
+  }
+  async command(command2, inboundId, owner) {
+    const next = this.copy(), ref = updateDigest(["inbound", inboundId]);
+    if (next.consumed.includes(ref))
+      return;
+    next.consumed.push(ref);
+    const op = next.operation;
+    let reply;
+    let check3 = false;
+    switch (command2.kind) {
+      case "status":
+        reply = this.status();
+        break;
+      case "check":
+        if (this.job || op && ACTIVE.has(op.phase))
+          reply = "\u5347\u7EA7\u68C0\u67E5\u6216\u5B89\u88C5\u6B63\u5728\u8FDB\u884C\uFF0C\u53EF\u53D1\u9001\u300C\u5347\u7EA7\u72B6\u6001\u300D\u67E5\u770B\uFF1B\u4E0D\u9700\u8981\u91CD\u590D\u63D0\u4EA4\u3002";
+        else if (next.lastManualCheckAt !== null && this.now() - next.lastManualCheckAt < 6e4)
+          reply = "\u521A\u68C0\u67E5\u8FC7\u66F4\u65B0\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5\uFF1B\u300C\u5347\u7EA7\u72B6\u6001\u300D\u53EF\u7ACB\u5373\u67E5\u770B\u672C\u5730\u8FDB\u5EA6\u3002";
+        else {
+          next.lastManualCheckAt = this.now();
+          next.nextCheckAt = this.now() + 36e5;
+          check3 = true;
+          reply = "\u6B63\u5728\u68C0\u67E5 Bridge \u66F4\u65B0\uFF1B\u8FD9\u4E00\u6B65\u4E0D\u4F1A\u6279\u51C6\u65B0\u589E\u6743\u9650\u3002";
+        }
+        break;
+      case "confirm_help":
+        reply = "\u8BF7\u5B8C\u6574\u590D\u5236\u66F4\u65B0\u63D0\u793A\u4E2D\u7684\u300C\u786E\u8BA4\u5347\u7EA7 \u7248\u672C \u786E\u8BA4\u7801\u300D\uFF1B\u5982\u679C\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u53D1\u9001\u300C\u68C0\u67E5\u66F4\u65B0\u300D\u3002";
+        break;
+      case "confirm":
+        if (!op || op.owner !== owner || op.phase !== "offered" || op.expiresAt <= this.now())
+          reply = "\u6CA1\u6709\u53EF\u4F7F\u7528\u7684\u5347\u7EA7\u786E\u8BA4\uFF0C\u6216\u786E\u8BA4\u5DF2\u8FC7\u671F\u3002\u8BF7\u53D1\u9001\u300C\u68C0\u67E5\u66F4\u65B0\u300D\u3002";
+        else if (op.manifest.version !== command2.version || op.codeHash !== updateDigest([op.id, command2.code])) {
+          op.errors++;
+          if (op.errors >= 3)
+            op.phase = "expired";
+          reply = op.errors >= 3 ? "\u786E\u8BA4\u4FE1\u606F\u8FDE\u7EED\u4E0D\u5339\u914D\uFF0C\u672C\u6B21\u786E\u8BA4\u5DF2\u5931\u6548\u3002\u8BF7\u53D1\u9001\u300C\u68C0\u67E5\u66F4\u65B0\u300D\u3002" : "\u786E\u8BA4\u4FE1\u606F\u4E0D\u5339\u914D\uFF0C\u8BF7\u590D\u5236\u5F53\u524D\u66F4\u65B0\u63D0\u793A\u4E2D\u7684\u5B8C\u6574\u547D\u4EE4\u3002";
+        } else {
+          op.phase = "approved";
+          op.approvedUntil = this.now() + 30 * 6e4;
+          reply = `\u5DF2\u786E\u8BA4 Bridge ${op.manifest.version}\u3002\u6B63\u5728\u51C6\u5907\u548C\u6821\u9A8C\u5B89\u88C5\u5305\uFF1B\u5207\u6362\u524D\u53EF\u53D1\u9001\u300C\u53D6\u6D88\u5347\u7EA7\u300D\uFF0C\u5F85\u5904\u7406\u6D88\u606F\u4F1A\u4FDD\u7559\u3002`;
+        }
+        break;
+      case "defer":
+      case "cancel":
+        if (op?.phase === "switching")
+          reply = "\u5DF2\u7ECF\u63D0\u4EA4\u7248\u672C\u5207\u6362\uFF0C\u6B63\u5728\u91CD\u542F\uFF1B\u73B0\u5728\u4E0D\u80FD\u53D6\u6D88\uFF0C\u4E5F\u4E0D\u4F1A\u81EA\u52A8\u89E6\u53D1\u56DE\u6EDA\u3002";
+        else if (op && (op.phase === "offered" || ACTIVE.has(op.phase))) {
+          op.phase = command2.kind === "defer" ? "deferred" : "cancelled";
+          this.abort?.abort();
+          this.prepared = null;
+          this.discardResult = !!this.job;
+          reply = "\u672C\u6B21\u5347\u7EA7\u5DF2\u64A4\u9500\uFF0C\u5F53\u524D\u7248\u672C\u7EE7\u7EED\u8FD0\u884C\uFF1B\u4E0B\u8F7D\u4EFB\u52A1\u82E5\u5C1A\u672A\u9000\u51FA\uFF0C\u4F1A\u5148\u505C\u6B62\u5E76\u5B8C\u6210\u6E05\u7406\u3002\u9700\u8981\u65F6\u53D1\u9001\u300C\u68C0\u67E5\u66F4\u65B0\u300D\u3002";
+        } else
+          reply = "\u5F53\u524D\u6CA1\u6709\u53EF\u53D6\u6D88\u7684\u5347\u7EA7\u64CD\u4F5C\u3002";
+        break;
+    }
+    this.event(next, owner, `command:${ref}`, reply);
+    await this.commit(next);
+    if (check3)
+      this.startCheck(true);
+  }
+  async acceptResult(owner) {
+    const result = this.result;
+    if (!result)
+      return;
+    this.result = null;
+    this.job = null;
+    this.abort = null;
+    if (this.discardResult) {
+      this.discardResult = false;
+      return;
+    }
+    const next = this.copy();
+    if (result.kind === "check") {
+      const { manifest, changes, consent } = result.value;
+      const identity = releaseIdentity(this.options.origin, manifest, this.options.currentVersion, this.options.currentPermissionProfileSha256);
+      const old = next.operation;
+      if (compareSemanticVersions(manifest.version, this.options.currentVersion) <= 0) {
+        if (result.manual)
+          this.event(next, owner, `current:${next.lastManualCheckAt}`, `\u8FD0\u884C Bridge ${this.options.currentVersion} \u5DF2\u662F\u5F53\u524D\u53EF\u7528\u7248\u672C\uFF1B\u4E0D\u4F1A\u964D\u7EA7\u3002`);
+      } else if (!result.manual && (old?.identity === identity || old?.phase === "deferred" && old.manifest.version === manifest.version || next.quarantine.includes(identity))) {
+      } else if (consent && changes === null) {
+        const id = updateDigest([randomUUID6(), identity, owner]);
+        next.operation = {
+          id,
+          identity,
+          owner,
+          manifest,
+          currentVersion: this.options.currentVersion,
+          currentPermissionSha: this.options.currentPermissionProfileSha256,
+          phase: "deferred",
+          explicit: true,
+          codeHash: null,
+          expiresAt: this.now(),
+          approvedUntil: null,
+          errors: 0
+        };
+        this.event(next, owner, `${id}:unsupported`, `\u53D1\u73B0 Bridge ${manifest.version}\uFF0C\u4F46\u5176\u6743\u9650\u6216\u8FD0\u884C\u8981\u6C42\u65E0\u6CD5\u7531\u5F53\u524D\u7248\u672C\u5B8C\u6574\u89E3\u91CA\u3002\u5FAE\u4FE1\u786E\u8BA4\u4E0D\u4F1A\u653E\u884C\u672A\u77E5\u6743\u9650\u3001\u8DE8\u4E3B\u7248\u672C\u6216\u7CFB\u7EDF\u6743\u9650\u53D8\u5316\uFF1B\u9700\u8981\u5728\u7535\u8111\u7AEF\u5355\u72EC\u5BA1\u67E5\u3002\u5F53\u524D ${this.options.currentVersion} \u7EE7\u7EED\u8FD0\u884C\u3002`);
+      } else {
+        const id = updateDigest([randomUUID6(), identity, owner]);
+        const code = Array.from({ length: 6 }, () => ALPHABET[randomInt(ALPHABET.length)]).join("");
+        next.operation = {
+          id,
+          identity,
+          owner,
+          manifest,
+          currentVersion: this.options.currentVersion,
+          currentPermissionSha: this.options.currentPermissionProfileSha256,
+          phase: consent ? "offered" : "approved",
+          explicit: consent || result.manual,
+          codeHash: consent ? updateDigest([id, code]) : null,
+          expiresAt: this.now() + 6e5,
+          approvedUntil: null,
+          errors: 0
+        };
+        next.lastErrorCode = null;
+        if (consent) {
+          this.event(next, owner, `${id}:offer`, `\u53D1\u73B0 Bridge ${manifest.version}\uFF0C\u5F53\u524D ${this.options.currentVersion}\u3002
+${changes.join("\n")}
+\u4E0D\u5F00\u653E Shell\u3001\u672C\u5730\u6587\u4EF6\u6216\u5176\u4ED6 MCP\u3002\u5347\u7EA7\u5C06\u77ED\u6682\u91CD\u8FDE\uFF0C\u4FDD\u7559\u5FAE\u4FE1\u767B\u5F55\u53CA\u5F85\u5904\u7406\u6D88\u606F\u3002
+\u8BF7\u56DE\u590D\uFF1A\u786E\u8BA4\u5347\u7EA7 ${manifest.version} ${code}
+10 \u5206\u949F\u5185\u6709\u6548\uFF1B\u4E5F\u53EF\u4EE5\u56DE\u590D\u300C\u7A0D\u540E\u5347\u7EA7\u300D\u3002`);
+          Object.assign(next.events.at(-1), { offerId: id, expiresAt: next.operation.expiresAt });
+        }
+      }
+    } else if (result.kind === "prepare") {
+      if (next.operation?.id === result.id && next.operation.phase === "downloading") {
+        next.operation.phase = "waiting_safe_point";
+        this.prepared = result.value;
+        if (next.operation.explicit)
+          this.event(next, next.operation.owner, `${result.id}:starting`, `Bridge ${result.value.manifest.version} \u5B89\u88C5\u5305\u5DF2\u6821\u9A8C\uFF1B\u672C\u6761\u53CA\u5DF2\u6709\u56DE\u590D\u9001\u8FBE\u540E\u5C06\u77ED\u6682\u91CD\u542F\u3002\u5FAE\u4FE1\u767B\u5F55\u548C\u5F85\u5904\u7406\u6D88\u606F\u4F1A\u4FDD\u7559\u3002`);
+      }
+    } else {
+      if (result.id === null) {
+        next.lastErrorCode = "update_check_failed";
+        if (result.manual)
+          this.event(next, owner, `check-failed:${next.lastManualCheckAt}`, "\u6682\u65F6\u65E0\u6CD5\u9A8C\u8BC1\u66F4\u65B0\u6E90\u6216\u8FD0\u884C\u8981\u6C42\uFF1B\u6CA1\u6709\u5B89\u88C5\u4EFB\u4F55\u7248\u672C\uFF0C\u5F53\u524D Bridge \u7EE7\u7EED\u8FD0\u884C\u3002\u7A0D\u540E\u53EF\u53D1\u9001\u300C\u68C0\u67E5\u66F4\u65B0\u300D\u3002");
+      } else if (next.operation?.id === result.id && next.operation.phase === "downloading") {
+        next.operation.phase = "failed";
+        next.quarantine.push(next.operation.identity);
+        next.lastErrorCode = "candidate_preparation_failed";
+        this.event(next, next.operation.owner, `${result.id}:failed`, "Bridge \u5B89\u88C5\u5305\u4E0B\u8F7D\u6216\u5B89\u5168\u6821\u9A8C\u672A\u901A\u8FC7\uFF0C\u65E7\u7248\u7EE7\u7EED\u8FD0\u884C\uFF1B\u6CA1\u6709\u6539\u53D8\u6743\u9650\u6216\u767B\u5F55\u72B6\u6001\u3002\u53EF\u53D1\u9001\u300C\u68C0\u67E5\u66F4\u65B0\u300D\u91CD\u65B0\u68C0\u67E5\u3002");
+      }
+    }
+    await this.commit(next);
+  }
+  async notifications(state, persist) {
+    const next = this.copy();
+    let changed = false;
+    for (const event of next.events) {
+      if (event.delivery === "delivered" || event.delivery === "superseded")
+        continue;
+      const id = `update-${event.id.slice(0, 32)}`;
+      if (event.offerId && (event.offerId !== next.operation?.id || next.operation.phase !== "offered" || (event.expiresAt ?? 0) <= this.now())) {
+        state.pendingOutbound = state.pendingOutbound.filter((e) => e.id !== id);
+        await persist();
+        event.delivery = "superseded";
+        changed = true;
+        continue;
+      }
+      const owner = state.ownerUserId;
+      if (!owner || ownerFingerprint(owner) !== event.owner)
+        continue;
+      const queued = state.pendingOutbound.some((e) => e.id === id);
+      if (event.delivery === "enqueued" && !queued) {
+        event.delivery = "delivered";
+        changed = true;
+        continue;
+      }
+      if (event.delivery === "pending") {
+        const contextToken = state.contextTokens[owner];
+        if (!contextToken)
+          continue;
+        enqueueOutbound(state, { id, contextToken, text: event.text, toUserId: owner });
+        await persist();
+        event.delivery = "enqueued";
+        changed = true;
+      }
+    }
+    if (changed)
+      await this.commit(next);
+  }
+  async tick(state, persist) {
+    if (!this.journal) {
+      this.journal = await loadUpdateJournal(this.options.homeDirectory);
+      await this.reconcile(state);
+    }
+    const owner = state.ownerUserId ? ownerFingerprint(state.ownerUserId) : null;
+    if (!owner) {
+      if (!this.job && this.now() >= this.journal.nextCheckAt) {
+        const checking = this.copy();
+        checking.nextCheckAt = this.now() + 36e5;
+        await this.commit(checking);
+        this.startCheck(false);
+      }
+      return;
+    }
+    const next = this.copy(), op = next.operation;
+    if (op && (op.owner !== owner && (op.phase === "offered" || ACTIVE.has(op.phase)) || op.phase === "offered" && (op.expiresAt <= this.now() || op.identity !== releaseIdentity(this.options.origin, op.manifest, this.options.currentVersion, this.options.currentPermissionProfileSha256)) || op.codeHash && ACTIVE.has(op.phase) && op.phase !== "switching" && (op.approvedUntil ?? 0) <= this.now())) {
+      op.phase = "expired";
+      this.abort?.abort();
+      this.prepared = null;
+      await this.commit(next);
+    }
+    const inbox = state.pendingInbound, length = inbox.length, start = length ? this.scanOffset % length : 0;
+    const batch = Array.from({ length: Math.min(length, 128) }, (_, i) => inbox[(start + i) % length]);
+    this.scanOffset = start + batch.length;
+    let commands = 0;
+    for (const pending of batch) {
+      if (pending.message.fromUserId === state.ownerUserId && pending.message.contextToken)
+        state.contextTokens[state.ownerUserId] = pending.message.contextToken;
+      const command2 = matchUpdateCommand(pending.message, state.ownerUserId);
+      if (!command2 || commands >= 8)
+        continue;
+      await this.command(command2, pending.id, owner);
+      completeInbound(state, pending.id);
+      await persist();
+      commands++;
+    }
+    await this.acceptResult(owner);
+    const current = this.journal;
+    if (!this.job && current.operation?.phase === "approved") {
+      const downloading = this.copy();
+      downloading.operation.phase = "downloading";
+      await this.commit(downloading);
+      this.startPreparation(downloading.operation);
+    } else if (!this.job && !this.pausesBusiness && this.now() >= current.nextCheckAt) {
+      const checking = this.copy();
+      checking.nextCheckAt = this.now() + 36e5;
+      await this.commit(checking);
+      this.startCheck(false);
+    }
+    await this.notifications(state, persist);
+  }
+  /** Invoked only by the serial service loop, after all active business and sends settle. */
+  async activateIfSafe(state, persist, idle = () => true, quiesce = async () => {
+  }) {
+    if (this.restart)
+      return true;
+    await this.notifications(state, persist);
+    const op = this.journal?.operation;
+    if (!op || op.phase !== "waiting_safe_point" || !this.prepared || state.pendingOutbound.length || !idle() || state.runtimeState.activeTurnMessageRef)
+      return false;
+    if (this.journal.events.some((e) => e.owner === op.owner && e.delivery !== "delivered" && e.delivery !== "superseded"))
+      return false;
+    await quiesce();
+    if (state.pendingOutbound.length || !idle() || state.runtimeState.activeTurnMessageRef) return false;
+    const switching = this.copy();
+    switching.operation.phase = "switching";
+    await this.commit(switching);
+    try {
+      await activateBridgeUpdate(this.options, this.prepared, () => idle() && state.pendingOutbound.length === 0 && (!op.codeHash || (op.approvedUntil ?? 0) > this.now()));
+      this.restart = true;
+      return true;
+    } catch {
+      const selected = await loadManagedBridgeUpdateState(this.options.homeDirectory);
+      if (selected.current.artifactPath === this.prepared.candidatePath && selected.current.version === op.manifest.version && selected.current.permissionProfileSha256 === op.manifest.permission_profile_sha256 && selected.pending?.version === op.manifest.version) {
+        this.restart = true;
+        return true;
+      }
+      const failed = this.copy();
+      failed.operation.phase = "failed";
+      failed.quarantine.push(op.identity);
+      failed.lastErrorCode = "candidate_activation_failed";
+      this.event(failed, op.owner, `${op.id}:activation-failed`, "\u5347\u7EA7\u5207\u6362\u524D\u7684\u590D\u6838\u672A\u901A\u8FC7\uFF0C\u5F53\u524D\u8FDB\u7A0B\u7EE7\u7EED\u8FD0\u884C\uFF1B\u672C\u6B21\u786E\u8BA4\u5DF2\u505C\u6B62\u3002\u8BF7\u53D1\u9001\u300C\u68C0\u67E5\u66F4\u65B0\u300D\u3002");
+      await this.commit(failed);
+      this.prepared = null;
+      return false;
+    }
+  }
+  async stop() {
+    this.abort?.abort();
+    await this.job;
+  }
+};
 
 // src/channel/bridge-update-schedule.ts
 var BRIDGE_UPDATE_INTERVAL_MS = 60 * 60 * 1e3;
@@ -37259,22 +37972,22 @@ function nextBridgeUpdateCheckAt(checkedAt) {
 init_state();
 import {
   access as access2,
-  chmod as chmod5,
+  chmod as chmod6,
   link,
   lstat as lstat2,
-  mkdir as mkdir5,
+  mkdir as mkdir6,
   readlink,
   stat as stat2,
   symlink
 } from "node:fs/promises";
 import { constants as constants2 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { dirname as dirname5, join as join6, resolve } from "node:path";
+import { dirname as dirname6, join as join7, resolve } from "node:path";
 function channelCodexHomeDirectory(baseDirectory) {
-  return join6(channelStateDirectory(baseDirectory), "codex-home");
+  return join7(channelStateDirectory(baseDirectory), "codex-home");
 }
 function sourceCodexHome(options) {
-  return options.sourceCodexHome ?? process.env.CODEX_HOME ?? join6(options.homeDirectory ?? homedir5(), ".codex");
+  return options.sourceCodexHome ?? process.env.CODEX_HOME ?? join7(options.homeDirectory ?? homedir5(), ".codex");
 }
 async function sameLinkedFile(left, right) {
   const [leftStat, rightStat] = await Promise.all([stat2(left), stat2(right)]);
@@ -37284,7 +37997,7 @@ async function existingDestinationMatches(destination, source) {
   try {
     const info = await lstat2(destination);
     if (info.isSymbolicLink()) {
-      return resolve(dirname5(destination), await readlink(destination)) === source;
+      return resolve(dirname6(destination), await readlink(destination)) === source;
     }
     return await sameLinkedFile(destination, source);
   } catch (error101) {
@@ -37295,7 +38008,7 @@ async function existingDestinationMatches(destination, source) {
 async function rejectHomeScopedMcpCredentials(destinationHome) {
   for (const name of [".credentials.json", "secrets"]) {
     try {
-      await lstat2(join6(destinationHome, name));
+      await lstat2(join7(destinationHome, name));
       throw new Error(
         `Attention found home-scoped MCP credentials in the isolated Codex home (${name}); refusing to use or overwrite them. Reauthorize through attention configure codex --apply --login after upgrading Codex.`
       );
@@ -37306,7 +38019,7 @@ async function rejectHomeScopedMcpCredentials(destinationHome) {
 }
 async function prepareChannelCodexHome(options = {}) {
   const sourceHome = resolve(sourceCodexHome(options));
-  const sourceAuthPath = join6(sourceHome, "auth.json");
+  const sourceAuthPath = join7(sourceHome, "auth.json");
   try {
     await access2(sourceAuthPath, constants2.R_OK);
   } catch {
@@ -37317,10 +38030,10 @@ async function prepareChannelCodexHome(options = {}) {
   const destinationHome = resolve(
     channelCodexHomeDirectory(options.baseDirectory)
   );
-  await mkdir5(destinationHome, { mode: 448, recursive: true });
-  await chmod5(destinationHome, 448);
+  await mkdir6(destinationHome, { mode: 448, recursive: true });
+  await chmod6(destinationHome, 448);
   await rejectHomeScopedMcpCredentials(destinationHome);
-  const destinationAuthPath = join6(destinationHome, "auth.json");
+  const destinationAuthPath = join7(destinationHome, "auth.json");
   if (sourceAuthPath === destinationAuthPath) return destinationHome;
   if (await existingDestinationMatches(destinationAuthPath, sourceAuthPath)) {
     return destinationHome;
@@ -37465,90 +38178,6 @@ function createMcpRecoverySupervisor(dependencies) {
 
 // src/channel/ilink-client.ts
 init_ilink_protocol();
-
-// src/channel/messages.ts
-import { createHash as createHash4 } from "node:crypto";
-function readString(value) {
-  return typeof value === "string" ? value.trim() : "";
-}
-function extractText(itemList) {
-  if (!Array.isArray(itemList)) {
-    return { nonTextOnly: false, text: "" };
-  }
-  const parts = [];
-  let sawNonText = false;
-  let sawText = false;
-  const collect = (item, depth) => {
-    if (depth > 2) return;
-    const referencedTitle = readString(item.ref_msg?.title);
-    if (referencedTitle) {
-      parts.push(referencedTitle);
-      sawText = true;
-    }
-    if (item.ref_msg?.message_item) {
-      collect(item.ref_msg.message_item, depth + 1);
-    }
-    const itemType = Number(item.type ?? 0) || 0;
-    if (itemType === 1) {
-      const text = readString(item.text_item?.text);
-      if (text) {
-        parts.push(text);
-        sawText = true;
-      }
-    } else if (itemType === 3) {
-      const voiceText = readString(item.voice_item?.text);
-      if (voiceText) {
-        parts.push(voiceText);
-        sawText = true;
-      } else {
-        sawNonText = true;
-      }
-    } else if (itemType >= 2 && itemType <= 5) {
-      sawNonText = true;
-    }
-  };
-  for (const raw of itemList) {
-    if (raw === null || typeof raw !== "object") continue;
-    collect(raw, 0);
-  }
-  return {
-    nonTextOnly: sawNonText && !sawText,
-    text: parts.join("\n").trim()
-  };
-}
-var SHARED_LINK_RE = /(?:https?:\/\/|www\.)[^\s]+/iu;
-function shouldSendProcessingAcknowledgement(message) {
-  return SHARED_LINK_RE.test(extractText(message.itemList).text);
-}
-function messageIdentifier(message) {
-  const explicit = [
-    "client_id",
-    "msg_id",
-    "message_id",
-    "svr_id"
-  ].map((key) => readString(message.raw[key])).find((value) => value.length > 0);
-  if (explicit) return explicit;
-  const fingerprintSource = [
-    message.fromUserId,
-    message.contextToken,
-    JSON.stringify(message.itemList ?? null)
-  ].join("|");
-  return `fp-${createHash4("sha256").update(fingerprintSource, "utf8").digest("hex").slice(0, 32)}`;
-}
-function parseInboundMessage(raw) {
-  if (raw === null || typeof raw !== "object") return null;
-  const record4 = raw;
-  const fromUserId = readString(record4.from_user_id);
-  if (!fromUserId) return null;
-  return {
-    contextToken: readString(record4.context_token),
-    fromUserId,
-    itemList: record4.item_list,
-    raw: record4
-  };
-}
-
-// src/channel/ilink-client.ts
 var MAXIMUM_RESPONSE_CHARS = 1048576;
 var QR_REQUEST_TIMEOUT_MS = 15e3;
 var ILinkQrProtocolError = class extends Error {
@@ -37740,11 +38369,11 @@ init_ilink_protocol();
 
 // src/channel/lock.ts
 init_state();
-import { randomUUID as randomUUID5 } from "node:crypto";
-import { mkdir as mkdir6, open, readFile as readFile5, rm as rm5 } from "node:fs/promises";
-import { join as join7 } from "node:path";
+import { randomUUID as randomUUID7 } from "node:crypto";
+import { mkdir as mkdir7, open, readFile as readFile6, rm as rm6 } from "node:fs/promises";
+import { join as join8 } from "node:path";
 function channelLockPath(baseDirectory) {
-  return join7(channelStateDirectory(baseDirectory), "bridge.lock");
+  return join8(channelStateDirectory(baseDirectory), "bridge.lock");
 }
 function processAlive(pid) {
   try {
@@ -37767,9 +38396,9 @@ async function acquireChannelLock(baseDirectory, options = {}) {
   const path = channelLockPath(baseDirectory);
   const pid = options.pid ?? process.pid;
   const isProcessAlive = options.isProcessAlive ?? processAlive;
-  const contents = `${JSON.stringify({ nonce: randomUUID5(), pid })}
+  const contents = `${JSON.stringify({ nonce: randomUUID7(), pid })}
 `;
-  await mkdir6(channelStateDirectory(baseDirectory), {
+  await mkdir7(channelStateDirectory(baseDirectory), {
     mode: 448,
     recursive: true
   });
@@ -37782,8 +38411,8 @@ async function acquireChannelLock(baseDirectory, options = {}) {
         path,
         async release() {
           try {
-            if (await readFile5(path, "utf8") === contents) {
-              await rm5(path, { force: true });
+            if (await readFile6(path, "utf8") === contents) {
+              await rm6(path, { force: true });
             }
           } catch (error101) {
             if (error101.code !== "ENOENT") throw error101;
@@ -37794,13 +38423,13 @@ async function acquireChannelLock(baseDirectory, options = {}) {
       if (error101.code !== "EEXIST") throw error101;
       let existingPid;
       try {
-        existingPid = storedPid(await readFile5(path, "utf8"));
+        existingPid = storedPid(await readFile6(path, "utf8"));
       } catch (readError) {
         if (readError.code === "ENOENT") continue;
         throw readError;
       }
       if (existingPid !== null && isProcessAlive(existingPid)) return null;
-      await rm5(path, { force: true });
+      await rm6(path, { force: true });
     }
   }
   return null;
@@ -37809,55 +38438,9 @@ async function acquireChannelLock(baseDirectory, options = {}) {
 // src/channel/notifications.ts
 init_src2();
 
-// src/channel/queue.ts
-import { createHash as createHash5 } from "node:crypto";
-init_state();
-function enqueueInbound(state, messages) {
-  const known = /* @__PURE__ */ new Set([
-    ...state.processedMessageIds,
-    ...state.pendingInbound.map((item) => item.id)
-  ]);
-  let added = 0;
-  for (const message of messages) {
-    const id = messageIdentifier(message);
-    if (known.has(id)) continue;
-    state.pendingInbound.push({
-      acknowledged: false,
-      attempts: 0,
-      blockedBy: null,
-      id,
-      message
-    });
-    known.add(id);
-    added += 1;
-  }
-  return added;
-}
-function completeInbound(state, id) {
-  const index = state.pendingInbound.findIndex((item) => item.id === id);
-  if (index >= 0) state.pendingInbound.splice(index, 1);
-  if (!state.processedMessageIds.includes(id)) {
-    rememberProcessedMessage(state, id);
-  }
-}
-function enqueueOutbound(state, message) {
-  if (state.pendingOutbound.some((item) => item.id === message.id)) return;
-  state.pendingOutbound.push(message);
-}
-function markOutboundSent(state, id) {
-  const index = state.pendingOutbound.findIndex((item) => item.id === id);
-  if (index >= 0) state.pendingOutbound.splice(index, 1);
-}
-function outboundIdentifier(input) {
-  return `out-${createHash5("sha256").update(
-    `${input.inboundId}:${input.kind}:${String(input.index ?? 0)}`,
-    "utf8"
-  ).digest("hex").slice(0, 32)}`;
-}
-
 // src/channel/runtime-reporter.ts
 init_src2();
-import { randomUUID as randomUUID6 } from "node:crypto";
+import { randomUUID as randomUUID8 } from "node:crypto";
 var RUNTIME_REPORTER_SCOPES = [...CHANNEL_RUNTIME_SCOPES];
 var DEFAULT_HEARTBEAT_INTERVAL_MS = 6e4;
 var DEFAULT_REQUEST_TIMEOUT_MS = 3e4;
@@ -37899,7 +38482,7 @@ var LocalRuntimeReporter = class {
   constructor(options) {
     this.#runtimeBaseUrl = normalizeRuntimeBaseUrl(options.runtimeBaseUrl);
     this.#accessTokenProvider = options.accessTokenProvider;
-    this.#eventId = options.eventId ?? randomUUID6;
+    this.#eventId = options.eventId ?? randomUUID8;
     this.#fetch = options.fetchImpl ?? fetch;
     this.#heartbeatIntervalMs = positiveDuration(
       options.heartbeatIntervalMs,
@@ -38397,7 +38980,7 @@ ${item.summary}
 init_limits();
 
 // src/channel/pipeline.ts
-import { createHash as createHash6 } from "node:crypto";
+import { createHash as createHash7 } from "node:crypto";
 init_limits();
 init_state();
 init_reader_recovery();
@@ -38574,7 +39157,7 @@ var RETRY_COMMANDS = /* @__PURE__ */ new Set([
   "\u91CD\u8BD5\u4E00\u4E0B"
 ]);
 function buildMessageRef(messageId) {
-  const digest = createHash6("sha256").update(messageId).digest("hex");
+  const digest = createHash7("sha256").update(messageId).digest("hex");
   return `msg-${digest.slice(0, 48)}`;
 }
 function matchControlCommand(text, context) {
@@ -38776,6 +39359,7 @@ function buildControlReply(command2, state, hostId) {
         `${runtimeName} Runtime\uFF1A${runtime.phase}${runtimeRetry}`,
         `Attention MCP\uFF1A${state.attentionMcp.status}${mcpAvailability}${mcpRetry}`,
         `Reporter\uFF1A${reporterEnabled ? "\u5DF2\u542F\u7528" : "\u672A\u542F\u7528"}`,
+        "Bridge \u66F4\u65B0\uFF1A\u53D1\u9001\u300C\u5347\u7EA7\u72B6\u6001\u300D\u67E5\u770B\u672C\u5730\u8FDB\u5EA6\uFF0C\u6216\u300C\u68C0\u67E5\u66F4\u65B0\u300D\u67E5\u8BE2\u65B0\u7248\u672C\u3002",
         `\u6700\u8FD1\u6210\u529F\u5904\u7406\uFF1A${lastSuccess}`,
         `\u961F\u5217\uFF1A${state.pendingInbound.length} \u6761\u5F85\u5904\u7406\uFF0C${state.pendingOutbound.length} \u6761\u5F85\u53D1\u9001`,
         `\u6458\u8981\u91CD\u8BD5\uFF1A${retries.active} \u9879\u6D3B\u52A8\uFF08${retries.running} \u9879\u8FD0\u884C\uFF09\uFF0C${retries.paused} \u9879\u6682\u505C${retries.nextAttemptAt ? `\uFF1B\u6700\u8FD1\u8BA1\u5212\uFF1A${retries.nextAttemptAt}` : ""}`
@@ -39547,9 +40131,9 @@ async function displayQrCode(payload, options = {}) {
 }
 
 // src/channel/runtime-identity.ts
-import { createHash as createHash7 } from "node:crypto";
+import { createHash as createHash8 } from "node:crypto";
 function opaqueRuntimeFingerprint(namespace, value) {
-  return createHash7("sha256").update(`attention:${namespace}:`, "utf8").update(value, "utf8").digest("hex");
+  return createHash8("sha256").update(`attention:${namespace}:`, "utf8").update(value, "utf8").digest("hex");
 }
 function channelSessionFingerprint(token) {
   if (!token) throw new Error("ilink_session_missing");
@@ -39557,10 +40141,10 @@ function channelSessionFingerprint(token) {
 }
 
 // src/channel/service.ts
-import { randomUUID as randomUUID7 } from "node:crypto";
-import { access as access3, chmod as chmod6, mkdir as mkdir7, rename as rename5, rm as rm6, writeFile as writeFile5 } from "node:fs/promises";
+import { randomUUID as randomUUID9 } from "node:crypto";
+import { access as access3, chmod as chmod7, mkdir as mkdir8, rename as rename6, rm as rm7, writeFile as writeFile6 } from "node:fs/promises";
 import { homedir as homedir6 } from "node:os";
-import { dirname as dirname6, posix, win32 } from "node:path";
+import { dirname as dirname7, posix, win32 } from "node:path";
 var SERVICE_LABEL = "cn.noveltystudio.attention.channel";
 function xml(value) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
@@ -39793,18 +40377,18 @@ async function executeCommands(commands, label, runner, sleep = async (milliseco
 }
 async function installChannelService(plan, runner = runCommand, sleep) {
   for (const file3 of plan.files) {
-    await mkdir7(dirname6(file3.path), { mode: 448, recursive: true });
-    const temporary = `${file3.path}.${process.pid}.${randomUUID7()}.tmp`;
+    await mkdir8(dirname7(file3.path), { mode: 448, recursive: true });
+    const temporary = `${file3.path}.${process.pid}.${randomUUID9()}.tmp`;
     try {
-      await writeFile5(temporary, file3.contents, {
+      await writeFile6(temporary, file3.contents, {
         encoding: "utf8",
         flag: "wx",
         mode: file3.mode
       });
-      await rename5(temporary, file3.path);
-      await chmod6(file3.path, file3.mode);
+      await rename6(temporary, file3.path);
+      await chmod7(file3.path, file3.mode);
     } finally {
-      await rm6(temporary, { force: true });
+      await rm7(temporary, { force: true });
     }
   }
   await executeCommands(plan.commands, plan.label, runner, sleep);
@@ -39834,7 +40418,7 @@ async function installManagedChannelService(input, runner = runCommand, sleep) {
 }
 async function uninstallChannelService(plan, runner = runCommand) {
   await executeCommands(plan.commands, plan.label, runner);
-  for (const path of plan.paths) await rm6(path, { force: true });
+  for (const path of plan.paths) await rm7(path, { force: true });
   await executeCommands(plan.afterCommands, plan.label, runner);
 }
 async function isChannelServiceConfigured(input) {
@@ -39900,7 +40484,7 @@ async function processDueSummaryRetry(input) {
   checkpoint.budget.sequence++;
   await input.persist();
   const attempt = checkpoint.budget.sequence;
-  const retryRef = `summary-retry-${createHash8("sha256").update(`${running.collectionId}:${running.cycleStartedAt}:${checkpoint.budget.sequence}`).digest("hex").slice(0, 48)}`;
+  const retryRef = `summary-retry-${createHash9("sha256").update(`${running.collectionId}:${running.cycleStartedAt}:${checkpoint.budget.sequence}`).digest("hex").slice(0, 48)}`;
   const outcome = await brain.invoke({
     cwd: input.cwd,
     prompt: buildSummaryRetryPrompt({
@@ -39965,7 +40549,7 @@ async function enqueueSummaryRetryNotice(input) {
   const toUserId = input.state.ownerUserId;
   const contextToken = toUserId ? input.state.contextTokens[toUserId] : void 0;
   if (!toUserId || !contextToken) return;
-  const identifier = createHash8("sha256").update(
+  const identifier = createHash9("sha256").update(
     `${input.phase}:${input.control.collectionId}:${input.cycleStartedAt}`
   ).digest("hex").slice(0, 32);
   enqueueOutbound(input.state, {
@@ -39986,7 +40570,7 @@ function runtimeRegistrationDeviceName(source = hostname5()) {
 }
 async function loadRuntimeRegistrationIdentity(baseDirectory) {
   const state = await loadChannelState(baseDirectory);
-  const installationId = state.runtimeReporter.installationId ?? randomUUID8();
+  const installationId = state.runtimeReporter.installationId ?? randomUUID10();
   if (state.runtimeReporter.installationId !== installationId) {
     state.runtimeReporter.installationId = installationId;
     await saveChannelState(state, baseDirectory);
@@ -40071,7 +40655,7 @@ async function channelStart(hostId, options = {}) {
   if (options.background) {
     const state = await loadChannelState(options.baseDirectory);
     const stateDirectory = channelStateDirectory(options.baseDirectory);
-    await mkdir8(stateDirectory, { mode: 448, recursive: true });
+    await mkdir9(stateDirectory, { mode: 448, recursive: true });
     const client = new ILinkClient({
       baseUrl: state.baseUrl || ILINK_BASE_URL,
       ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {},
@@ -40120,7 +40704,7 @@ async function channelStart(hostId, options = {}) {
     const state = await loadChannelState(options.baseDirectory);
     persistedState = state;
     const cwd = channelStateDirectory(options.baseDirectory);
-    await mkdir8(cwd, { mode: 448, recursive: true });
+    await mkdir9(cwd, { mode: 448, recursive: true });
     const mcpUrl = resolveAttentionPublicUrl(options.origin, "/mcp");
     const shouldPrepareCodexHome = hostId === "codex" && (options.brainFactory === void 0 || options.codexHomePreparer !== void 0);
     const codexHomeDirectory = shouldPrepareCodexHome ? await (options.codexHomePreparer ?? prepareChannelCodexHome)({
@@ -40331,7 +40915,7 @@ async function channelStart(hostId, options = {}) {
         runtime.state.runtimeReporter.bindingId = null;
       }
       if (!runtime.state.runtimeReporter.installationId) {
-        runtime.state.runtimeReporter.installationId = randomUUID8();
+        runtime.state.runtimeReporter.installationId = randomUUID10();
         reporterIdentityChanged = true;
       }
       if (reporterIdentityChanged) {
@@ -40417,7 +41001,7 @@ async function channelStart(hostId, options = {}) {
             pairing.promptSent = false;
             pairing.verificationTarget = null;
             runtime.state.runtimeReporter.bindingId = null;
-            runtime.state.runtimeReporter.installationId = randomUUID8();
+            runtime.state.runtimeReporter.installationId = randomUUID10();
             reporterIdentityDirty = true;
             reporterRetirement = {
               reporter: retiringRuntime.reporter,
@@ -40481,13 +41065,35 @@ async function channelStart(hostId, options = {}) {
     const managedBridgeHome = options.baseDirectory ?? homedir7();
     const bridgeUpdateClock = options.bridgeUpdateClock ?? (() => /* @__PURE__ */ new Date());
     let bridgeUpdateDueAt = initialBridgeUpdateCheckAt();
+    const updateController = options.service && !options.bridgeUpdateChecker ? new BridgeUpdateController({
+      currentVersion: ATTENTION_CLI_VERSION,
+      currentPermissionProfileSha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+      homeDirectory: managedBridgeHome,
+      origin: options.origin,
+      now: bridgeUpdateClock,
+      ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}
+    }) : null;
     if (options.service) {
+      if (updateController) await loadUpdateJournal(managedBridgeHome);
       await (options.bridgeHealthyMarker ?? (async () => await markManagedBridgeHealthy(
         ATTENTION_CLI_VERSION,
         managedBridgeHome
       )))();
     }
     const maybeStageBridgeUpdate = async () => {
+      if (updateController) {
+        return await updateController.activateIfSafe(runtime.state, persist, () => !outboundFlushes.has(runtime), async () => {
+          await settleReporterRetirement();
+          const reporting = reporterSlot.current;
+          if (reporting) {
+            reporting.terminal = true;
+            await reporting.reporter.stop();
+            reporterSlot.current = null;
+          }
+          await flushPendingPersistence();
+          await flushPendingOutbound(runtime, persist);
+        });
+      }
       if (!options.service || runtime.state.pendingInbound.length > 0 || runtime.state.pendingOutbound.length > 0 || bridgeUpdateClock().getTime() < bridgeUpdateDueAt) {
         return false;
       }
@@ -40530,7 +41136,7 @@ async function channelStart(hostId, options = {}) {
       shutdownStarted = true;
       mcpSupervisor?.stop();
       runtime.log("\u6B63\u5728\u9000\u51FA\uFF0C\u4FDD\u5B58\u672C\u5730\u72B6\u6001\u2026");
-      void settleReporterRetirement().then(() => reporterSlot.current?.reporter.stop() ?? Promise.resolve()).then(() => activeBrain.shutdown()).catch(() => void 0).then(() => {
+      void settleReporterRetirement().then(() => updateController?.stop()).then(() => reporterSlot.current?.reporter.stop() ?? Promise.resolve()).then(() => activeBrain.shutdown()).catch(() => void 0).then(() => {
         syncRuntimeCheckpoint(runtime.state, activeBrain);
         return persist();
       }).then(() => lock.release()).finally(() => process.exit(0));
@@ -40557,6 +41163,9 @@ async function channelStart(hostId, options = {}) {
           }
           await persist();
         }
+        await updateController?.tick(runtime.state, persist);
+        await flushPendingOutbound(runtime, persist);
+        if (await maybeStageBridgeUpdate()) return BRIDGE_UPDATE_RESTART_EXIT_CODE;
         await ensureReporter();
         reporterSlot.current?.reporter.transition(
           buildReporterSnapshot(runtime, activeBrain)
@@ -40567,16 +41176,17 @@ async function channelStart(hostId, options = {}) {
         }
         await flushPendingOutbound(runtime, persist);
         if (!client.token) continue;
-        await processPendingInbound(
+        if (!updateController?.pausesBusiness) await processPendingInbound(
           runtime,
           activeBrain,
           cwd,
           persist,
           activeMcpSupervisor,
-          reporterSlot.current
+          reporterSlot.current,
+          updateController !== null
         );
         if (!client.token) continue;
-        const summaryRetryResult = await processDueSummaryRetry({
+        const summaryRetryResult = updateController?.pausesBusiness ? "idle" : await processDueSummaryRetry({
           brain: activeBrain,
           cwd,
           now: () => /* @__PURE__ */ new Date(),
@@ -40644,17 +41254,20 @@ async function channelStart(hostId, options = {}) {
             `\u5DF2\u6301\u4E45\u5316 ${added} \u6761\u65B0\u6D88\u606F\uFF0C\u5F85\u5904\u7406 ${runtime.state.pendingInbound.length} \u6761`
           );
         }
-        await processPendingInbound(
+        await updateController?.tick(runtime.state, persist);
+        if (!updateController?.pausesBusiness) await processPendingInbound(
           runtime,
           activeBrain,
           cwd,
           persist,
           activeMcpSupervisor,
-          reporterSlot.current
+          reporterSlot.current,
+          updateController !== null
         );
         await flushPendingOutbound(runtime, persist);
       }
     } finally {
+      await updateController?.stop();
       process.removeListener("SIGINT", shutdown);
       process.removeListener("SIGTERM", shutdown);
     }
@@ -40678,12 +41291,13 @@ async function channelStart(hostId, options = {}) {
     await lock.release();
   }
 }
-async function processPendingInbound(runtime, brain, cwd, persist, mcpSupervisor, reporterRuntime = null) {
+async function processPendingInbound(runtime, brain, cwd, persist, mcpSupervisor, reporterRuntime = null, hasUpdateController = false) {
   const batch = runtime.state.pendingInbound.slice(0, MAXIMUM_PENDING_MESSAGES);
   let businessQueueBlocked = Boolean(
     batch[0] && inboundRetryIsCoolingDown(batch[0], runtime.state)
   );
   for (const pending of batch) {
+    if (hasUpdateController && matchUpdateCommand(pending.message, runtime.state.ownerUserId)) continue;
     if (pending.blockedBy === "attention_mcp" && runtime.state.attentionMcp.status !== "ready") {
       continue;
     }
@@ -40940,7 +41554,19 @@ function buildReporterSnapshot(runtime, brain) {
     pendingOutbound: runtime.state.pendingOutbound.length
   };
 }
+var outboundFlushes = /* @__PURE__ */ new WeakMap();
 async function flushPendingOutbound(runtime, persist) {
+  const active = outboundFlushes.get(runtime);
+  if (active) return await active;
+  const flushing = drainPendingOutbound(runtime, persist);
+  outboundFlushes.set(runtime, flushing);
+  try {
+    await flushing;
+  } finally {
+    outboundFlushes.delete(runtime);
+  }
+}
+async function drainPendingOutbound(runtime, persist) {
   while (runtime.state.pendingOutbound.length > 0 && runtime.client.token) {
     const pending = runtime.state.pendingOutbound[0];
     if (!pending) return;
@@ -41012,11 +41638,19 @@ async function channelStatus(options = {}) {
   const state = await loadChannelState(options.baseDirectory);
   const backgroundConfigured = await (options.serviceInspector ?? defaultServiceInspector)();
   let managedUpdate = null;
+  let conversationalUpdate = null;
+  try {
+    const journal = await loadUpdateJournal(options.baseDirectory ?? homedir7());
+    if (journal.operation) conversationalUpdate = { phase: journal.operation.phase, candidateVersion: journal.operation.manifest.version, lastErrorCode: journal.lastErrorCode };
+  } catch {
+  }
   try {
     managedUpdate = await (options.bridgeUpdateStateLoader ?? (async () => await loadManagedBridgeUpdateState(options.baseDirectory ?? homedir7())))();
   } catch {
   }
   const report = {
+    cliVersion: ATTENTION_CLI_VERSION,
+    conversationalUpdate,
     accountIdPrefix: state.accountId ? `${state.accountId.slice(0, 6)}\u2026` : null,
     brainSession: state.brainSession ? {
       hostId: state.brainSession.hostId,
@@ -41058,6 +41692,10 @@ async function channelStatus(options = {}) {
     return 0;
   }
   write(`\u5DF2\u767B\u5F55: ${report.loggedIn ? "\u662F" : "\u5426"}
+`);
+  write(`\u5F53\u524D\u547D\u4EE4 CLI: ${report.cliVersion}\uFF08\u4E0E\u540E\u53F0 Bridge \u5206\u5F00\u5347\u7EA7\uFF09
+`);
+  if (conversationalUpdate) write(`\u5FAE\u4FE1\u5347\u7EA7: ${conversationalUpdate.phase}\uFF0C\u5019\u9009 ${conversationalUpdate.candidateVersion}
 `);
   write(`\u540E\u53F0\u6865\u5DF2\u914D\u7F6E: ${report.backgroundConfigured ? "\u662F" : "\u5426"}
 `);
@@ -41311,7 +41949,7 @@ async function safeSend(runtime, message) {
   try {
     return await runtime.client.sendMessage({
       clientId: message.id,
-      contextToken: message.contextToken,
+      contextToken: runtime.state.contextTokens[message.toUserId] ?? message.contextToken,
       text: message.text,
       toUserId: message.toUserId
     });
@@ -41337,10 +41975,10 @@ function isTimeoutError(error101) {
 
 // src/configure.ts
 init_src2();
-import { createHash as createHash9 } from "node:crypto";
-import { mkdir as mkdir9, lstat as lstat3, readFile as readFile6, rename as rename6, rm as rm7, writeFile as writeFile6 } from "node:fs/promises";
+import { createHash as createHash10 } from "node:crypto";
+import { mkdir as mkdir10, lstat as lstat3, readFile as readFile7, rename as rename7, rm as rm8, writeFile as writeFile7 } from "node:fs/promises";
 import { homedir as homedir8 } from "node:os";
-import { basename, dirname as dirname7, join as join8, resolve as resolve3 } from "node:path";
+import { basename, dirname as dirname8, join as join9, resolve as resolve3 } from "node:path";
 var MAXIMUM_SKILL_BYTES = 262144;
 var MAXIMUM_SKILL_BUNDLE_BYTES = 10 * 1024 * 1024;
 function listAgentIntegrations() {
@@ -41357,21 +41995,21 @@ function listAgentIntegrations() {
 }
 function defaultSkillDirectory(hostId) {
   if (hostId === "codex") {
-    return join8(homedir8(), ".agents", "skills", "attention");
+    return join9(homedir8(), ".agents", "skills", "attention");
   }
   if (hostId === "claude-code") {
-    return join8(homedir8(), ".claude", "skills", "attention");
+    return join9(homedir8(), ".claude", "skills", "attention");
   }
   if (hostId === "openclaw") {
     return resolve3("attention-skill");
   }
   if (hostId === "workbuddy") {
-    return join8(homedir8(), "Downloads");
+    return join9(homedir8(), "Downloads");
   }
   if (hostId === "deepseek") {
-    return join8(homedir8(), ".dsh", "skills", "attention");
+    return join9(homedir8(), ".dsh", "skills", "attention");
   }
-  return join8(homedir8(), ".attention", "skills", "attention");
+  return join9(homedir8(), ".attention", "skills", "attention");
 }
 function replaceTemplateValue(value, replacements) {
   let rendered = value;
@@ -41488,7 +42126,7 @@ function buildConfigurePlan(input) {
   };
 }
 function sha256(value) {
-  return createHash9("sha256").update(value).digest("hex");
+  return createHash10("sha256").update(value).digest("hex");
 }
 function safeBundleFilename(sourceUrl) {
   const filename = basename(new URL(sourceUrl).pathname);
@@ -41527,25 +42165,25 @@ async function downloadAttentionSkillBundle(input) {
       `Skill bundle checksum mismatch (expected ${input.expectedSha256}, received ${actualSha256}).`
     );
   }
-  const target = join8(input.directory, safeBundleFilename(input.sourceUrl));
+  const target = join9(input.directory, safeBundleFilename(input.sourceUrl));
   const kind = await pathKind(target);
   if (kind === "other") {
     throw new Error(`Refusing to replace non-file or symbolic-link target: ${target}`);
   }
   if (kind === "file" && !input.force) {
-    const existing = new Uint8Array(await readFile6(target));
+    const existing = new Uint8Array(await readFile7(target));
     if (sha256(existing) === input.expectedSha256) return target;
     throw new Error(
       `Skill bundle already exists at ${target}. Re-run with --force-skill to replace it.`
     );
   }
-  await mkdir9(dirname7(target), { mode: 448, recursive: true });
+  await mkdir10(dirname8(target), { mode: 448, recursive: true });
   const temporary = `${target}.tmp-${process.pid}-${crypto.randomUUID()}`;
   try {
-    await writeFile6(temporary, bytes, { flag: "wx", mode: 384 });
-    await rename6(temporary, target);
+    await writeFile7(temporary, bytes, { flag: "wx", mode: 384 });
+    await rename7(temporary, target);
   } finally {
-    await rm7(temporary, { force: true });
+    await rm8(temporary, { force: true });
   }
   return target;
 }
@@ -41647,25 +42285,25 @@ async function stageAttentionSkill(input) {
     ...input.fetchImpl ? { fetchImpl: input.fetchImpl } : {},
     sourceUrl: input.sourceUrl
   });
-  const target = join8(input.directory, "SKILL.md");
+  const target = join9(input.directory, "SKILL.md");
   const kind = await pathKind(target);
   if (kind === "other") {
     throw new Error(`Refusing to replace non-file or symbolic-link target: ${target}`);
   }
   if (kind === "file" && !input.force) {
-    const existing = await readFile6(target, "utf8");
+    const existing = await readFile7(target, "utf8");
     if (existing === document) return target;
     throw new Error(
       `Skill already exists at ${target}. Re-run with --force-skill to replace it.`
     );
   }
-  await mkdir9(dirname7(target), { mode: 448, recursive: true });
+  await mkdir10(dirname8(target), { mode: 448, recursive: true });
   const temporary = `${target}.tmp-${process.pid}-${crypto.randomUUID()}`;
   try {
-    await writeFile6(temporary, document, { flag: "wx", mode: 384 });
-    await rename6(temporary, target);
+    await writeFile7(temporary, document, { flag: "wx", mode: 384 });
+    await rename7(temporary, target);
   } finally {
-    await rm7(temporary, { force: true });
+    await rm8(temporary, { force: true });
   }
   return target;
 }
@@ -42724,6 +43362,10 @@ function defaultOutput() {
 }
 async function runAttentionCli(args, dependencies = {}) {
   const output = dependencies.output ?? defaultOutput();
+  if (args.length === 1 && args[0] === "--bridge-update-protocol") {
+    output.log(JSON.stringify(ATTENTION_BRIDGE_UPDATE_PROTOCOL));
+    return 0;
+  }
   if (args.length === 1 && args[0] === "--bridge-update-probe") {
     output.log(
       JSON.stringify({
@@ -42946,20 +43588,20 @@ async function defaultRunChannel(input) {
 }
 
 // src/cli-updater.ts
-import { randomUUID as randomUUID9 } from "node:crypto";
+import { randomUUID as randomUUID11 } from "node:crypto";
 import {
-  chmod as chmod7,
+  chmod as chmod8,
   lstat as lstat4,
-  mkdir as mkdir10,
-  readFile as readFile7,
+  mkdir as mkdir11,
+  readFile as readFile8,
   readlink as readlink2,
-  rename as rename7,
-  rm as rm8,
+  rename as rename8,
+  rm as rm9,
   symlink as symlink2,
-  writeFile as writeFile7
+  writeFile as writeFile8
 } from "node:fs/promises";
 import { homedir as homedir9 } from "node:os";
-import { basename as basename2, dirname as dirname8, join as join9, relative, resolve as resolve4 } from "node:path";
+import { basename as basename2, dirname as dirname9, join as join10, relative, resolve as resolve4 } from "node:path";
 var CLI_UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1e3;
 var STARTUP_FETCH_TIMEOUT_MS = 1500;
 var UPDATE_FETCH_TIMEOUT_MS = 15e3;
@@ -43015,11 +43657,11 @@ function parseState(value) {
   };
 }
 function statePath(homeDirectory) {
-  return join9(homeDirectory, ".attention", "cli-update", "state.json");
+  return join10(homeDirectory, ".attention", "cli-update", "state.json");
 }
 async function loadState(homeDirectory) {
   try {
-    const value = JSON.parse(await readFile7(statePath(homeDirectory), "utf8"));
+    const value = JSON.parse(await readFile8(statePath(homeDirectory), "utf8"));
     return parseState(value) ?? defaultState();
   } catch {
     return defaultState();
@@ -43027,20 +43669,20 @@ async function loadState(homeDirectory) {
 }
 async function saveState(state, homeDirectory) {
   const path = statePath(homeDirectory);
-  const directory = dirname8(path);
-  await mkdir10(directory, { mode: 448, recursive: true });
-  await chmod7(directory, 448);
-  const temporary = `${path}.${process.pid}.${randomUUID9()}.tmp`;
+  const directory = dirname9(path);
+  await mkdir11(directory, { mode: 448, recursive: true });
+  await chmod8(directory, 448);
+  const temporary = `${path}.${process.pid}.${randomUUID11()}.tmp`;
   try {
-    await writeFile7(temporary, `${JSON.stringify(state, null, 2)}
+    await writeFile8(temporary, `${JSON.stringify(state, null, 2)}
 `, {
       flag: "wx",
       mode: 384
     });
-    await rename7(temporary, path);
-    await chmod7(path, 384);
+    await rename8(temporary, path);
+    await chmod8(path, 384);
   } finally {
-    await rm8(temporary, { force: true });
+    await rm9(temporary, { force: true });
   }
 }
 function selectedOrigin(options, state) {
@@ -43132,8 +43774,8 @@ async function checkCliUpdateAtStartup(options) {
 }
 async function managedInstallation(commandPathValue, homeDirectory) {
   try {
-    const commandPath = commandPathValue ? resolve4(commandPathValue) : join9(homeDirectory, ".local", "bin", "attention");
-    if (commandPath !== join9(homeDirectory, ".local", "bin", "attention")) {
+    const commandPath = commandPathValue ? resolve4(commandPathValue) : join10(homeDirectory, ".local", "bin", "attention");
+    if (commandPath !== join10(homeDirectory, ".local", "bin", "attention")) {
       throw new CliUpdateError("unsupported_installation");
     }
     const commandStat = await lstat4(commandPath);
@@ -43141,9 +43783,9 @@ async function managedInstallation(commandPathValue, homeDirectory) {
       throw new CliUpdateError("unsupported_installation");
     }
     const originalTarget = await readlink2(commandPath);
-    const currentArtifactPath = resolve4(dirname8(commandPath), originalTarget);
-    const releasesDirectory = join9(homeDirectory, ".local", "share", "attention");
-    if (dirname8(currentArtifactPath) !== releasesDirectory || !/^attention-(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.mjs$/u.test(
+    const currentArtifactPath = resolve4(dirname9(commandPath), originalTarget);
+    const releasesDirectory = join10(homeDirectory, ".local", "share", "attention");
+    if (dirname9(currentArtifactPath) !== releasesDirectory || !/^attention-(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.mjs$/u.test(
       basename2(currentArtifactPath)
     ) || !(await lstat4(currentArtifactPath)).isFile()) {
       throw new CliUpdateError("unsupported_installation");
@@ -43165,15 +43807,15 @@ async function managedInstallation(commandPathValue, homeDirectory) {
   }
 }
 async function atomicWriteArtifact(path, contents) {
-  await mkdir10(dirname8(path), { mode: 448, recursive: true });
-  await chmod7(dirname8(path), 448);
-  const temporary = `${path}.${process.pid}.${randomUUID9()}.tmp`;
+  await mkdir11(dirname9(path), { mode: 448, recursive: true });
+  await chmod8(dirname9(path), 448);
+  const temporary = `${path}.${process.pid}.${randomUUID11()}.tmp`;
   try {
-    await writeFile7(temporary, contents, { flag: "wx", mode: 448 });
-    await rename7(temporary, path);
-    await chmod7(path, 448);
+    await writeFile8(temporary, contents, { flag: "wx", mode: 448 });
+    await rename8(temporary, path);
+    await chmod8(path, 448);
   } finally {
-    await rm8(temporary, { force: true });
+    await rm9(temporary, { force: true });
   }
 }
 function parseProbeOutput2(stdout) {
@@ -43256,16 +43898,16 @@ async function updateAttentionCli(options) {
       origin,
       timeoutMs: UPDATE_FETCH_TIMEOUT_MS
     });
-    const candidatePath = join9(
+    const candidatePath = join10(
       installation.releasesDirectory,
       basename2(manifest.artifact_path)
     );
     try {
-      const existing = await readFile7(candidatePath);
+      const existing = await readFile8(candidatePath);
       if (!existing.equals(artifact)) {
         throw new CliUpdateError("artifact_version_collision");
       }
-      await chmod7(candidatePath, 448);
+      await chmod8(candidatePath, 448);
     } catch (error101) {
       if (error101.code !== "ENOENT") throw error101;
       await atomicWriteArtifact(candidatePath, artifact);
@@ -43286,13 +43928,13 @@ async function updateAttentionCli(options) {
     if (!(await lstat4(installation.commandPath)).isSymbolicLink() || await readlink2(installation.commandPath) !== installation.originalTarget) {
       throw new CliUpdateError("cli_installation_changed");
     }
-    const nextTarget = relative(dirname8(installation.commandPath), candidatePath);
-    const temporaryLink = `${installation.commandPath}.${process.pid}.${randomUUID9()}.tmp`;
+    const nextTarget = relative(dirname9(installation.commandPath), candidatePath);
+    const temporaryLink = `${installation.commandPath}.${process.pid}.${randomUUID11()}.tmp`;
     try {
       await symlink2(nextTarget, temporaryLink);
-      await rename7(temporaryLink, installation.commandPath);
+      await rename8(temporaryLink, installation.commandPath);
     } finally {
-      await rm8(temporaryLink, { force: true });
+      await rm9(temporaryLink, { force: true });
     }
     createdCandidatePath = null;
     return {
@@ -43303,7 +43945,7 @@ async function updateAttentionCli(options) {
     };
   } catch (error101) {
     if (createdCandidatePath) {
-      await rm8(createdCandidatePath, { force: true });
+      await rm9(createdCandidatePath, { force: true });
     }
     return {
       errorCode: explicitErrorCode(error101),

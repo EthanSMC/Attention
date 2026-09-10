@@ -405,6 +405,7 @@ function buildControlReply(
         `${runtimeName} Runtime：${runtime.phase}${runtimeRetry}`,
         `Attention MCP：${state.attentionMcp.status}${mcpAvailability}${mcpRetry}`,
         `Reporter：${reporterEnabled ? "已启用" : "未启用"}`,
+        "Bridge 更新：发送「升级状态」查看本地进度，或「检查更新」查询新版本。",
         `最近成功处理：${lastSuccess}`,
         `队列：${state.pendingInbound.length} 条待处理，${state.pendingOutbound.length} 条待发送`,
         `摘要重试：${retries.active} 项活动（${retries.running} 项运行），${retries.paused} 项暂停` +
