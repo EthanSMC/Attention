@@ -1,5 +1,7 @@
 # Attention CLI 管理与微信 Codex Shell 边界
 
+> 本文现在是本机管理 C1 子方案。总边界以 `2026-09-10-attention-cli-mcp-boundaries-design.md` 为准：CLI 是完整产品入口但不是 Agent；本阶段的无外网限制不代表后续业务 CLI 不需要 API 网络访问。
+
 日期：2026-09-10。状态：用户已确认方向与限定目录的 Shell 权限边界；等待本文审阅。
 基线：已运行的 Attention CLI / Bridge 0.3.17。本文件不代表设备权限或线上版本已变化。
 
