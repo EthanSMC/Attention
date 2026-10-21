@@ -2,7 +2,9 @@ import {
   AttentionToolStructuredErrorSchema,
   AttentionToolSuccessOutputSchemas,
   ReadFailureCodeSchema,
+  ReadMethodSchema,
   readFailurePolicy,
+  type ReadMethod,
 } from "@attention/contracts";
 import type { CollectionReplyControl } from "./collection-reply-control";
 
@@ -11,7 +13,7 @@ export interface ReadAttemptControl {
   readonly collectionId: string;
   readonly attemptRef: string;
   readonly outcome: "ready" | "blocked" | "failed" | "skipped";
-  readonly methods: readonly ("static" | "browser")[] | null;
+  readonly methods: readonly ReadMethod[] | null;
   readonly failureCode: string | null;
   readonly failureScope: "reader" | "source" | "dependency" | "security" | null;
   readonly recovery: "switch_reader" | "retry_later" | "needs_action" | "pause" | "stop" | null;
@@ -26,7 +28,7 @@ export function normalizeReadAttemptControl(value: unknown): ReadAttemptControl 
   if (typeof r.collectionId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(r.collectionId) ||
     typeof r.attemptRef !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(r.attemptRef)) return null;
   if (!["ready", "blocked", "failed", "skipped"].includes(String(r.outcome))) return null;
-  if (r.methods !== null && (!Array.isArray(r.methods) || r.methods.length > 2 || new Set(r.methods).size !== r.methods.length || !r.methods.every((m) => m === "static" || m === "browser"))) return null;
+  if (r.methods !== null && (!Array.isArray(r.methods) || r.methods.length > 2 || new Set(r.methods).size !== r.methods.length || !r.methods.every((m) => ReadMethodSchema.safeParse(m).success))) return null;
   if (r.retryAfterMs !== null && (typeof r.retryAfterMs !== "number" || !Number.isSafeInteger(r.retryAfterMs) || r.retryAfterMs <= 0 || r.retryAfterMs > 900000 || r.recovery !== "retry_later")) return null;
   if (r.outcome === "ready" || r.outcome === "skipped") {
     if (r.failureCode !== null || r.failureScope !== null || r.retryAfterMs !== null || (r.recovery !== null && !(r.outcome === "skipped" && r.recovery === "stop"))) return null;

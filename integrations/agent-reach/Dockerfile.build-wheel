@@ -1,0 +1,9 @@
+ARG PYTHON_BASE
+FROM ${PYTHON_BASE} AS builder
+COPY wheelhouse/ /wheelhouse/
+COPY build-dependencies.lock /input/build-dependencies.lock
+COPY source.zip /input/source.zip
+RUN python -m pip install --no-index --require-hashes --no-cache-dir --find-links=/wheelhouse -r /input/build-dependencies.lock
+RUN python -m pip wheel --no-deps --no-index --no-build-isolation --no-cache-dir --wheel-dir=/out /input/source.zip
+FROM scratch
+COPY --from=builder /out/ /

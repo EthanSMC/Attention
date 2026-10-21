@@ -1,0 +1,18 @@
+# This is a lock INPUT, not approved/installable runtime resolution.
+# Resolve/build in an isolated environment only after approval. Produce a
+# requirements.lock with exact wheel hashes and a matching local wheelhouse.
+# Never substitute the unrelated same-name PyPI package or a moving Git ref.
+agent-reach @ https://github.com/Panniantong/Agent-Reach/archive/f65526cbaaad3879473acc1ba6dbefd195caf2be.zip
+
+# Upstream v1.5.0 declares these runtime constraints. They are not an exact lock.
+requests>=2.28
+feedparser>=6.0
+python-dotenv>=1.0
+loguru>=0.7
+pyyaml>=6.0
+rich>=13.0
+yt-dlp>=2024.0
+
+# Building the unmodified upstream wheel requires hatchling. Its exact version,
+# build dependencies, runtime transitive versions, wheel hashes and the pinned
+# Python image digest must be reviewed before running any installation/build.

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const ReadMethodSchema = z.enum(["static", "browser"]);
+export const ReadMethodSchema = z.enum(["static", "browser", "agent_reach"]);
 export type ReadMethod = z.infer<typeof ReadMethodSchema>;
 
 export const ReadFailureCodeSchema = z.enum([
@@ -56,6 +56,8 @@ export const ExtractionMethodSchema = z.enum([
   "json_ld",
   "semantic_html",
   "body",
+  // The upstream reader owns extraction; do not claim a local HTML algorithm.
+  "agent_reach",
   "metadata",
   "none",
 ]);

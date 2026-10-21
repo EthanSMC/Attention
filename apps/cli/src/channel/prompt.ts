@@ -40,7 +40,7 @@ export function channelHostSystemPolicy(localManagement = false): string {
   "bounded reading and submission after an eligible status result. " +
   "Interpret a direct user retry in conversation context; do not confuse article recovery with MCP reconnection. " +
   "Ask which task if the target is ambiguous. A security stop must be resolved and revalidated, not blindly retried. " +
-  "The reader performs static/browser fallback in one call; do not invoke another reader after it fails. " +
+  "The configured reader performs its bounded attempts in one call; do not invoke another reader after it fails. " +
   "Honor its actual recovery, including pause, needs_action, stop and retry_after_ms. " +
   "A ready read is not a completed summary; completion requires correlated submission or current Core status. " +
   "Never substitute the original multi-link message or an Attention Web " +
