@@ -15,6 +15,7 @@ import { boundedDiagnosticOutput } from "../redact";
 import { createClaudeCodeBrain } from "./brains/claude-code";
 import { createCodexBrain } from "./brains/codex";
 import type { CodexLocalControl } from "./codex-local-control";
+import type { DedicatedBrowserConfiguration } from "../dedicated-browser";
 import { BRAIN_TIMEOUT_MS } from "./limits";
 import type { CollectionReplyControl } from "./collection-reply-control";
 import type { ReadAttemptControl } from "./read-attempt-control";
@@ -84,6 +85,7 @@ export interface BrainRuntimeSnapshot {
 }
 
 export interface BrainAdapter {
+  readonly permissionProfileSha256?: string;
   readonly hostId: "codex" | "claude-code";
   start(): Promise<void>;
   invoke(input: BrainInvokeInput): Promise<BrainOutcome>;
@@ -173,6 +175,7 @@ export async function execBrain(
 export function createBrainAdapter(
   hostId: "codex" | "claude-code",
   options: {
+    readonly dedicatedBrowser?: DedicatedBrowserConfiguration;
     readonly localControl?: CodexLocalControl;
     readonly codexHomeDirectory?: string;
     readonly mcpUrl: string;
@@ -187,6 +190,7 @@ export function createBrainAdapter(
           : {}),
       })
     : createCodexBrain({
+        ...(options.dedicatedBrowser ? { dedicatedBrowser: options.dedicatedBrowser } : {}),
         ...(options.localControl ? { localControl: options.localControl } : {}),
         ...(options.codexHomeDirectory
           ? { codexHomeDirectory: options.codexHomeDirectory }

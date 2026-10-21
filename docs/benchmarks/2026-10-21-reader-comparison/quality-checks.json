@@ -1,0 +1,126 @@
+{
+  "python": {
+    "attention_markers": {
+      "Getting Started": false,
+      "Friendly & Easy to Learn": false,
+      "Applications": false,
+      "Open-source": false
+    },
+    "jina_returned_markers": {
+      "Getting Started": true,
+      "Friendly & Easy to Learn": true,
+      "Applications": true,
+      "Open-source": true
+    },
+    "jina_raw_markers": {
+      "Getting Started": true,
+      "Friendly & Easy to Learn": true,
+      "Applications": true,
+      "Open-source": true
+    },
+    "jina_raw_characters_codepoints": 17414,
+    "jina_raw_outcome": "ok",
+    "jina_returned_markdown_links": 129
+  },
+  "mdn": {
+    "attention_markers": {
+      "Making a request": true,
+      "Canceling a request": true,
+      "Handling the response": true,
+      "Streaming the response body": false,
+      "const response = await fetch": true,
+      "method: \"POST\"": true,
+      "new URLSearchParams": true,
+      "const request1": true,
+      "signal: controller.signal": true,
+      "response.status": true
+    },
+    "jina_returned_markers": {
+      "Making a request": true,
+      "Canceling a request": false,
+      "Handling the response": false,
+      "Streaming the response body": false,
+      "const response = await fetch": false,
+      "method: \"POST\"": false,
+      "new URLSearchParams": false,
+      "const request1": false,
+      "signal: controller.signal": false,
+      "response.status": false
+    },
+    "jina_raw_markers": {
+      "Making a request": true,
+      "Canceling a request": true,
+      "Handling the response": true,
+      "Streaming the response body": true,
+      "const response = await fetch": false,
+      "method: \"POST\"": false,
+      "new URLSearchParams": false,
+      "const request1": false,
+      "signal: controller.signal": false,
+      "response.status": false
+    },
+    "jina_raw_characters_codepoints": 21085,
+    "jina_raw_outcome": "ok",
+    "jina_returned_markdown_links": 55
+  },
+  "wechat-existing": {
+    "attention_markers": {
+      "环境异常": false,
+      "完成验证": false,
+      "CAPTCHA": false
+    },
+    "jina_returned_markers": {
+      "环境异常": false,
+      "完成验证": false,
+      "CAPTCHA": false
+    },
+    "jina_raw_markers": {
+      "环境异常": true,
+      "完成验证": true,
+      "CAPTCHA": true
+    },
+    "jina_raw_characters_codepoints": 312,
+    "jina_raw_outcome": "ok",
+    "jina_returned_markdown_links": 0
+  },
+  "wechat-ai": {
+    "attention_markers": {
+      "环境异常": false,
+      "完成验证": false,
+      "CAPTCHA": false
+    },
+    "jina_returned_markers": {
+      "环境异常": false,
+      "完成验证": false,
+      "CAPTCHA": false
+    },
+    "jina_raw_markers": {
+      "环境异常": true,
+      "完成验证": true,
+      "CAPTCHA": true
+    },
+    "jina_raw_characters_codepoints": 312,
+    "jina_raw_outcome": "ok",
+    "jina_returned_markdown_links": 0
+  },
+  "example-control": {
+    "attention_markers": {
+      "环境异常": false,
+      "完成验证": false,
+      "CAPTCHA": false
+    },
+    "jina_returned_markers": {
+      "环境异常": false,
+      "完成验证": false,
+      "CAPTCHA": false
+    },
+    "jina_raw_markers": {
+      "环境异常": false,
+      "完成验证": false,
+      "CAPTCHA": false
+    },
+    "jina_raw_characters_codepoints": 374,
+    "jina_raw_outcome": "ok",
+    "jina_returned_markdown_links": 0
+  }
+}

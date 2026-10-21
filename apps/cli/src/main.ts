@@ -31,6 +31,7 @@ import { requireAttentionOrigin } from "./origin";
 import { authorizeRuntime, type RuntimeAuthorizer } from "./runtime-oauth";
 import { ATTENTION_CLI_VERSION } from "./version";
 import { CONTROL_ACTIONS, readLocalControlStatus, submitLocalControl, type ControlAction } from "./local-control";
+import { configureDedicatedBrowser, disableDedicatedBrowser, DEDICATED_BROWSER_DISCLOSURE } from "./dedicated-browser";
 
 interface OutputWriter {
   readonly error: (value: string) => void;
@@ -92,6 +93,8 @@ Usage:
   attention channel status [--json]
   attention channel update <status [request-id]|check|request|cancel|defer> [--json]
   attention channel logout
+  attention browser configure <absolute-browser-dist/stdio.js> --origin <https-origin> [--apply]
+  attention browser disable --apply
   attention device sync enable --origin <https-origin>
 
 Hosts:
@@ -471,6 +474,21 @@ export async function runAttentionCli(
   try {
     const command = args[0];
     const options = parseOptions(args.slice(1));
+    if (command === "browser") {
+      if (options.login || options.background || options.service || options.forceSkill || options.probe || options.skillDirectory) throw new Error("invalid_browser_arguments");
+      if (options.positionals.join(" ") === "disable" && options.apply && !options.origin) {
+        await disableDedicatedBrowser(dependencies.localControlHome);
+        const message = "已撤销浏览器授权；专用 profile 保留。运行中的浏览器服务会检测撤销并关闭页面；MCP 注册在下次 Bridge 启动时移除，当前 Bridge 未重启。";
+        output.log(options.json ? JSON.stringify({ disabled: true, message }) : message);
+        return 0;
+      }
+      if (options.positionals[0] !== "configure" || options.positionals.length !== 2 || !options.origin) throw new Error("Use attention browser configure <absolute-browser-dist/stdio.js> --origin <https-origin> [--apply].");
+      if (!options.json) output.log(DEDICATED_BROWSER_DISCLOSURE);
+      const result = await configureDedicatedBrowser({ entryPath: options.positionals[1]!, origin: options.origin,
+        apply: options.apply, ...(dependencies.localControlHome ? { home: dependencies.localControlHome } : {}) });
+      output.log(options.json ? JSON.stringify(result) : result.applied ? "已保存显式浏览器授权；下次 Bridge 启动时加载。当前 Bridge 未重启。" : "仅检查；确认上述数据流后加 --apply 保存授权。");
+      return 0;
+    }
     if (command === "update") {
       if (
         options.apply ||

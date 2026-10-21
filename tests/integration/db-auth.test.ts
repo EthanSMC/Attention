@@ -2691,6 +2691,67 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     }
   });
 
+  it("keeps a Xiaohongshu note when resolution redirects to login", async () => {
+    const [account] = await handle.db.insert(accounts).values({ stableHandle: "xhs-login-test" }).returning();
+    const principal = { accountId: account!.id, isMember: true, isFilter: false };
+    const noteUrl = "https://www.xiaohongshu.com/explore/6aad3c540000000029011cd3";
+    const sharedUrl = `${noteUrl}?app_platform=android&xsec_source=app_share&xsec_token=public-share-token&share_channel=wechat`;
+    const loginUrl = `https://www.xiaohongshu.com/login?redirectPath=${encodeURIComponent(sharedUrl)}`;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      finalUrl: loginUrl,
+      redirects: [{ host: "www.xiaohongshu.com", pathFingerprint: "login-redirect", status: 302 }],
+      status: 200,
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+
+    const result = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "xhs-note-login-redirect",
+      raw_input: sharedUrl,
+      visibility: "private",
+    });
+    expect(result).toMatchObject({
+      status: "accepted",
+      source: "xiaohongshu",
+      enrichment_action: "generate_summary",
+      public_read_url: `${noteUrl}?xsec_source=app_share&xsec_token=public-share-token`,
+    });
+    if (result.status !== "accepted") throw new Error("Expected saved note");
+    const [content] = await handle.db.select().from(contents).where(eq(contents.id, result.content_id));
+    expect(content).toMatchObject({ normalizedUrl: noteUrl, enrichmentStatus: "partial" });
+    const [link] = await handle.db.select().from(contentLinks).where(eq(contentLinks.inputAttemptId, result.attempt_id));
+    expect(link).toMatchObject({
+      resolutionStatus: "pending",
+      safeSelectedUrl: sharedUrl,
+      resolvedUrl: sharedUrl,
+    });
+
+    const repeat = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "xhs-note-login-repeat",
+      raw_input: sharedUrl,
+      visibility: "private",
+    });
+    expect(repeat).toMatchObject({ status: "already_collected", content_id: result.content_id });
+
+    for (const [index, rawInput] of [loginUrl, "https://www.xiaohongshu.com/user/profile/abc123"].entries()) {
+      const unsupported = await collectFromWeb(handle.db, principal, {
+        idempotency_key: `xhs-login-non-note-${index}`,
+        raw_input: rawInput,
+        visibility: "private",
+      });
+      expect(unsupported).toMatchObject({ status: "invalid", error_code: "non_content_target" });
+    }
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      finalUrl: `${loginUrl}&access_token=private-token`, redirects: [], status: 200,
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    const unsafe = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "xhs-login-unsafe-redirect",
+      raw_input: sharedUrl,
+      visibility: "private",
+    });
+    expect(unsafe).toMatchObject({ status: "unsafe", error_code: "dangerous_query" });
+    expect(await handle.db.select().from(contents)).toHaveLength(1);
+  });
+
   it("blocks credential-like URLs but permits public Xiaohongshu share parameters", async () => {
     const { redeemed } = await createRedeemedAccount("filter", "web-safety");
     const principal = await principalFor(redeemed);

@@ -158,6 +158,28 @@ class CompletingRpc implements CodexResidentRpc {
 }
 
 describe("codex brain", () => {
+  it("registers the consented browser optionally and removes the shared evidence sink", async () => {
+    let captured: CodexAppServerRpcOptions | undefined;
+    const brain = createCodexBrain({ mcpUrl: "https://attention.example/mcp", dedicatedBrowser: {
+      schemaVersion: 1, consentVersion: 1, origin: "https://attention.example", entryPath: "/safe/browser/dist/stdio.js",
+      entrySha256: "a".repeat(64), nodePath: "/safe/node", stateDirectory: "/safe/.attention",
+    }, rpcFactory: options => { captured = options; return new CompletingRpc(); } });
+    try {
+      const args = captured!.args;
+      const tools = JSON.parse(args.find(arg => arg.startsWith("mcp_servers.attention.enabled_tools="))!.split("=").slice(1).join("="));
+      expect(tools).toContain("attention_issue_browser_grant");
+      expect(tools).toContain("attention_submit_private_browser_enrichment");
+      expect(tools).not.toContain("attention_submit_content_enrichment");
+      expect(args).not.toContain('mcp_servers.attention.tools.attention_submit_content_enrichment.approval_mode="approve"');
+      expect(args).toContain("mcp_servers.attention_browser.required=false");
+      expect(args).toContain('mcp_servers.attention_browser.command="/safe/node"');
+      expect(args).toContain('mcp_servers.attention_browser.env.ATTENTION_BROWSER_CONSENT_VERSION="1"');
+      expect(args[args.indexOf("browser_use") - 1]).toBe("--disable");
+      expect(brain.permissionProfileSha256).toMatch(/^[a-f0-9]{64}$/);
+      // Optional browser tools can be absent without failing ordinary chat.
+      expect(await brain.invoke({ cwd: "/safe", prompt: "你好", sessionId: null })).toMatchObject({});
+    } finally { await brain.shutdown(); }
+  });
   it("enables only the scoped Codex shell surface when local control is supplied", async () => {
     let captured: CodexAppServerRpcOptions | undefined;
     const brain = createCodexBrain({ mcpUrl: "https://attention.example/mcp", localControl: { workspace: "/safe/workspace", requests: "/safe/requests", command: ["/safe/node", "/safe/attention.mjs"] }, rpcFactory: options => { captured = options; return new CompletingRpc(); } });

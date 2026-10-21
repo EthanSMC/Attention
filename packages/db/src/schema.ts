@@ -1874,6 +1874,59 @@ export const collections = pgTable(
   }
 ).enableRLS();
 
+/** Browser-derived content is owner-private, never part of public content views. */
+export const browserReadGrants = pgTable(
+  "browser_read_grants",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+    collectionId: uuid("collection_id").notNull().references(() => collections.id, { onDelete: "cascade" }),
+    grantHash: char("grant_hash", { length: 64 }).notNull(),
+    credentialId: uuid("credential_id").notNull(),
+    credentialKind: varchar("credential_kind", { length: 8 }).notNull(),
+    sourceRevision: char("source_revision", { length: 64 }).notNull(),
+    sourceUrl: text("source_url").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  table => {
+    const owner = sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`;
+    return [
+      uniqueIndex("browser_read_grants_account_unique").on(table.accountId),
+      uniqueIndex("browser_read_grants_hash_unique").on(table.grantHash),
+      check("browser_read_grants_kind", sql`${table.credentialKind} IN ('oauth', 'pat')`),
+      check("browser_read_grants_hash_shape", sql`${table.grantHash} ~ '^[a-f0-9]{64}$' AND ${table.sourceRevision} ~ '^[a-f0-9]{64}$'`),
+      check("browser_read_grants_lifetime", sql`${table.expiresAt} > ${table.createdAt} AND ${table.expiresAt} <= ${table.createdAt} + interval '30 minutes'`),
+      pgPolicy("browser_read_grants_owner", { for: "all", to: "attention_web_runtime", using: owner, withCheck: owner }),
+      pgPolicy("browser_read_grants_token_read", { for: "select", to: "attention_web_runtime",
+        using: sql`${table.grantHash} = NULLIF(current_setting('app.browser_grant_hash', true), '')` }),
+    ];
+  },
+).enableRLS();
+
+export const collectionPrivateEnrichments = pgTable(
+  "collection_private_enrichments",
+  {
+    collectionId: uuid("collection_id").primaryKey().references(() => collections.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+    sourceRevision: char("source_revision", { length: 64 }).notNull(),
+    evidenceSha256: char("evidence_sha256", { length: 64 }).notNull(),
+    sourceUrl: text("source_url").notNull(),
+    title: varchar("title", { length: 500 }).notNull(),
+    summary: text("summary").notNull(),
+    tags: jsonb("tags").$type<string[]>().notNull(),
+    idempotencyKey: varchar("idempotency_key", { length: 128 }).notNull(),
+    ...timestampColumns(),
+  },
+  table => {
+    const owner = sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`;
+    return [
+      check("collection_private_enrichments_shape", sql`length(btrim(${table.title})) > 0 AND length(btrim(${table.summary})) BETWEEN 1 AND 2000 AND ${table.sourceRevision} ~ '^[a-f0-9]{64}$' AND ${table.evidenceSha256} ~ '^[a-f0-9]{64}$'`),
+      pgPolicy("collection_private_enrichments_owner", { for: "all", to: "attention_web_runtime", using: owner, withCheck: owner }),
+    ];
+  },
+).enableRLS();
+
 export const jobs = pgTable(
   "jobs",
   {

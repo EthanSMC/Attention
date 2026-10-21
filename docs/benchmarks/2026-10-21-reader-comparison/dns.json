@@ -1,0 +1,72 @@
+{
+  "www.python.org": [
+    {
+      "status": "fulfilled",
+      "value": [
+        "198.18.0.64"
+      ]
+    },
+    {
+      "status": "fulfilled",
+      "value": [
+        "::ffff:0:c612:40"
+      ]
+    }
+  ],
+  "developer.mozilla.org": [
+    {
+      "status": "fulfilled",
+      "value": [
+        "198.18.0.65"
+      ]
+    },
+    {
+      "status": "fulfilled",
+      "value": [
+        "::ffff:0:c612:41"
+      ]
+    }
+  ],
+  "mp.weixin.qq.com": [
+    {
+      "status": "fulfilled",
+      "value": [
+        "198.18.0.66"
+      ]
+    },
+    {
+      "status": "fulfilled",
+      "value": [
+        "::ffff:0:c612:42"
+      ]
+    }
+  ],
+  "example.com": [
+    {
+      "status": "fulfilled",
+      "value": [
+        "198.18.0.67"
+      ]
+    },
+    {
+      "status": "fulfilled",
+      "value": [
+        "::ffff:0:c612:43"
+      ]
+    }
+  ],
+  "r.jina.ai": [
+    {
+      "status": "fulfilled",
+      "value": [
+        "198.18.0.68"
+      ]
+    },
+    {
+      "status": "fulfilled",
+      "value": [
+        "::ffff:0:c612:44"
+      ]
+    }
+  ]
+}

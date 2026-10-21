@@ -1,0 +1,13 @@
+{
+  "dns_override": "1.1.1.1",
+  "addresses": [
+    "104.26.10.242",
+    "104.26.11.242",
+    "172.67.70.54",
+    "2606:4700:20::681a:af2",
+    "2606:4700:20::681a:bf2",
+    "2606:4700:20::ac43:4636"
+  ],
+  "all_public": true,
+  "scope": "DNS only from fixed original runtime image in disposable restricted container; no HTTP/source fetch"
+}

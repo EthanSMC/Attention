@@ -3,7 +3,7 @@ import { z } from "zod";
 import { CHANNEL_RUNTIME_RESOURCE, CHANNEL_RUNTIME_SCOPES } from "./channel-runtime";
 
 export const ATTENTION_CAPABILITY_MANIFEST_SCHEMA_VERSION = "1.0.0";
-export const ATTENTION_MCP_TOOL_CONTRACT_VERSION = "1.7.0";
+export const ATTENTION_MCP_TOOL_CONTRACT_VERSION = "1.8.0";
 export const ATTENTION_MCP_OAUTH_AUDIENCE = "attention-mcp";
 
 export const ATTENTION_MCP_OAUTH_SCOPES = [
@@ -22,6 +22,8 @@ export const ATTENTION_MCP_OAUTH_SCOPES = [
 ] as const;
 
 export const ATTENTION_MCP_TOOL_NAMES = [
+  "attention_issue_browser_grant",
+  "attention_submit_private_browser_enrichment",
   "attention_read_collection_source",
   "attention_get_my_account",
   "attention_get_membership_status",
@@ -212,6 +214,16 @@ export const attentionCapabilityManifest =
       contract_version: ATTENTION_MCP_TOOL_CONTRACT_VERSION,
       scopes: [...ATTENTION_MCP_OAUTH_SCOPES],
       tools: [
+        ...([
+          { id: "collection.browser.authorize", tool_name: "attention_issue_browser_grant" as const,
+            summary: "Authorize an owned article in an explicitly enabled dedicated local browser; requires collection read and write scopes." },
+          { id: "collection.browser.enrich.private", tool_name: "attention_submit_private_browser_enrichment" as const,
+            summary: "Save browser-grounded evidence privately to the owner's collection, never to shared public content; requires read and write scopes." },
+        ]).map((tool): z.infer<typeof AttentionMcpCapabilitySchema> => ({ ...tool, contract_version: ATTENTION_MCP_TOOL_CONTRACT_VERSION,
+          entitlement: { conditional: null, required: "member_or_filter" as const },
+          oauth: { any_of_scopes: ["collection:read" as const, "collection:write" as const], audience: ATTENTION_MCP_OAUTH_AUDIENCE },
+          web_surface: { kind: "api" as const, path: "/mcp", shared_policy: true as const },
+        })),
         {
           contract_version: ATTENTION_MCP_TOOL_CONTRACT_VERSION,
           entitlement: {conditional: null, required: "member_or_filter"},

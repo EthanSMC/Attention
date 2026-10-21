@@ -41,10 +41,14 @@ import { publicFeedPreviewLimit } from "./public-access";
 import type { AttentionToolAuditInput } from "./attention-tool-audit";
 import {readCollectionSource, collectionSourceRequestSchema, CollectionSourceReadError, type SourceReadPrincipal} from "./collection-source-reader";
 import {FetcherClientError} from "./fetcher-client";
+import { browserFeatureEnabled, browserGrantInputSchema, BrowserEnrichmentError, issueBrowserGrant,
+  privateEnrichmentInputSchema, submitPrivateBrowserEnrichment } from "./browser-private-enrichment";
 
-export const ATTENTION_TOOL_CONTRACT_VERSION = "1.7.0";
+export const ATTENTION_TOOL_CONTRACT_VERSION = "1.8.0";
 
 export const ATTENTION_TOOL_NAMES = [
+  "attention_issue_browser_grant",
+  "attention_submit_private_browser_enrichment",
   "attention_read_collection_source",
   "attention_get_my_account",
   "attention_get_membership_status",
@@ -138,6 +142,8 @@ export interface AttentionToolDefinition {
 }
 
 export interface AttentionToolCoreDependencies {
+  issueBrowserGrant?: typeof issueBrowserGrant;
+  submitPrivateBrowserEnrichment?: typeof submitPrivateBrowserEnrichment;
   readCollectionSource?: typeof readCollectionSource;
   castModerationVote: typeof castModerationVote;
   collectFromWeb: typeof collectFromWeb;
@@ -574,6 +580,31 @@ export function createAttentionToolRegistry(
   core: AttentionToolCoreDependencies = defaultCoreDependencies,
 ): readonly AttentionToolDefinition[] {
   return [
+    ...([
+      { name: "attention_issue_browser_grant" as const, title: "Authorize dedicated article browser",
+        inputSchema: browserGrantInputSchema.extend(attentionClientContextShape),
+        description: "Issue a short-lived authorization for your owned article in an explicitly enabled dedicated local browser. Browser-derived evidence is private to your collection and MUST NOT be submitted to the shared content enrichment tool. No arbitrary URL or browser credentials.",
+        run: core.issueBrowserGrant ?? issueBrowserGrant },
+      { name: "attention_submit_private_browser_enrichment" as const, title: "Save private browser summary",
+        inputSchema: privateEnrichmentInputSchema.extend({ grant: z.string().regex(/^att_browser_[a-f0-9]{64}$/), ...attentionClientContextShape }),
+        description: "Save a title and summary grounded in complete, verified dedicated-browser article evidence to this owner's collection only. Requires its current grant, source revision and evidence SHA. Never changes shared content or publishes private browser evidence. Repeating an identical idempotency key is safe; conflicting edits are rejected.",
+        run: core.submitPrivateBrowserEnrichment ?? submitPrivateBrowserEnrichment },
+    ]).map(spec => defineAttentionTool({
+      name: spec.name, title: spec.title, description: spec.description, inputSchema: spec.inputSchema,
+      annotations: { destructiveHint: false, idempotentHint: spec.name !== "attention_issue_browser_grant", openWorldHint: false, readOnlyHint: false },
+      isVisible: context => browserFeatureEnabled() && hasScope(context, "collection:read") && hasScope(context, "collection:write") && (context.isMember || context.isFilter),
+      execute: async (context, input) => {
+        if (!hasScope(context, "collection:read")) return insufficientScope("collection:read");
+        if (!hasScope(context, "collection:write")) return insufficientScope("collection:write");
+        try {
+          const { client_context: _clientContext, ...request } = input;
+          return toolSuccess(await spec.run(context, request));
+        } catch (error) {
+          if (error instanceof BrowserEnrichmentError) return toolError(error.code, "Recheck the authorized account, source and dedicated browser task; never publish private evidence.");
+          const known = knownServiceError(error); if (known) return known; throw error;
+        }
+      },
+    })),
     defineAttentionTool({
       annotations: {destructiveHint: false, idempotentHint: false, openWorldHint: true, readOnlyHint: true},
       description: "Read an owned collection's eligible public source for temporary article evidence. Requires current Member or Filter and collection:read; performs an external read subject to account limits. Never accepts a URL or browser credentials.",

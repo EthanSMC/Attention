@@ -1,0 +1,318 @@
+{
+  "www.python.org": [
+    {
+      "Status": 0,
+      "TC": false,
+      "RD": true,
+      "RA": true,
+      "AD": false,
+      "CD": false,
+      "Question": [
+        {
+          "name": "www.python.org",
+          "type": 1
+        }
+      ],
+      "Answer": [
+        {
+          "name": "www.python.org",
+          "type": 5,
+          "TTL": 604751,
+          "data": "dualstack.python.map.fastly.net."
+        },
+        {
+          "name": "dualstack.python.map.fastly.net",
+          "type": 1,
+          "TTL": 11,
+          "data": "151.101.128.223"
+        },
+        {
+          "name": "dualstack.python.map.fastly.net",
+          "type": 1,
+          "TTL": 11,
+          "data": "151.101.192.223"
+        },
+        {
+          "name": "dualstack.python.map.fastly.net",
+          "type": 1,
+          "TTL": 11,
+          "data": "151.101.0.223"
+        },
+        {
+          "name": "dualstack.python.map.fastly.net",
+          "type": 1,
+          "TTL": 11,
+          "data": "151.101.64.223"
+        }
+      ]
+    },
+    {
+      "Status": 0,
+      "TC": false,
+      "RD": true,
+      "RA": true,
+      "AD": false,
+      "CD": false,
+      "Question": [
+        {
+          "name": "www.python.org",
+          "type": 28
+        }
+      ],
+      "Answer": [
+        {
+          "name": "www.python.org",
+          "type": 5,
+          "TTL": 604581,
+          "data": "dualstack.python.map.fastly.net."
+        },
+        {
+          "name": "dualstack.python.map.fastly.net",
+          "type": 28,
+          "TTL": 23,
+          "data": "2a04:4e42:200::223"
+        },
+        {
+          "name": "dualstack.python.map.fastly.net",
+          "type": 28,
+          "TTL": 23,
+          "data": "2a04:4e42:400::223"
+        },
+        {
+          "name": "dualstack.python.map.fastly.net",
+          "type": 28,
+          "TTL": 23,
+          "data": "2a04:4e42:600::223"
+        },
+        {
+          "name": "dualstack.python.map.fastly.net",
+          "type": 28,
+          "TTL": 23,
+          "data": "2a04:4e42::223"
+        }
+      ]
+    }
+  ],
+  "developer.mozilla.org": [
+    {
+      "Status": 0,
+      "TC": false,
+      "RD": true,
+      "RA": true,
+      "AD": false,
+      "CD": false,
+      "Question": [
+        {
+          "name": "developer.mozilla.org",
+          "type": 1
+        }
+      ],
+      "Answer": [
+        {
+          "name": "developer.mozilla.org",
+          "type": 5,
+          "TTL": 12,
+          "data": "mozilla.map.fastly.net."
+        },
+        {
+          "name": "mozilla.map.fastly.net",
+          "type": 1,
+          "TTL": 12,
+          "data": "151.101.65.91"
+        },
+        {
+          "name": "mozilla.map.fastly.net",
+          "type": 1,
+          "TTL": 12,
+          "data": "151.101.129.91"
+        },
+        {
+          "name": "mozilla.map.fastly.net",
+          "type": 1,
+          "TTL": 12,
+          "data": "151.101.193.91"
+        },
+        {
+          "name": "mozilla.map.fastly.net",
+          "type": 1,
+          "TTL": 12,
+          "data": "151.101.1.91"
+        }
+      ]
+    },
+    {
+      "Status": 0,
+      "TC": false,
+      "RD": true,
+      "RA": true,
+      "AD": false,
+      "CD": false,
+      "Question": [
+        {
+          "name": "developer.mozilla.org",
+          "type": 28
+        }
+      ],
+      "Answer": [
+        {
+          "name": "developer.mozilla.org",
+          "type": 5,
+          "TTL": 52,
+          "data": "mozilla.map.fastly.net."
+        },
+        {
+          "name": "mozilla.map.fastly.net",
+          "type": 28,
+          "TTL": 52,
+          "data": "2a04:4e42:200::347"
+        },
+        {
+          "name": "mozilla.map.fastly.net",
+          "type": 28,
+          "TTL": 52,
+          "data": "2a04:4e42:400::347"
+        },
+        {
+          "name": "mozilla.map.fastly.net",
+          "type": 28,
+          "TTL": 52,
+          "data": "2a04:4e42:600::347"
+        },
+        {
+          "name": "mozilla.map.fastly.net",
+          "type": 28,
+          "TTL": 52,
+          "data": "2a04:4e42::347"
+        }
+      ]
+    }
+  ],
+  "mp.weixin.qq.com": [
+    {
+      "Status": 0,
+      "TC": false,
+      "RD": true,
+      "RA": true,
+      "AD": false,
+      "CD": false,
+      "Question": [
+        {
+          "name": "mp.weixin.qq.com",
+          "type": 1
+        }
+      ],
+      "Answer": [
+        {
+          "name": "mp.weixin.qq.com",
+          "type": 5,
+          "TTL": 204,
+          "data": "mpv6.weixin.qq.com."
+        },
+        {
+          "name": "mpv6.weixin.qq.com",
+          "type": 1,
+          "TTL": 204,
+          "data": "203.205.239.154"
+        },
+        {
+          "name": "mpv6.weixin.qq.com",
+          "type": 1,
+          "TTL": 204,
+          "data": "203.205.232.110"
+        }
+      ]
+    },
+    {
+      "Status": 0,
+      "TC": false,
+      "RD": true,
+      "RA": true,
+      "AD": false,
+      "CD": false,
+      "Question": [
+        {
+          "name": "mp.weixin.qq.com",
+          "type": 28
+        }
+      ],
+      "Answer": [
+        {
+          "name": "mp.weixin.qq.com",
+          "type": 5,
+          "TTL": 406,
+          "data": "mpv6.weixin.qq.com."
+        },
+        {
+          "name": "mpv6.weixin.qq.com",
+          "type": 28,
+          "TTL": 406,
+          "data": "240d:c040:0:40::116"
+        },
+        {
+          "name": "mpv6.weixin.qq.com",
+          "type": 28,
+          "TTL": 406,
+          "data": "240d:c040:1:40::11d"
+        }
+      ]
+    }
+  ],
+  "example.com": [
+    {
+      "Status": 0,
+      "TC": false,
+      "RD": true,
+      "RA": true,
+      "AD": true,
+      "CD": false,
+      "Question": [
+        {
+          "name": "example.com",
+          "type": 1
+        }
+      ],
+      "Answer": [
+        {
+          "name": "example.com",
+          "type": 1,
+          "TTL": 5,
+          "data": "172.66.147.243"
+        },
+        {
+          "name": "example.com",
+          "type": 1,
+          "TTL": 5,
+          "data": "104.20.23.154"
+        }
+      ]
+    },
+    {
+      "Status": 0,
+      "TC": false,
+      "RD": true,
+      "RA": true,
+      "AD": true,
+      "CD": false,
+      "Question": [
+        {
+          "name": "example.com",
+          "type": 28
+        }
+      ],
+      "Answer": [
+        {
+          "name": "example.com",
+          "type": 28,
+          "TTL": 146,
+          "data": "2606:4700:10::ac42:93f3"
+        },
+        {
+          "name": "example.com",
+          "type": 28,
+          "TTL": 146,
+          "data": "2606:4700:10::6814:179a"
+        }
+      ]
+    }
+  ]
+}

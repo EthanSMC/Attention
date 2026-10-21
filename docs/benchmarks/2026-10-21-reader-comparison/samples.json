@@ -1,0 +1,32 @@
+[
+  {
+    "id": "python",
+    "kind": "generic_web",
+    "label": "Python 官方介绍",
+    "url": "https://www.python.org/about/"
+  },
+  {
+    "id": "mdn",
+    "kind": "generic_web",
+    "label": "MDN Using Fetch",
+    "url": "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch"
+  },
+  {
+    "id": "wechat-existing",
+    "kind": "wechat_official_article",
+    "label": "Attention 原有公众号样本",
+    "url": "https://mp.weixin.qq.com/s/ICv0Dra1PFr7sxAGqO_MVA"
+  },
+  {
+    "id": "wechat-ai",
+    "kind": "wechat_official_article",
+    "label": "公众号 AI 文章（公开播客引用）",
+    "url": "https://mp.weixin.qq.com/s/aBDgg3qpd2kuufwKWQcZ6w"
+  },
+  {
+    "id": "example-control",
+    "kind": "generic_web",
+    "label": "example.com 短页对照",
+    "url": "https://example.com/"
+  }
+]

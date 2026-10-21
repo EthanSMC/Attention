@@ -100,6 +100,8 @@ const ownedCollectionStatusSchema = z
 
 const ownedContentStatusSchema = z
   .object({
+    private_enrichment: z.object({ title: z.string().min(1).max(500), summary: z.string().min(1).max(2000),
+      summary_status: z.literal("ready"), evidence_visibility: z.literal("account_private") }).strict().optional(),
     community_moderation_status: z.enum(["clear", "hidden", "pending_review"]),
     content_id: databaseIdSchema,
     content_status: z.enum(["active", "merged"]),
@@ -152,6 +154,21 @@ export const AttentionToolStructuredErrorSchema = z
   .strict();
 
 export const AttentionToolSuccessOutputSchemas = {
+  attention_issue_browser_grant: z.object({
+    grant: z.string().regex(/^att_browser_[a-f0-9]{64}$/),
+    collection_id: databaseIdSchema,
+    expires_at: z.number().int().positive(),
+    source_revision: z.string().regex(/^[a-f0-9]{64}$/),
+    evidence_visibility: z.literal("account_private"),
+  }).strict(),
+  attention_submit_private_browser_enrichment: z.object({
+    collection_id: databaseIdSchema,
+    status: z.enum(["saved", "already_saved"]),
+    summary_status: z.literal("ready"),
+    evidence_visibility: z.literal("account_private"),
+    title: z.string().min(1).max(500),
+    summary: z.string().min(1).max(2000),
+  }).strict(),
   attention_read_collection_source: OwnedReadResultSchema,
   attention_get_my_account: z
     .object({

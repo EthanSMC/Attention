@@ -1,0 +1,112 @@
+[
+  {
+    "id": "python",
+    "kind": "generic_web",
+    "label": "Python 官方介绍",
+    "url": "https://www.python.org/about/",
+    "provider": "Attention with process-only public DoH resolver",
+    "timestamp": "2026-10-21T06:31:31.912Z",
+    "elapsed_ms": 767,
+    "outcome": "ready",
+    "code": null,
+    "attempts": [
+      {
+        "duration_ms": 763,
+        "method": "static"
+      }
+    ],
+    "title": "Welcome to Python.org",
+    "characters": 505,
+    "truncated": false,
+    "extraction_method": "readability",
+    "text_sha256": "be97036742964feb806d557580590c0fc985cadcd5bf31f4e15d593a47978421"
+  },
+  {
+    "id": "mdn",
+    "kind": "generic_web",
+    "label": "MDN Using Fetch",
+    "url": "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch",
+    "provider": "Attention with process-only public DoH resolver",
+    "timestamp": "2026-10-21T06:31:32.600Z",
+    "elapsed_ms": 688,
+    "outcome": "ready",
+    "code": null,
+    "attempts": [
+      {
+        "duration_ms": 687,
+        "method": "static"
+      }
+    ],
+    "title": "Using the Fetch API - Web APIs | MDN",
+    "characters": 12000,
+    "truncated": true,
+    "extraction_method": "readability",
+    "text_sha256": "f573fd9186e1da2e2ece7b0ee6483bbdb1764d38899481806f97de2190983109"
+  },
+  {
+    "id": "wechat-existing",
+    "kind": "wechat_official_article",
+    "label": "Attention 原有公众号样本",
+    "url": "https://mp.weixin.qq.com/s/ICv0Dra1PFr7sxAGqO_MVA",
+    "provider": "Attention with process-only public DoH resolver",
+    "timestamp": "2026-10-21T06:31:34.244Z",
+    "elapsed_ms": 1643,
+    "outcome": "failed",
+    "code": "verification_required",
+    "attempts": [
+      {
+        "duration_ms": 1642,
+        "method": "static"
+      }
+    ],
+    "title": null,
+    "characters": 0,
+    "truncated": false,
+    "extraction_method": null,
+    "text_sha256": null
+  },
+  {
+    "id": "wechat-ai",
+    "kind": "wechat_official_article",
+    "label": "公众号 AI 文章（公开播客引用）",
+    "url": "https://mp.weixin.qq.com/s/aBDgg3qpd2kuufwKWQcZ6w",
+    "provider": "Attention with process-only public DoH resolver",
+    "timestamp": "2026-10-21T06:31:34.666Z",
+    "elapsed_ms": 421,
+    "outcome": "failed",
+    "code": "verification_required",
+    "attempts": [
+      {
+        "duration_ms": 421,
+        "method": "static"
+      }
+    ],
+    "title": null,
+    "characters": 0,
+    "truncated": false,
+    "extraction_method": null,
+    "text_sha256": null
+  },
+  {
+    "id": "example-control",
+    "kind": "generic_web",
+    "label": "example.com 短页对照",
+    "url": "https://example.com/",
+    "provider": "Attention with process-only public DoH resolver",
+    "timestamp": "2026-10-21T06:31:35.042Z",
+    "elapsed_ms": 374,
+    "outcome": "failed",
+    "code": "browser_backend_unavailable",
+    "attempts": [
+      {
+        "duration_ms": 374,
+        "method": "static"
+      }
+    ],
+    "title": "Example Domain",
+    "characters": 0,
+    "truncated": false,
+    "extraction_method": null,
+    "text_sha256": null
+  }
+]

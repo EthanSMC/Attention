@@ -57,7 +57,7 @@
   ],
   "mcp": {
     "audience": "attention-mcp",
-    "contract_version": "1.7.0",
+    "contract_version": "1.8.0",
     "scopes": [
       "profile:read",
       "collection:read",
@@ -74,7 +74,51 @@
     ],
     "tools": [
       {
-        "contract_version": "1.7.0",
+        "contract_version": "1.8.0",
+        "entitlement": {
+          "conditional": null,
+          "required": "member_or_filter"
+        },
+        "id": "collection.browser.authorize",
+        "oauth": {
+          "any_of_scopes": [
+            "collection:read",
+            "collection:write"
+          ],
+          "audience": "attention-mcp"
+        },
+        "summary": "Authorize an owned article in an explicitly enabled dedicated local browser; requires collection read and write scopes.",
+        "tool_name": "attention_issue_browser_grant",
+        "web_surface": {
+          "kind": "api",
+          "path": "/mcp",
+          "shared_policy": true
+        }
+      },
+      {
+        "contract_version": "1.8.0",
+        "entitlement": {
+          "conditional": null,
+          "required": "member_or_filter"
+        },
+        "id": "collection.browser.enrich.private",
+        "oauth": {
+          "any_of_scopes": [
+            "collection:read",
+            "collection:write"
+          ],
+          "audience": "attention-mcp"
+        },
+        "summary": "Save browser-grounded evidence privately to the owner's collection, never to shared public content; requires read and write scopes.",
+        "tool_name": "attention_submit_private_browser_enrichment",
+        "web_surface": {
+          "kind": "api",
+          "path": "/mcp",
+          "shared_policy": true
+        }
+      },
+      {
+        "contract_version": "1.8.0",
         "entitlement": {
           "conditional": null,
           "required": "member_or_filter"
@@ -95,7 +139,7 @@
         }
       },
       {
-        "contract_version": "1.7.0",
+        "contract_version": "1.8.0",
         "entitlement": {
           "conditional": null,
           "required": "authenticated_account"
@@ -116,7 +160,7 @@
         }
       },
       {
-        "contract_version": "1.7.0",
+        "contract_version": "1.8.0",
         "entitlement": {
           "conditional": null,
           "required": "authenticated_account"
@@ -137,7 +181,7 @@
         }
       },
       {
-        "contract_version": "1.7.0",
+        "contract_version": "1.8.0",
         "entitlement": {
           "conditional": null,
           "required": "authenticated_account"
@@ -158,7 +202,7 @@
         }
       },
       {
-        "contract_version": "1.7.0",
+        "contract_version": "1.8.0",
         "entitlement": {
           "conditional": "filter_for_public_visibility",
           "required": "authenticated_account"
@@ -179,7 +223,7 @@
         }
       },
       {
-        "contract_version": "1.7.0",
+        "contract_version": "1.8.0",
         "entitlement": {
           "conditional": null,
           "required": "authenticated_account"
@@ -200,7 +244,7 @@
         }
       },
       {
-        "contract_version": "1.7.0",
+        "contract_version": "1.8.0",
         "entitlement": {
           "conditional": "filter_for_public_visibility",
           "required": "authenticated_account"
@@ -221,7 +265,7 @@
         }
       },
       {
-        "contract_version": "1.7.0",
+        "contract_version": "1.8.0",
         "entitlement": {
           "conditional": null,
           "required": "authenticated_account"
@@ -242,7 +286,7 @@
         }
       },
       {
-        "contract_version": "1.7.0",
+        "contract_version": "1.8.0",
         "entitlement": {
           "conditional": "filter_for_public_visibility",
           "required": "authenticated_account"
@@ -263,7 +307,7 @@
         }
       },
       {
-        "contract_version": "1.7.0",
+        "contract_version": "1.8.0",
         "entitlement": {
           "conditional": "member_for_full_public_feed",
           "required": "authenticated_account"
@@ -285,7 +329,7 @@
         }
       },
       {
-        "contract_version": "1.7.0",
+        "contract_version": "1.8.0",
         "entitlement": {
           "conditional": null,
           "required": "member"
@@ -306,7 +350,7 @@
         }
       },
       {
-        "contract_version": "1.7.0",
+        "contract_version": "1.8.0",
         "entitlement": {
           "conditional": null,
           "required": "authenticated_account"
@@ -327,7 +371,7 @@
         }
       },
       {
-        "contract_version": "1.7.0",
+        "contract_version": "1.8.0",
         "entitlement": {
           "conditional": null,
           "required": "filter"
@@ -348,7 +392,7 @@
         }
       },
       {
-        "contract_version": "1.7.0",
+        "contract_version": "1.8.0",
         "entitlement": {
           "conditional": null,
           "required": "filter"
@@ -369,7 +413,7 @@
         }
       },
       {
-        "contract_version": "1.7.0",
+        "contract_version": "1.8.0",
         "entitlement": {
           "conditional": null,
           "required": "authenticated_account"
@@ -390,7 +434,7 @@
         }
       },
       {
-        "contract_version": "1.7.0",
+        "contract_version": "1.8.0",
         "entitlement": {
           "conditional": null,
           "required": "member_or_filter"

@@ -331,6 +331,7 @@ async function resolveCandidate(rawUrl: string): Promise<ResolvedCandidate | nul
   }
 
   const initialSource = match.adapter.id;
+  const initialMatch = match;
   const initialIdentity =
     match.adapter.identity(rawUrl) ?? genericWebAdapter.identity(rawUrl);
   let redirectChain: string[];
@@ -375,6 +376,18 @@ async function resolveCandidate(rawUrl: string): Promise<ResolvedCandidate | nul
     )
   ) {
     throw new CandidateUnsafeError("dangerous_query");
+  }
+  // Xiaohongshu can redirect a valid note to its login page. Keep the
+  // original note identity and access parameters for the fallback reader;
+  // a login gate does not invalidate a collection or become its identity.
+  if (
+    initialSource === "xiaohongshu" &&
+    initialMatch.classification.kind === "content" &&
+    (parsedResolved.hostname === "xiaohongshu.com" ||
+      parsedResolved.hostname === "www.xiaohongshu.com") &&
+    /^\/login\/?$/u.test(parsedResolved.pathname)
+  ) {
+    return fallbackDirectCandidate(rawUrl, initialMatch);
   }
   if (
     match.classification.kind === "download" ||
