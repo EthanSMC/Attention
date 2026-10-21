@@ -3,7 +3,7 @@ export * from "./agent-installation";
 export * from "./attention-skill-context";
 export * from "./attention-capability-manifest";
 export * from "./attention-tool-output";
-export {OwnedReadResultSchema, ReadFailureCodeSchema, readFailurePolicy, type OwnedReadResult} from "@attention/content-reader-contracts";
+export {OwnedReadResultSchema, ReadFailureCodeSchema, ReadMethodSchema, readFailurePolicy, type OwnedReadResult, type ReadMethod} from "@attention/content-reader-contracts";
 export * from "./channel-runtime";
 export * from "./collector-response";
 export * from "./credential-endpoint";

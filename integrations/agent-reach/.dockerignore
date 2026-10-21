@@ -1,0 +1,9 @@
+*
+!Dockerfile
+!Dockerfile.build-wheel
+!worker.py
+!requirements.lock
+!build-dependencies.lock
+!source.zip
+!wheelhouse/
+!wheelhouse/*.whl

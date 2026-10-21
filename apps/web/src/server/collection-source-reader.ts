@@ -8,7 +8,8 @@ import {OwnedReadResultSchema, ReadResultSchema, SafeReferenceSchema, SourceKind
 import type {AttentionDatabase} from "@attention/db";
 import {getCollectionStatus, CollectionStatusServiceError, type CollectionStatusResult} from "./collection-status-service";
 import {createSourceReadCoordinator, SourceReadMemory, type SourceReadCoordinator, type SourceReadScope} from "./source-read-coordinator";
-import {readExternalSource, FetcherClientError} from "./fetcher-client";
+import {FetcherClientError} from "./fetcher-client";
+import {readConfiguredCollectionSource} from "./agent-reach-reader";
 
 export const collectionSourceRequestSchema = z.object({collection_id: z.string().uuid(), attempt_ref: SafeReferenceSchema,
   client_context: z.object({skill_id: z.literal("attention").optional(), skill_version: AttentionSkillVersionSchema.optional(),
@@ -89,7 +90,7 @@ export async function readCollectionSource(context: SourceReadContext, rawInput:
     reason: initial.collection?.collection_status === "active" && initial.collection.moderation_status === "clear" &&
       initial.content?.enrichment_action === "reuse_summary" ? "already_ready" : "not_eligible"});}
   lifetime.throwIfAborted();
-  const deps = dependencies ?? {read: readExternalSource, coordinator: createSourceReadCoordinator(context.getDatabase()), memory};
+  const deps = dependencies ?? {read: readConfiguredCollectionSource, coordinator: createSourceReadCoordinator(context.getDatabase()), memory};
   const scope: SourceReadScope = {accountId: context.accountId, collectionId: input.collection_id, ...identity,
     attemptRef: input.attempt_ref, requestRef: context.runId};
   const key = fingerprint(JSON.stringify([input.collection_id, input.attempt_ref, identity.operation]));

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "upstream": {
+    "name": "Agent-Reach",
+    "version": "1.5.0",
+    "commit": "f65526cbaaad3879473acc1ba6dbefd195caf2be",
+    "source_url": "https://github.com/Panniantong/Agent-Reach/archive/f65526cbaaad3879473acc1ba6dbefd195caf2be.zip",
+    "source_sha256": "fd60c0c7a040d595ff6d67e3998a4467e667f206c6d8a787a3092c6754277092",
+    "interface": "agent_reach.channels.web.WebChannel.read(url)",
+    "unmodified": true
+  },
+  "python_base": "docker.io/library/python:3.13.16-slim-bookworm@sha256:a1165e272e578941b84abc79e4ab38a0305cd12803a5c4247979ac7655f4d641",
+  "platform": "linux/arm64",
+  "python_version": "3.13.16",
+  "dependency_source": "https://pypi.org/simple (files.pythonhosted.org wheels)",
+  "runtime_dependencies": 15,
+  "build_dependencies": 6,
+  "build_lock_sha256": "c40c994507a2fc47dbfb9dd8bcff907a9cebf04e0a672c434b25c69739895e92",
+  "runtime_lock_sha256": "39d4b7de29aa977c03dda70baa609217450f7256580aa82b78564d0fab806949",
+  "upstream_wheel": {
+    "filename": "agent_reach-1.5.0-py3-none-any.whl",
+    "sha256": "d9f02140fef2e2f82614f9166f870f9b36ab11dfe1d1fc53f427ed8b8a35727a"
+  },
+  "worker_sha256": "7d09788bf3aacca1b89510685e52a1e8f13ef2ec23704ddaa3b7b5adb3cf58b3",
+  "local_image_id": "sha256:6730deb3f6ee0280545cc22ac1bdec76e7ff025584dddd15a155cf751b4937e5",
+  "build_run_network": "none",
+  "published": false,
+  "host_python_packages_installed": false
+}

@@ -58,6 +58,18 @@ describe("read result contract", () => {
     expect(ReadResultSchema.parse(readyResult)).toEqual(readyResult);
   });
 
+  it("preserves upstream reader and extraction provenance in owned results", () => {
+    const result = {
+      ...readyResult,
+      attempts: [{ duration_ms: 25, method: "agent_reach" }],
+      extraction_method: "agent_reach",
+      collection_id: "00000000-0000-4000-8000-000000000001",
+    };
+    expect(contracts.OwnedReadResultSchema.parse(result)).toEqual(result);
+    expect(contracts.OwnedReadResultSchema.safeParse({ ...result, upstream_debug: "private" }).success)
+      .toBe(false);
+  });
+
   it("rejects ready results without nonempty article text", () => {
     expect(ReadResultSchema.safeParse({ ...readyResult, temporary_text: "   " }).success)
       .toBe(false);
@@ -123,24 +135,24 @@ describe("read result contract", () => {
     }).success).toBe(false);
   });
 
-  it("rejects more than the static and browser attempts", () => {
+  it("rejects more than two attempts even when all methods are distinct", () => {
     expect(ReadResultSchema.safeParse({
       ...readyResult,
       attempts: [
         { duration_ms: 10, method: "static" },
         { duration_ms: 20, method: "browser" },
-        { duration_ms: 30, method: "browser" },
+        { duration_ms: 30, method: "agent_reach" },
       ],
     }).success).toBe(false);
   });
 
-  it("requires an actual unique reader attempt for ready and failed outcomes", () => {
+  it.each(["static", "browser", "agent_reach"])("requires an actual unique %s attempt", (method) => {
     expect(ReadResultSchema.safeParse({ ...readyResult, attempts: [] }).success).toBe(false);
     expect(ReadResultSchema.safeParse({
       ...readyResult,
       attempts: [
-        { duration_ms: 10, method: "static" },
-        { duration_ms: 20, method: "static" },
+        { duration_ms: 10, method },
+        { duration_ms: 20, method },
       ],
     }).success).toBe(false);
   });
@@ -165,6 +177,7 @@ describe("read result contract", () => {
     { ...readyResult, final_public_url: "file:///tmp/private" },
     { ...readyResult, extraction_method: "arbitrary_script" },
     { ...readyResult, source_kind: "unknown_source" },
+    { ...readyResult, attempts: [{ duration_ms: 25, method: "unknown_reader" }] },
     { ...readyResult, attempts: [{ duration_ms: Number.POSITIVE_INFINITY, method: "static" }] },
   ])("rejects unsafe or unbounded ready data", (candidate) => {
     expect(ReadResultSchema.safeParse(candidate).success).toBe(false);

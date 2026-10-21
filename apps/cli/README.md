@@ -33,6 +33,14 @@ node apps/cli/dist/index.js --help
 
 When packaged, `apps/cli/dist/index.js` is exposed as the `attention` binary.
 
+The optional Agent-Reach reader returns `agent_reach` method and extraction
+markers in the existing version 1 read result. Build and upgrade the channel
+bridge from this revision before enabling that reader in Core: historical
+CLI bundles through 0.3.20 reject these markers. Rebuilding the server alone
+does not upgrade a running local bridge. The result still permits at most
+two distinct reader attempts, and the bridge persists only safe attempt
+facts, never the source text, URL, or metadata.
+
 ## List integrations
 
 ```bash
