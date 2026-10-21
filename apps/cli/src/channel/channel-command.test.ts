@@ -136,6 +136,42 @@ function failedAccountProbe() {
 }
 
 describe("channel subcommands", () => {
+  it("persists a second WeChat message while the first Agent turn is held, then replies in order", async () => {
+    const base = await makeTempBase(); const state = defaultChannelState();
+    state.token = "local-test-token"; state.ownerUserId = "owner"; state.contextTokens.owner = "ctx-owner";
+    await saveChannelState(state, base);
+    let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
+    let turns = 0, polls = 0, active = 0, maximumActive = 0; const sent: string[] = [];
+    const result = await channelStart("codex", { baseDirectory: base, service: true, origin: "https://attention.example",
+      hostCliCheck: async () => true, bridgeHealthyMarker: async () => {}, runtimeCredentialLoader: async () => false,
+      bridgeUpdateChecker: async () => ({ status: "current", version: ATTENTION_CLI_VERSION }),
+      accountVerifier: async () => verifiedAccountProbe(), writeOutput: () => {},
+      brainFactory: () => ({ ...brainLifecycle(), hostId: "codex", shutdown: async () => { release(); }, invoke: async () => {
+        const turn = ++turns; maximumActive = Math.max(maximumActive, ++active);
+        if (turn === 1) await held;
+        active--;
+        return { ok: true, reply: turn === 1 ? "第一条已处理。" : "我在，第二条也收到了。", resumeFailed: false, sessionId: "thread-test", timedOut: false };
+      } }),
+      fetchImpl: async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith("/sendmessage")) { sent.push(JSON.parse(String(init?.body)).msg.item_list[0].text_item.text); return Response.json({ ret: 0, errcode: 0 }); }
+        if (path.endsWith("/getupdates")) {
+          polls++;
+          if (polls === 2) { await vi.waitFor(() => expect(turns).toBe(1)); expect(active).toBe(1); }
+          if (polls <= 2) return Response.json({ ret: 0, errcode: 0, get_updates_buf: "cursor-" + polls,
+            msgs: [{ client_id: "held-" + polls, context_token: "ctx-owner", from_user_id: "owner", item_list: [{ type: 1, text_item: { text: polls === 1 ? "读一下文章" : "在吗" } }] }] });
+          const saved = await loadChannelState(base);
+          expect(saved.pendingInbound).toHaveLength(2); expect(turns).toBe(1);
+          release(); await vi.waitFor(() => expect(sent).toContain("我在，第二条也收到了。"));
+          return Response.json({ ret: 0, errcode: -14 });
+        }
+        throw new Error("unexpected fixture request");
+      },
+    });
+    expect(result).toBe(0); expect(maximumActive).toBe(1);
+    expect(sent).toEqual(["第一条已处理。", "我在，第二条也收到了。"]);
+    expect((await loadChannelState(base)).pendingInbound).toHaveLength(0);
+  });
   it("processes a submitted CLI request between two messages in the same WeChat batch", async () => {
     const base = await makeTempBase();
     const state = defaultChannelState(); state.token = "local-test-token"; state.ownerUserId = "owner"; state.contextTokens.owner = "ctx-owner";
@@ -157,6 +193,9 @@ describe("channel subcommands", () => {
         if (path.endsWith("/sendmessage")) return new Response(JSON.stringify({ ret: 0, errcode: 0 }));
         if (path.endsWith("/getupdates")) {
           polls++;
+          // Reception no longer waits for Agent work. End this ordering test
+          // only after both turns, not after a timing-dependent immediate logout.
+          if (polls > 1) await vi.waitFor(() => expect(turns).toBe(2));
           return new Response(JSON.stringify(polls === 1 ? { ret: 0, errcode: 0, get_updates_buf: "cursor", msgs: ["先帮我取消吧", "处理了吗"].map((text, i) => ({ client_id: `local-${i}`, context_token: "ctx-owner", from_user_id: "owner", item_list: [{ type: 1, text_item: { text } }] })) } : { ret: 0, errcode: -14 }));
         }
         throw new Error("unexpected test request");

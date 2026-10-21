@@ -192,6 +192,27 @@ class ScriptedRpc implements CodexResidentRpc {
   }
 }
 
+it.each([false, true])("optional browser failure does not break chat (%j)", async listed => {
+  const rpc = new ScriptedRpc(); rpc.mcpServers = ["attention", ...(listed ? ["attention_browser"] : [])];
+  const brain = createCodexResidentBrain({ rpc, mcpUrl: "https://attention.example/mcp", dedicatedBrowser: true,
+    permissionProfileSha256: "a".repeat(64) });
+  try {
+    await brain.start();
+    expect(brain.runtimeSnapshot().phase).toBe("healthy");
+    expect(await brain.invoke({ cwd: "/tmp", sessionId: null, prompt: "在吗" })).toMatchObject({ ok: true });
+    const request = rpc.requests.find(r => r.method === "thread/start")?.params as { developerInstructions: string };
+    expect(request.developerInstructions).toContain("dedicated window");
+    expect(brain.permissionProfileSha256).toBe("a".repeat(64));
+  } finally { await brain.shutdown(); }
+});
+
+it("does not admit unrelated MCP with browser consent", async () => {
+  const rpc = new ScriptedRpc(); rpc.mcpServers = ["attention", "attention_browser", "unrelated"];
+  const brain = createCodexResidentBrain({ rpc, mcpUrl: "https://attention.example/mcp", dedicatedBrowser: true });
+  try { await expect(brain.start()).rejects.toThrow("codex_mcp_isolation_failed"); expect(brain.runtimeSnapshot().phase).not.toBe("healthy"); }
+  finally { await brain.shutdown(); }
+});
+
 async function nextTurn(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }

@@ -54,6 +54,9 @@ const UUID_PATTERN =
 const UUID_IN_TEXT_PATTERN =
   /[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/iu;
 const SENSITIVE_RESULT_KEYS = new Set([
+  "grant",
+  "source_revision",
+  "evidence_sha256",
   "collection_id",
   "content_id",
   "display_title",
@@ -218,8 +221,10 @@ export function applyAttentionToolResult(
     const collection = record(payload.collection);
     const id = collectionId(collection?.collection_id);
     if ((read || record(input)?.collection_id !== undefined) && record(input)?.collection_id !== id) return current;
-    const action = enrichmentAction(content?.enrichment_action);
-    const status = summaryStatus(content?.summary_status);
+    const privateReady = record(content?.private_enrichment)?.evidence_visibility === "account_private" &&
+      AttentionToolSuccessOutputSchemas.attention_get_collection_status.safeParse(payload).success;
+    const action = privateReady ? "reuse_summary" : enrichmentAction(content?.enrichment_action);
+    const status = privateReady ? "ready" : summaryStatus(content?.summary_status);
     const safePublicReadUrl =
       action !== "generate_summary" ||
       isAbsoluteHttpUrl(content?.public_read_url);
@@ -237,6 +242,12 @@ export function applyAttentionToolResult(
       kind: "recovery",
       summaryStatus: status,
     };
+  }
+  if (normalizedToolName === "attention_submit_private_browser_enrichment") {
+    const saved = AttentionToolSuccessOutputSchemas.attention_submit_private_browser_enrichment.safeParse(payload);
+    if (!saved.success || typeof record(input)?.grant !== "string") return current;
+    return { kind: "recovery", collectionId: saved.data.collection_id, enrichmentAction: "reuse_summary",
+      enrichmentCompleted: true, summaryStatus: "ready" };
   }
   if (
     normalizedToolName === "attention_submit_content_enrichment" &&

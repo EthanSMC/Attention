@@ -1,0 +1,112 @@
+[
+  {
+    "id": "python",
+    "kind": "generic_web",
+    "label": "Python 官方介绍",
+    "url": "https://www.python.org/about/",
+    "provider": "Attention current local",
+    "timestamp": "2026-10-21T06:30:24.386Z",
+    "elapsed_ms": 16,
+    "outcome": "failed",
+    "code": "unsafe_source",
+    "attempts": [
+      {
+        "duration_ms": 11,
+        "method": "static"
+      }
+    ],
+    "title": null,
+    "characters": 0,
+    "truncated": false,
+    "extraction_method": null,
+    "text_sha256": null
+  },
+  {
+    "id": "mdn",
+    "kind": "generic_web",
+    "label": "MDN Using Fetch",
+    "url": "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch",
+    "provider": "Attention current local",
+    "timestamp": "2026-10-21T06:30:24.390Z",
+    "elapsed_ms": 1,
+    "outcome": "failed",
+    "code": "unsafe_source",
+    "attempts": [
+      {
+        "duration_ms": 2,
+        "method": "static"
+      }
+    ],
+    "title": null,
+    "characters": 0,
+    "truncated": false,
+    "extraction_method": null,
+    "text_sha256": null
+  },
+  {
+    "id": "wechat-existing",
+    "kind": "wechat_official_article",
+    "label": "Attention 原有公众号样本",
+    "url": "https://mp.weixin.qq.com/s/ICv0Dra1PFr7sxAGqO_MVA",
+    "provider": "Attention current local",
+    "timestamp": "2026-10-21T06:30:24.392Z",
+    "elapsed_ms": 2,
+    "outcome": "failed",
+    "code": "unsafe_source",
+    "attempts": [
+      {
+        "duration_ms": 2,
+        "method": "static"
+      }
+    ],
+    "title": null,
+    "characters": 0,
+    "truncated": false,
+    "extraction_method": null,
+    "text_sha256": null
+  },
+  {
+    "id": "wechat-ai",
+    "kind": "wechat_official_article",
+    "label": "公众号 AI 文章（公开播客引用）",
+    "url": "https://mp.weixin.qq.com/s/aBDgg3qpd2kuufwKWQcZ6w",
+    "provider": "Attention current local",
+    "timestamp": "2026-10-21T06:30:24.395Z",
+    "elapsed_ms": 1,
+    "outcome": "failed",
+    "code": "unsafe_source",
+    "attempts": [
+      {
+        "duration_ms": 1,
+        "method": "static"
+      }
+    ],
+    "title": null,
+    "characters": 0,
+    "truncated": false,
+    "extraction_method": null,
+    "text_sha256": null
+  },
+  {
+    "id": "example-control",
+    "kind": "generic_web",
+    "label": "example.com 短页对照",
+    "url": "https://example.com/",
+    "provider": "Attention current local",
+    "timestamp": "2026-10-21T06:30:24.397Z",
+    "elapsed_ms": 1,
+    "outcome": "failed",
+    "code": "unsafe_source",
+    "attempts": [
+      {
+        "duration_ms": 1,
+        "method": "static"
+      }
+    ],
+    "title": null,
+    "characters": 0,
+    "truncated": false,
+    "extraction_method": null,
+    "text_sha256": null
+  }
+]

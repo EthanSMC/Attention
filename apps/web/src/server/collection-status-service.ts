@@ -4,6 +4,7 @@ import {
   and,
   CollectionRepositoryError,
   collections,
+  collectionPrivateEnrichments,
   contents,
   eq,
   filterProfiles,
@@ -91,6 +92,7 @@ export interface OwnedCollectionStatusResult {
 }
 
 export interface OwnedContentStatusResult {
+  private_enrichment?: { title: string; summary: string; summary_status: "ready"; evidence_visibility: "account_private" };
   community_moderation_status: "clear" | "hidden" | "pending_review";
   content_id: string;
   content_status: "active" | "merged";
@@ -186,6 +188,8 @@ async function loadOwnedCollectionStatus(
       .select({
         collectedAt: collections.collectedAt,
         aiSummary: contents.aiSummary,
+        privateTitle: collectionPrivateEnrichments.title,
+        privateSummary: collectionPrivateEnrichments.summary,
         collectionId: collections.id,
         collectionStatus: collections.collectionStatus,
         collectionUpdatedAt: collections.updatedAt,
@@ -210,6 +214,11 @@ async function loadOwnedCollectionStatus(
       })
       .from(collections)
       .innerJoin(contents, eq(contents.id, collections.contentId))
+      .leftJoin(collectionPrivateEnrichments, and(
+        eq(collectionPrivateEnrichments.collectionId, collections.id),
+        eq(collectionPrivateEnrichments.accountId, accountId),
+        eq(collectionPrivateEnrichments.sourceUrl, contents.outboundUrl),
+      ))
       .leftJoin(filterProfiles, eq(filterProfiles.accountId, collections.accountId))
       .where(
         and(
@@ -262,6 +271,12 @@ async function loadOwnedCollectionStatus(
         visibility: row.visibility,
       },
       content: {
+        ...(row.privateTitle && row.privateSummary && row.collectionStatus === "active" &&
+          row.moderationStatus === "clear" && row.publicSafetyStatus === "allowed" &&
+          row.takedownStatus === "none" && row.communityModerationStatus === "clear" ? {
+            private_enrichment: { title: row.privateTitle, summary: row.privateSummary,
+              summary_status: "ready" as const, evidence_visibility: "account_private" as const },
+          } : {}),
         community_moderation_status: row.communityModerationStatus,
         content_id: row.contentId,
         content_status: row.contentStatus,

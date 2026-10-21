@@ -423,6 +423,7 @@ async function invokeWithFallback(
   const storedSession = sessionMatchesCurrentRelease(
     state.brainSession,
     brain.hostId,
+    brain.permissionProfileSha256,
   )
     ? state.brainSession.sessionId
     : null;
@@ -440,7 +441,7 @@ async function invokeWithFallback(
       sessionId: storedSession,
     });
     if (!resumed.resumeFailed) {
-      recordSession(state, brain.hostId, resumed.sessionId ?? storedSession);
+      recordSession(state, brain.hostId, resumed.sessionId ?? storedSession, brain.permissionProfileSha256);
       return resumed;
     }
     // Resume failed: drop the stale session and replay the transcript.
@@ -462,7 +463,7 @@ async function invokeWithFallback(
         });
   const fresh = await invoke({ prompt, sessionId: null });
   if (fresh.sessionId) {
-    recordSession(state, brain.hostId, fresh.sessionId);
+    recordSession(state, brain.hostId, fresh.sessionId, brain.permissionProfileSha256);
   }
   return fresh;
 }
@@ -471,12 +472,13 @@ function recordSession(
   state: ChannelState,
   hostId: "codex" | "claude-code",
   sessionId: string | null,
+  permissionProfileSha256 = ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
 ): void {
   if (!sessionId) return;
   state.brainSession = {
     bridgeVersion: ATTENTION_CLI_VERSION,
     hostId,
-    permissionProfileSha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+    permissionProfileSha256,
     sessionId,
     updatedAt: new Date().toISOString(),
   };
@@ -485,6 +487,7 @@ function recordSession(
 function sessionMatchesCurrentRelease(
   session: BrainSession | null,
   hostId: BrainAdapter["hostId"],
+  permissionProfileSha256 = ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
 ): session is BrainSession & {
   readonly bridgeVersion: string;
   readonly permissionProfileSha256: string;
@@ -493,7 +496,7 @@ function sessionMatchesCurrentRelease(
     session?.hostId === hostId &&
     session.bridgeVersion === ATTENTION_CLI_VERSION &&
     session.permissionProfileSha256 ===
-      ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256
+      permissionProfileSha256
   );
 }
 

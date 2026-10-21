@@ -1,0 +1,11 @@
+{
+  "initial_daemon_running": false,
+  "initial_daemon_check": "socket absent",
+  "started_by_this_benchmark": true,
+  "pretest_containers": [],
+  "posttest_containers": [],
+  "stop_command": "docker desktop stop",
+  "final_daemon_running": false,
+  "final_daemon_check": "docker info failed because local socket no longer exists",
+  "notes": "All temporary reader/preflight containers removed. Empty final all-container inventory confirmed before stopping the Docker Desktop instance started by this benchmark."
+}

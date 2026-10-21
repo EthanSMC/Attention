@@ -9,6 +9,7 @@ import {
   accounts,
   and,
   collections,
+  collectionPrivateEnrichments,
   contents,
   desc,
   eq,
@@ -98,6 +99,9 @@ export async function loadMyCollections(
           author: contents.author,
           collectedAt: collections.collectedAt,
           collectionId: collections.id,
+          privateTitle: collectionPrivateEnrichments.title,
+          privateSummary: collectionPrivateEnrichments.summary,
+          privateTags: collectionPrivateEnrichments.tags,
           filterDisplayName: filterProfiles.displayName,
           filterRevokedAt: collections.filterRevokedAt,
           firstPublicAt: contents.firstPublicAt,
@@ -115,6 +119,11 @@ export async function loadMyCollections(
         })
         .from(collections)
         .innerJoin(contents, eq(contents.id, collections.contentId))
+        .leftJoin(collectionPrivateEnrichments, and(
+          eq(collectionPrivateEnrichments.collectionId, collections.id),
+          eq(collectionPrivateEnrichments.accountId, accountId),
+          eq(collectionPrivateEnrichments.sourceUrl, contents.outboundUrl),
+        ))
         .innerJoin(accounts, eq(accounts.id, collections.accountId))
         .leftJoin(filterProfiles, eq(filterProfiles.accountId, collections.accountId))
         .leftJoin(publicContentsCurrent, eq(publicContentsCurrent.id, contents.id))
@@ -140,6 +149,7 @@ export async function loadMyCollections(
         ? "paused"
         : row.visibility;
     const derivedVisible = capabilities.isMember || row.publicContentId !== null;
+    const privateVisible = !blocked && (capabilities.isMember || capabilities.isFilter) && row.privateSummary != null;
     return {
       author: row.author,
       collectedAt: row.collectedAt.toISOString(),
@@ -160,10 +170,10 @@ export async function loadMyCollections(
       source: source.name,
       sourceInitial: source.initial,
       sourceTone: source.tone,
-      summary: derivedVisible ? row.aiSummary : null,
-      summaryStatus: derivedVisible ? uiSummaryStatus(row.summaryStatus) : "unavailable",
-      tags: derivedVisible ? row.aiTags : [],
-      title: row.title ?? fallbackTitle(row.outboundUrl, source.name),
+      summary: privateVisible ? row.privateSummary : derivedVisible ? row.aiSummary : null,
+      summaryStatus: privateVisible ? "ready" : derivedVisible ? uiSummaryStatus(row.summaryStatus) : "unavailable",
+      tags: privateVisible ? row.privateTags ?? [] : derivedVisible ? row.aiTags : [],
+      title: (privateVisible ? row.privateTitle : row.title) ?? fallbackTitle(row.outboundUrl, source.name),
       visibility: row.visibility,
     };
   });

@@ -25,6 +25,8 @@ import {
 
 import { runCommand } from "../command-runner";
 import { ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256 } from "../bridge-update-contract";
+import { loadDedicatedBrowser, type DedicatedBrowserConfiguration } from "../dedicated-browser";
+import { SerialBackgroundWork } from "./serial-background-work";
 import { resolveAttentionPublicUrl } from "../origin";
 import {
   loadRuntimeCredential,
@@ -167,6 +169,7 @@ export interface ChannelCommandOptions {
   readonly brainFactory?: (
     hostId: ChannelBridgeHost,
     options: {
+      readonly dedicatedBrowser?: DedicatedBrowserConfiguration;
       readonly localControl?: CodexLocalControl;
       readonly codexHomeDirectory?: string;
       readonly mcpUrl: string;
@@ -299,7 +302,7 @@ export async function processDueSummaryRetry(input: {
       retryRef,
     }),
     sessionId:
-      state.brainSession?.hostId === brain.hostId && state.brainSession.bridgeVersion === ATTENTION_CLI_VERSION && state.brainSession.permissionProfileSha256 === ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256
+      state.brainSession?.hostId === brain.hostId && state.brainSession.bridgeVersion === ATTENTION_CLI_VERSION && state.brainSession.permissionProfileSha256 === (brain.permissionProfileSha256 ?? ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256)
         ? state.brainSession.sessionId
         : null,
   });
@@ -308,7 +311,7 @@ export async function processDueSummaryRetry(input: {
     state.brainSession = {
       bridgeVersion: ATTENTION_CLI_VERSION,
       hostId: brain.hostId,
-      permissionProfileSha256: ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
+      permissionProfileSha256: brain.permissionProfileSha256 ?? ATTENTION_BRIDGE_PERMISSION_PROFILE_SHA256,
       sessionId: outcome.sessionId,
       updatedAt: completedAt.toISOString(),
     };
@@ -575,6 +578,7 @@ export async function channelStart(
   }
 
   let brain: BrainAdapter | null = null;
+  let brainStopped = false;
   let mcpSupervisor: McpRecoverySupervisor | null = null;
   let persistedState: ChannelState | null = null;
   const reporterSlot: { current: ReporterRuntime | null } = { current: null };
@@ -590,6 +594,11 @@ export async function channelStart(
     const cwd = localControlProfile?.workspace ?? channelStateDirectory(options.baseDirectory);
     await mkdir(cwd, { mode: 0o700, recursive: true });
     const mcpUrl = resolveAttentionPublicUrl(options.origin, "/mcp");
+    let dedicatedBrowser: DedicatedBrowserConfiguration | undefined;
+    if (hostId === "codex") {
+      try { dedicatedBrowser = await loadDedicatedBrowser(new URL(mcpUrl).origin, options.baseDirectory); }
+      catch { write("专用浏览器配置不可用或需要重新授权；浏览器保持禁用，微信和 Attention MCP 继续运行。\n"); }
+    }
     const shouldPrepareCodexHome =
       hostId === "codex" &&
       (options.brainFactory === undefined ||
@@ -602,6 +611,7 @@ export async function channelStart(
         })
       : undefined;
     const activeBrain = (options.brainFactory ?? createBrainAdapter)(hostId, {
+      ...(dedicatedBrowser ? { dedicatedBrowser } : {}),
       ...(localControlProfile ? { localControl: localControlProfile } : {}),
       ...(codexHomeDirectory ? { codexHomeDirectory } : {}),
       mcpUrl,
@@ -1037,7 +1047,9 @@ export async function channelStart(
       )();
     }
 
+    const backgroundWork = new SerialBackgroundWork();
     const maybeStageBridgeUpdate = async (): Promise<boolean> => {
+      if (backgroundWork.running) return false;
       if (updateController) {
         return await updateController.activateIfSafe(runtime.state,persist,()=>!outboundFlushes.has(runtime),async()=>{
           // Stop callback producers before the final empty-outbox barrier. The
@@ -1110,6 +1122,7 @@ export async function channelStart(
         .then(() => updateController?.stop())
         .then(() => reporterSlot.current?.reporter.stop() ?? Promise.resolve())
         .then(() => activeBrain.shutdown())
+        .then(() => backgroundWork.drain())
         .catch(() => undefined)
         .then(() => {
           syncRuntimeCheckpoint(runtime.state, activeBrain);
@@ -1123,7 +1136,29 @@ export async function channelStart(
 
     try {
       let nextSummaryNotificationPollAt = 0;
+      const kickBusiness = () => {
+        if (updateController?.pausesBusiness || shutdownStarted) return;
+        backgroundWork.kick(async () => {
+          // Drain newly received messages without waiting for another long poll.
+          // A cooling/blocked head does not cause a spin loop.
+          for (;;) {
+            const head = runtime.state.pendingInbound[0]?.id;
+            await processPendingInbound(runtime, activeBrain, cwd, persist, activeMcpSupervisor,
+              reporterSlot.current, updateController !== null, localControl ? betweenTurns : undefined);
+            if (!client.token || updateController?.pausesBusiness || shutdownStarted) return;
+            if (!runtime.state.pendingInbound.length || runtime.state.pendingInbound[0]?.id === head) break;
+          }
+          if (!runtime.state.pendingInbound.length) await processDueSummaryRetry({
+            brain: activeBrain, cwd, now: () => new Date(),
+            onAttentionMcpFailure: async failure => { await activeMcpSupervisor.recordProbe({ ...failure, ok: false }); },
+            persist, state: runtime.state,
+          });
+          reporterSlot.current?.reporter.transition(buildReporterSnapshot(runtime, activeBrain));
+          await flushPendingOutbound(runtime, persist);
+        });
+      };
       for (;;) {
+        backgroundWork.throwIfFailed();
         if (syncRuntimeCheckpoint(runtime.state, activeBrain)) {
           await persist();
         }
@@ -1164,37 +1199,8 @@ export async function channelStart(
 
         await flushPendingOutbound(runtime, persist);
         if (!client.token) continue;
-        if (!updateController?.pausesBusiness) await processPendingInbound(
-          runtime,
-          activeBrain,
-          cwd,
-          persist,
-          activeMcpSupervisor,
-          reporterSlot.current,
-          updateController !== null,
-          localControl ? betweenTurns : undefined,
-        );
-        if (!client.token) continue;
-        const summaryRetryResult = updateController?.pausesBusiness ? "idle" : await processDueSummaryRetry({
-          brain: activeBrain,
-          cwd,
-          now: () => new Date(),
-          onAttentionMcpFailure: async (failure) => {
-            await activeMcpSupervisor.recordProbe({
-              ...failure,
-              ok: false,
-            });
-          },
-          persist,
-          state: runtime.state,
-        });
-        if (summaryRetryResult !== "idle") {
-          reporterSlot.current?.reporter.transition(
-            buildReporterSnapshot(runtime, activeBrain),
-          );
-          await flushPendingOutbound(runtime, persist);
-          if (!client.token) continue;
-        }
+        kickBusiness();
+        await backgroundWork.settleWithin();
         if (await maybeStageBridgeUpdate()) {
           return BRIDGE_UPDATE_RESTART_EXIT_CODE;
         }
@@ -1247,23 +1253,22 @@ export async function channelStart(
         }
         await updateController?.tick(runtime.state,persist);
         await tickLocalControl();
-        if (!updateController?.pausesBusiness) await processPendingInbound(
-          runtime,
-          activeBrain,
-          cwd,
-          persist,
-          activeMcpSupervisor,
-          reporterSlot.current,
-          updateController !== null,
-          localControl ? betweenTurns : undefined,
-        );
+        kickBusiness();
+        await backgroundWork.settleWithin();
         await flushPendingOutbound(runtime, persist);
       }
     } finally {
-      try { await localControl?.stop(); } catch { /* The PID and bounded heartbeat still prevent stale success. */ }
-      await updateController?.stop();
-      process.removeListener("SIGINT", shutdown);
-      process.removeListener("SIGTERM", shutdown);
+      // Stop the Agent before draining: an interrupted message remains durable.
+      try {
+        if (backgroundWork.running) { await activeBrain.shutdown(); brainStopped = true; }
+        await backgroundWork.drain();
+        await flushPendingPersistence();
+      } finally {
+        try { await localControl?.stop(); } catch { /* The PID and bounded heartbeat still prevent stale success. */ }
+        await updateController?.stop();
+        process.removeListener("SIGINT", shutdown);
+        process.removeListener("SIGTERM", shutdown);
+      }
     }
   } finally {
     mcpSupervisor?.stop();
@@ -1274,7 +1279,7 @@ export async function channelStart(
     await flushPendingPersistence();
     if (brain) {
       try {
-        await brain.shutdown();
+        if (!brainStopped) await brain.shutdown();
       } catch {
         // The durable local checkpoint remains authoritative on shutdown.
       }

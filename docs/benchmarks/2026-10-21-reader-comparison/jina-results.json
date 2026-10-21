@@ -1,0 +1,178 @@
+{
+  "run_id": "20261021-free-comparison",
+  "method": "production readAgentReachSource + fixed preloaded image + anonymous Jina",
+  "image": "sha256:6730deb3f6ee0280545cc22ac1bdec76e7ff025584dddd15a155cf751b4937e5",
+  "scope": "public reader benchmark; no collection or database mutation",
+  "results": [
+    {
+      "id": "python",
+      "kind": "generic_web",
+      "label": "Python 官方介绍",
+      "url": "https://www.python.org/about/",
+      "provider": "agent_reach_jina",
+      "started_at": "2026-10-21T06:32:45.047Z",
+      "duration_ms": 1826,
+      "outcome": "blocked",
+      "code": "unsafe_source",
+      "title": null,
+      "author": null,
+      "published_at": null,
+      "characters": 0,
+      "truncated": false,
+      "attempts": [
+        {
+          "duration_ms": 1823,
+          "method": "agent_reach"
+        }
+      ],
+      "extraction_method": null,
+      "final_url": null,
+      "structure": {
+        "paragraphs": 0,
+        "long_paragraphs": 0,
+        "markdown_headings": 0,
+        "markdown_links": 0,
+        "markdown_images": 0,
+        "han_characters": 0,
+        "gate_terms": []
+      },
+      "body_sha256": null
+    },
+    {
+      "id": "mdn",
+      "kind": "generic_web",
+      "label": "MDN Using Fetch",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch",
+      "provider": "agent_reach_jina",
+      "started_at": "2026-10-21T06:32:51.976Z",
+      "duration_ms": 1007,
+      "outcome": "blocked",
+      "code": "unsafe_source",
+      "title": null,
+      "author": null,
+      "published_at": null,
+      "characters": 0,
+      "truncated": false,
+      "attempts": [
+        {
+          "duration_ms": 1003,
+          "method": "agent_reach"
+        }
+      ],
+      "extraction_method": null,
+      "final_url": null,
+      "structure": {
+        "paragraphs": 0,
+        "long_paragraphs": 0,
+        "markdown_headings": 0,
+        "markdown_links": 0,
+        "markdown_images": 0,
+        "han_characters": 0,
+        "gate_terms": []
+      },
+      "body_sha256": null
+    },
+    {
+      "id": "wechat-existing",
+      "kind": "wechat_official_article",
+      "label": "Attention 原有公众号样本",
+      "url": "https://mp.weixin.qq.com/s/ICv0Dra1PFr7sxAGqO_MVA",
+      "provider": "agent_reach_jina",
+      "started_at": "2026-10-21T06:32:58.086Z",
+      "duration_ms": 526,
+      "outcome": "blocked",
+      "code": "unsafe_source",
+      "title": null,
+      "author": null,
+      "published_at": null,
+      "characters": 0,
+      "truncated": false,
+      "attempts": [
+        {
+          "duration_ms": 525,
+          "method": "agent_reach"
+        }
+      ],
+      "extraction_method": null,
+      "final_url": null,
+      "structure": {
+        "paragraphs": 0,
+        "long_paragraphs": 0,
+        "markdown_headings": 0,
+        "markdown_links": 0,
+        "markdown_images": 0,
+        "han_characters": 0,
+        "gate_terms": []
+      },
+      "body_sha256": null
+    },
+    {
+      "id": "wechat-ai",
+      "kind": "wechat_official_article",
+      "label": "公众号 AI 文章（公开播客引用）",
+      "url": "https://mp.weixin.qq.com/s/aBDgg3qpd2kuufwKWQcZ6w",
+      "provider": "agent_reach_jina",
+      "started_at": "2026-10-21T06:33:03.717Z",
+      "duration_ms": 1009,
+      "outcome": "blocked",
+      "code": "unsafe_source",
+      "title": null,
+      "author": null,
+      "published_at": null,
+      "characters": 0,
+      "truncated": false,
+      "attempts": [
+        {
+          "duration_ms": 1005,
+          "method": "agent_reach"
+        }
+      ],
+      "extraction_method": null,
+      "final_url": null,
+      "structure": {
+        "paragraphs": 0,
+        "long_paragraphs": 0,
+        "markdown_headings": 0,
+        "markdown_links": 0,
+        "markdown_images": 0,
+        "han_characters": 0,
+        "gate_terms": []
+      },
+      "body_sha256": null
+    },
+    {
+      "id": "example-control",
+      "kind": "generic_web",
+      "label": "example.com 短页对照",
+      "url": "https://example.com/",
+      "provider": "agent_reach_jina",
+      "started_at": "2026-10-21T06:33:09.835Z",
+      "duration_ms": 690,
+      "outcome": "blocked",
+      "code": "unsafe_source",
+      "title": null,
+      "author": null,
+      "published_at": null,
+      "characters": 0,
+      "truncated": false,
+      "attempts": [
+        {
+          "duration_ms": 687,
+          "method": "agent_reach"
+        }
+      ],
+      "extraction_method": null,
+      "final_url": null,
+      "structure": {
+        "paragraphs": 0,
+        "long_paragraphs": 0,
+        "markdown_headings": 0,
+        "markdown_links": 0,
+        "markdown_images": 0,
+        "han_characters": 0,
+        "gate_terms": []
+      },
+      "body_sha256": null
+    }
+  ]
+}

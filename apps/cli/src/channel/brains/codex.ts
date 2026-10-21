@@ -8,6 +8,11 @@ import {
 } from "../codex-app-server-rpc";
 import type { BrainAdapter } from "../brain";
 import type { CodexLocalControl } from "../codex-local-control";
+import { browserPermissionFingerprint, type DedicatedBrowserConfiguration } from "../../dedicated-browser";
+
+export const DEDICATED_BROWSER_TOOLS = ["attention_browser_open_collection", "attention_browser_read_article",
+  "attention_browser_status", "attention_browser_show", "attention_browser_scroll", "attention_browser_close"] as const;
+const BROWSER_ATTENTION_TOOLS = ["attention_issue_browser_grant", "attention_submit_private_browser_enrichment"] as const;
 import {
   createCodexResidentBrain,
   type CodexResidentRpc,
@@ -55,6 +60,7 @@ export const ATTENTION_CHANNEL_APPROVED_WRITE_TOOLS = [
 ] as const satisfies readonly (typeof ATTENTION_CHANNEL_MCP_TOOL_NAMES)[number][];
 
 export interface CodexBrainOptions {
+  readonly dedicatedBrowser?: DedicatedBrowserConfiguration;
   readonly localControl?: CodexLocalControl;
   readonly codexHomeDirectory?: string;
   readonly mcpUrl: string;
@@ -69,6 +75,10 @@ export interface CodexBrainOptions {
  * `app-server`; turn-level sandboxing is enforced by codex-resident.ts.
  */
 export function createCodexBrain(options: CodexBrainOptions): BrainAdapter {
+  const browser = options.dedicatedBrowser;
+  // A browser-enabled context may contain private evidence. Do not expose the
+  // shared enrichment sink; a prompt alone is not an information-flow boundary.
+  const attentionTools = ATTENTION_CHANNEL_MCP_TOOL_NAMES.filter(tool => !browser || tool !== "attention_submit_content_enrichment");
   const rpcOptions: CodexAppServerRpcOptions = {
     ...(options.localControl ? { cwd: options.localControl.workspace } : {}),
     args: [
@@ -79,10 +89,22 @@ export function createCodexBrain(options: CodexBrainOptions): BrainAdapter {
       ...(options.localControl ? ["--enable", "shell_tool", "--enable", "unified_exec"] : []),
       ...codexAttentionMcpOverrideArgs(options.mcpUrl),
       "-c",
-      `mcp_servers.attention.enabled_tools=${JSON.stringify(ATTENTION_CHANNEL_MCP_TOOL_NAMES)}`,
+      `mcp_servers.attention.enabled_tools=${JSON.stringify([...attentionTools, ...(browser ? BROWSER_ATTENTION_TOOLS : [])])}`,
+      ...(browser ? ["-c", `mcp_servers.attention_browser.command=${JSON.stringify(browser.nodePath)}`,
+        "-c", `mcp_servers.attention_browser.args=${JSON.stringify([browser.entryPath])}`,
+        "-c", "mcp_servers.attention_browser.enabled=true",
+        "-c", "mcp_servers.attention_browser.required=false",
+        "-c", "mcp_servers.attention_browser.startup_timeout_sec=10",
+        "-c", "mcp_servers.attention_browser.tool_timeout_sec=65",
+        "-c", `mcp_servers.attention_browser.enabled_tools=${JSON.stringify(DEDICATED_BROWSER_TOOLS)}`,
+        ...Object.entries({ ATTENTION_BROWSER_ORIGIN: browser.origin, ATTENTION_BROWSER_STATE_DIRECTORY: browser.stateDirectory,
+          ATTENTION_BROWSER_CONSENT_VERSION: "1" }).flatMap(([key, value]) => ["-c", `mcp_servers.attention_browser.env.${key}=${JSON.stringify(value)}`]),
+        ...[...BROWSER_ATTENTION_TOOLS].flatMap(tool => ["-c", `mcp_servers.attention.tools.${tool}.approval_mode="approve"`]),
+        ...DEDICATED_BROWSER_TOOLS.flatMap(tool => ["-c", `mcp_servers.attention_browser.tools.${tool}.approval_mode="approve"`]),
+      ] : []),
       "-c",
       `web_search=${JSON.stringify("live")}`,
-      ...ATTENTION_CHANNEL_APPROVED_WRITE_TOOLS.flatMap((tool) => [
+      ...ATTENTION_CHANNEL_APPROVED_WRITE_TOOLS.filter(tool => !browser || tool !== "attention_submit_content_enrichment").flatMap((tool) => [
         "-c",
         `mcp_servers.attention.tools.${tool}.approval_mode=${JSON.stringify("approve")}`,
       ]),
@@ -102,5 +124,6 @@ export function createCodexBrain(options: CodexBrainOptions): BrainAdapter {
   const rpc = (options.rpcFactory ?? ((input) => new CodexAppServerRpc(input)))(
     rpcOptions,
   );
-  return createCodexResidentBrain({ mcpUrl: options.mcpUrl, rpc, ...(options.localControl ? { localControl: options.localControl } : {}) });
+  return createCodexResidentBrain({ mcpUrl: options.mcpUrl, rpc, ...(options.localControl ? { localControl: options.localControl } : {}),
+    ...(browser ? { dedicatedBrowser: true, permissionProfileSha256: browserPermissionFingerprint(browser) } : {}) });
 }
