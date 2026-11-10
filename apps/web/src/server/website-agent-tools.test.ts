@@ -78,10 +78,10 @@ describe("website transport shares the Attention tool registry", () => {
   });
   it.each([
     ["attention_collect_content", {}, "collection_consent_required"],
-    ["attention_collect_content", { visibility: "public" }, "public_collection_review_required"],
+    ["attention_collect_content", { visibility: "public" }, "action_review_unavailable"],
     ["attention_read_collection_source", {}, "source_read_consent_required"],
     ["attention_select_collection_candidate", {}, "candidate_selection_review_required"],
-    ["attention_submit_content_enrichment", {}, "source_evidence_and_merge_review_required"],
+    ["attention_submit_content_enrichment", { content_id: operationId, idempotency_key: "enrichment-fixture", resolved_url: "https://example.org/article", title: "Title", summary: "Summary", tags: ["Tag"] }, "action_review_unavailable"],
     ["attention_update_collection", { collection_id: operationId, visibility: "public" }, "action_review_unavailable"],
   ] as const)("returns the explicit gate for %s without invoking Core", async (name, args, code) => {
     const principal = { ...context, scopes: [...WEBSITE_AGENT_TOOL_SCOPES] };
@@ -126,5 +126,32 @@ describe("website transport shares the Attention tool registry", () => {
     const controller = new AbortController(); controller.abort();
     await expect(tool!.invoke({}, { ...execution(), signal: controller.signal })).rejects.toThrow();
     expect(list.invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe("website collection preparation bridge", () => {
+  it("proposes public input from the original message without collecting first", async () => {
+    const principal = { ...context, scopes: [...WEBSITE_AGENT_TOOL_SCOPES] };
+    const invoke = vi.fn(), proposeAction = vi.fn(async () => ({ ok: true, value: { status: "requires_user_confirmation" } }));
+    const original = attentionToolRegistry.find(tool => tool.name === "attention_collect_content")!;
+    const [tool] = createWebsiteAgentTools({ context: principal, getCurrentContext: async () => principal, operationId,
+      query: "https://example.com/one https://example.com/two", collect: false, readSources: false, registry: [{ ...original, invoke }], proposeAction });
+    expect(await tool!.invoke({ visibility: "public" }, execution())).toMatchObject({ ok: true });
+    expect(invoke).not.toHaveBeenCalled();
+    expect(proposeAction).toHaveBeenCalledWith("attention_collect_content", {
+      input: "https://example.com/one https://example.com/two", visibility: "public", idempotency_key: `website-review:${operationId}`,
+    }, expect.anything());
+    expect(await tool!.invoke({ visibility: "public", input: "https://evil.example/" }, execution())).toMatchObject({ code: "invalid_request" });
+  });
+  it("turns a private ambiguous result into a human picker and never leaks its token to the model", async () => {
+    const principal = { ...context, scopes: [...WEBSITE_AGENT_TOOL_SCOPES] };
+    const invoke = vi.fn(async () => ({ ok: true as const, value: { status: "ambiguous", selection_token: "SECRET_SELECTION_TOKEN" } }));
+    const proposeAction = vi.fn(async () => ({ ok: true, value: { action_id: operationId } }));
+    const original = attentionToolRegistry.find(tool => tool.name === "attention_collect_content")!;
+    const [tool] = createWebsiteAgentTools({ context: principal, getCurrentContext: async () => principal, operationId,
+      query: "two links", collect: true, readSources: false, registry: [{ ...original, invoke }], proposeAction });
+    const result = await tool!.invoke({}, execution());
+    expect(JSON.stringify(result)).not.toContain("SECRET_SELECTION_TOKEN");
+    expect(proposeAction).toHaveBeenCalledWith("attention_collect_content", { input: "two links", visibility: "private", idempotency_key: `website:${operationId}` }, expect.anything());
   });
 });

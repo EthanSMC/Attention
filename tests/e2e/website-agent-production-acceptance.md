@@ -1,6 +1,6 @@
 # Production standalone HTTP and browser acceptance
 
-This is a small complement to the 39 component cases and the isolated route/PG
+This is a small complement to the 43 component cases and the isolated route/PG
 suite. It runs the built Next standalone server as a separate Node process on
 `127.0.0.1:4179`, with its traced dependencies, public files and `.next/static`.
 No production source, route handler, authentication function, database store,
@@ -57,7 +57,17 @@ The fixture applies the actual migrations, checks the runtime role is not
 superuser/BYPASSRLS, and issues real synthetic member sessions with the auth
 library. It never truncates or drops tables/databases. CI's disposable service
 owns DB cleanup. Its temporary standalone copy excludes dotenv files and is
-removed after stopping only the spawned server process.
+removed after stopping only the spawned server process. Relative pnpm symlinks
+are preserved verbatim: dereferencing Next's package link changes Node's lookup
+ancestry and breaks its sibling dependencies. Before and after copying, symlinks
+must resolve within their packaged tree; absolute, escaping and dotenv/private
+configuration links fail closed. Dotenv files, `.git`, `.npmrc` and `.netrc` are
+excluded from all copied inputs.
+
+These two cases share one initialized worker/database. The suite stops on its
+first failure, with the later case reported as not run, rather than spawning a
+replacement worker against the already-migrated database. There is no DB reuse,
+guard bypass, retry or pass substitution.
 
 ## CI integration after the production build
 
@@ -67,7 +77,7 @@ with `chromiumSandbox: true`. There is no sandbox-disabled fallback. After
 
 ```sh
 pnpm exec tsc --project tests/e2e/website-agent-production.tsconfig.json
-pnpm exec vitest run tests/e2e/website-agent-offline-provider.test.ts
+pnpm exec vitest run tests/e2e/website-agent-offline-provider.test.ts tests/e2e/website-agent-standalone-copy.test.ts
 pnpm exec playwright test --config tests/e2e/website-agent-production.playwright.config.ts
 ```
 

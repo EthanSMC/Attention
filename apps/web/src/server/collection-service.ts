@@ -53,6 +53,10 @@ import {
 } from "@attention/db";
 import { z } from "zod";
 
+import { collectionPlanCanonical, collectionPlanDigest, loadCollectionEffectPlan, parseCollectionEffectPlan, type CollectionEffectPlan } from "./collection-effect-plan";
+export { loadCollectionEffectPlan, parseCollectionEffectPlan } from "./collection-effect-plan";
+export type { CollectionEffectPlan } from "./collection-effect-plan";
+
 import { enrichmentResponseFields } from "./content-enrichment-decision";
 
 export { enrichmentResponseFields } from "./content-enrichment-decision";
@@ -67,7 +71,7 @@ import { FetcherClientError, resolveExternalUrl } from "./fetcher-client";
 const parserVersion = "web-v1";
 const selectionTtlMilliseconds = 24 * 60 * 60 * 1_000;
 const attemptLeaseMilliseconds = 5 * 60 * 1_000;
-type CollectionPrincipal = Pick<
+export type CollectionPrincipal = Pick<
   SessionPrincipal,
   "accountId" | "isFilter" | "isMember"
 > & {
@@ -121,7 +125,7 @@ export class CollectionServiceError extends Error {
   }
 }
 
-interface ResolvedCandidate {
+export interface ResolvedCandidate {
   aliasIdentities: AdapterIdentity[];
   identity: AdapterIdentity;
   outboundUrl: string;
@@ -509,7 +513,7 @@ function attemptWritePredicate(attempt: InputAttempt) {
 }
 
 async function beginAttempt(
-  db: AttentionDatabase,
+  db: AttentionDatabase | AttentionTransaction,
   principal: CollectionPrincipal,
   input: CollectRequest,
 ): Promise<{ attempt: InputAttempt; fresh: boolean }> {
@@ -858,8 +862,20 @@ async function establishCollection(
   pendingSelection?: PendingSelectionClaim,
 ): Promise<CollectorResponse> {
   await assertCollectionAuthority(principal, visibility);
+  return db.transaction((tx) => establishCollectionInTransaction(tx, principal, attempt, candidate, visibility, pendingSelection));
+}
+
+async function establishCollectionInTransaction(
+  tx: AttentionTransaction,
+  principal: CollectionPrincipal,
+  attempt: InputAttempt,
+  candidate: ResolvedCandidate,
+  visibility: "public" | "private",
+  pendingSelection?: PendingSelectionClaim,
+  exactPlan?: CollectionEffectPlan,
+): Promise<CollectorResponse> {
   const now = new Date();
-  const established = await db.transaction(async (tx) => {
+  const established = await (async () => {
     await setAccountContext(tx, principal.accountId);
     principal.signal?.throwIfAborted();
     const requirePrivateOnly = () => {
@@ -879,7 +895,7 @@ async function establishCollection(
             eq(pendingCandidateSets.id, pendingSelection.pendingId),
             eq(pendingCandidateSets.accountId, principal.accountId),
             eq(pendingCandidateSets.tokenHash, pendingSelection.tokenHash),
-            gt(pendingCandidateSets.expiresAt, pendingSelection.consumedAt),
+            gt(pendingCandidateSets.expiresAt, sql`clock_timestamp()`),
             isNull(pendingCandidateSets.consumedAt),
           ),
         )
@@ -916,6 +932,8 @@ async function establishCollection(
       source: candidate.identity.adapter,
       sourceAdapter: candidate.identity.adapter,
     });
+    if (exactPlan && (contentResult.created !== (exactPlan.effects.targetContentId === null) ||
+        (exactPlan.effects.targetContentId !== null && contentResult.content.id !== exactPlan.effects.targetContentId))) planChanged();
     if (principal.privateCollectionOnly && !contentResult.created) {
       // Stabilize shared URL/alias state through commit. A provisional upsert
       // loser was removed in this transaction and is not itself a merge effect.
@@ -936,8 +954,12 @@ async function establishCollection(
           ),
         )
         .limit(1);
+      if (exactPlan) {
+        const expected = exactPlan.snapshot.identities.find((row) => row.dedupeKey === aliasIdentity.dedupeKey && row.active === true);
+        if ((existingAliasIdentity?.contentId ?? null) !== (expected?.contentId ?? null)) planChanged();
+      }
       if (!existingAliasIdentity) {
-        await tx
+        const insertedAliasIdentities = await tx
           .insert(contentIdentities)
           .values({
             adapterVersion: aliasIdentity.adapterVersion,
@@ -947,7 +969,8 @@ async function establishCollection(
             normalizedUrl: aliasIdentity.normalizedUrl,
             sourceAdapter: aliasIdentity.adapter,
           })
-          .onConflictDoNothing({ target: contentIdentities.dedupeKey });
+          .onConflictDoNothing({ target: contentIdentities.dedupeKey }).returning({ id: contentIdentities.id });
+        if (exactPlan && insertedAliasIdentities.length !== 1) planChanged();
       } else if (existingAliasIdentity.contentId !== contentResult.content.id) {
         if (principal.privateCollectionOnly) requirePrivateOnly();
         pendingAliasContentIds.push(existingAliasIdentity.contentId);
@@ -977,15 +1000,18 @@ async function establishCollection(
       sourceChannel: "web",
       visibility,
     });
+    if (exactPlan && (collectionResult.status !== ({ new: "created", reused: "already_collected", restored: "restored" } as const)[exactPlan.effects.targetDisposition] ||
+        (exactPlan.effects.targetCollectionId !== null && collectionResult.collection.id !== exactPlan.effects.targetCollectionId))) planChanged();
     if (principal.privateCollectionOnly && collectionResult.collection.visibility !== "private") requirePrivateOnly();
     for (const aliasContentId of pendingAliasContentIds) {
-      await upsertCollectionInTransaction(tx, {
+      const aliasCollectionResult = await upsertCollectionInTransaction(tx, {
         accountId: principal.accountId,
         contentId: aliasContentId,
         domainId: domain.id,
         sourceChannel: "web",
         visibility,
       });
+      if (exactPlan && aliasCollectionResult.status !== ({ new: "created", reused: "already_collected", restored: "restored" } as const)[exactPlan.effects.aliasCollectionDispositions[aliasContentId]!]) planChanged();
       await tx.execute(sql`
         select public.attention_link_owned_content_alias(
           ${aliasContentId}::uuid,
@@ -1004,6 +1030,10 @@ async function establishCollection(
         ),
       );
     const aliasContentIds = aliasContents.map((alias) => alias.aliasContentId);
+    if (exactPlan) {
+      const expected = [...new Set([...exactPlan.snapshot.aliases.filter((row) => row.active === true && row.primaryContentId === contentResult.content.id).map((row) => String(row.aliasContentId)), ...exactPlan.effects.pendingAliasContentIds])].sort();
+      if (collectionPlanCanonical([...aliasContentIds].sort()) !== collectionPlanCanonical(expected)) planChanged();
+    }
     const existingAliasCollections = aliasContentIds.length > 0
       ? await tx
           .select()
@@ -1021,6 +1051,16 @@ async function establishCollection(
       (aliasCollection) =>
         aliasCollection.id !== collectionResult.collection.id,
     );
+    if (exactPlan) {
+      const expectedIds = exactPlan.effects.mergedCollectionIds;
+      const existingIds = mergedAliasCollections.filter((row) => exactPlan.snapshot.collections.some((old) => old.id === row.id)).map((row) => row.id).sort();
+      if (collectionPlanCanonical(expectedIds) !== collectionPlanCanonical(existingIds)) planChanged();
+      for (const row of mergedAliasCollections) {
+        const old = exactPlan.snapshot.collections.find((item) => item.id === row.id);
+        if (!old && exactPlan.effects.aliasCollectionDispositions[row.contentId] !== "new") planChanged();
+        if (old?.collectionStatus === "active" && collectionPlanCanonical(old) !== collectionPlanCanonical(row)) planChanged();
+      }
+    }
     if (mergedAliasCollections.length > 0) {
       if (principal.privateCollectionOnly) requirePrivateOnly();
       const collectionsToMerge = [
@@ -1136,7 +1176,7 @@ async function establishCollection(
         .set({ enrichmentStatus: "partial", updatedAt: now })
         .where(eq(contents.id, contentResult.content.id));
     }
-    await tx
+    const insertedJobs = await tx
       .insert(jobs)
       .values({
         idempotencyKey: `content.metadata.v1:${contentResult.content.id}`,
@@ -1144,7 +1184,14 @@ async function establishCollection(
         queue: "content-enrichment",
         taskType: "content.metadata.v1",
       })
-      .onConflictDoNothing({ target: jobs.idempotencyKey });
+      .onConflictDoNothing({ target: jobs.idempotencyKey }).returning({ id: jobs.id });
+    if (exactPlan && (insertedJobs.length === 1) !== (exactPlan.effects.metadataJob === "schedule")) planChanged();
+    if (exactPlan && (collectionResult.collection.visibility !== exactPlan.effects.resultingVisibility || collectionResult.collection.moderationStatus !== exactPlan.effects.resultingModeration || collectionResult.collection.domainId !== exactPlan.effects.resultingDomainId)) planChanged();
+    if (exactPlan) {
+      const [destination] = await tx.select({ outboundUrl: contents.outboundUrl }).from(contents)
+        .where(eq(contents.id, contentResult.content.id)).limit(1);
+      if (destination?.outboundUrl !== exactPlan.effects.resultingOutboundUrl) planChanged();
+    }
     const [updatedAttempt] = await tx
       .update(inputAttempts)
       .set({
@@ -1167,13 +1214,24 @@ async function establishCollection(
     // Never call a root-database revalidation callback while holding this
     // connection. The website supplies a same-transaction fresh authority read.
     if (principal.revalidateInTransaction) {
-      await assertCollectionAuthority({ ...principal, revalidate: () => principal.revalidateInTransaction!(tx) }, visibility);
+      await assertCollectionAuthority({ ...principal, revalidate: () => principal.revalidateInTransaction!(tx) }, exactPlan?.effects.resultingVisibility ?? visibility);
+    }
+    if (pendingSelection) {
+      // Expiry is checked against the database wall clock after all effects and
+      // same-transaction authorization, not merely the earlier claim timestamp.
+      const [unexpired] = await tx.select({ id: pendingCandidateSets.id }).from(pendingCandidateSets).where(and(
+        eq(pendingCandidateSets.id, pendingSelection.pendingId),
+        eq(pendingCandidateSets.accountId, principal.accountId),
+        eq(pendingCandidateSets.tokenHash, pendingSelection.tokenHash),
+        gt(pendingCandidateSets.expiresAt, sql`clock_timestamp()`),
+      )).limit(1);
+      if (!unexpired) throw new CollectionServiceError("selection_expired", 409);
     }
     // Revocation/cancellation rolls back every business write, including
     // provisional identities, events, links and jobs.
     principal.signal?.throwIfAborted();
     return { collectionResult, contentResult, status };
-  });
+  })();
 
   return CollectorResponseSchema.parse({
     ...baseResponse(attempt),
@@ -1213,58 +1271,19 @@ export async function collectFromWeb(
   const { attempt, fresh } = await beginAttempt(db, principal, input);
   if (!fresh) return replayAttempt(db, principal, attempt);
 
-  const envelope = InputEnvelopeSchema.parse({
-    channel: "web",
-    channel_message_id: input.idempotency_key,
-    parser_version: parserVersion,
-    payload_type: payloadType(input.raw_input),
-    raw_payload: input.raw_input,
-    received_at: attempt.receivedAt.toISOString(),
-    sender_account_id: principal.accountId,
+  const resolved = await resolveCollectionInput(input.raw_input, {
+    ...(principal.signal ? { signal: principal.signal } : {}),
+    revalidate: () => assertCollectionAuthority(principal, input.visibility),
   });
-  const extracted = extractLinkCandidates(envelope);
-  if (extracted.length === 0) {
-    return simpleResponse(db, attempt, {
-      errorCode: "no_content_link",
-      status: "invalid",
-    });
-  }
-
-  const resolved = new Map<string, ResolvedCandidate>();
-  for (const candidate of extracted) {
-    await assertCollectionAuthority(principal, input.visibility);
-    try {
-      const result = await resolveCandidate(candidate.url, principal.signal ? { signal: principal.signal } : {});
-      await assertCollectionAuthority(principal, input.visibility);
-      if (result) resolved.set(result.identity.dedupeKey, result);
-    } catch (error) {
-      if (error instanceof CandidateUnsafeError) {
-        return simpleResponse(db, attempt, {
-          errorCode: error.message || "unsafe_target",
-          status: "unsafe",
-        });
-      }
-      if (error instanceof CandidatePendingError) {
-        return simpleResponse(db, attempt, {
-          ...(error.source ? { source: error.source } : {}),
-          status: "resolution_pending",
-        });
-      }
-      throw error;
-    }
-  }
-
-  const candidates = [...resolved.values()];
+  if (resolved.status === "resolution_pending") return simpleResponse(db, attempt, {
+    status: "resolution_pending", ...(resolved.source ? { source: resolved.source } : {}),
+  });
+  if (resolved.status !== "resolved") return simpleResponse(db, attempt, {
+    status: resolved.status, errorCode: resolved.errorCode ?? "invalid_url",
+  });
+  const candidates = resolved.candidates;
   await assertCollectionAuthority(principal, input.visibility);
-  if (candidates.length === 0) {
-    return simpleResponse(db, attempt, {
-      errorCode: "non_content_target",
-      status: "invalid",
-    });
-  }
-  if (candidates.length > 1) {
-    return createAmbiguousResponse(db, attempt, candidates, input.visibility);
-  }
+  if (candidates.length > 1) return createAmbiguousResponse(db, attempt, candidates, input.visibility);
 
   return establishCollection(db, principal, attempt, candidates[0]!, input.visibility);
 }
@@ -1356,4 +1375,125 @@ export async function selectCandidateFromWeb(
       tokenHash: hash,
     },
   );
+}
+
+export interface ResolvedCollectionInput {
+  candidates: ResolvedCandidate[];
+  status: "resolved" | "invalid" | "unsafe" | "resolution_pending";
+  errorCode?: string;
+  source?: SourceAdapterId;
+}
+
+/** Source/network work only. No attempt, content, collection, link or job writes. */
+export async function resolveCollectionInput(raw: string, options: { signal?: AbortSignal; revalidate?: () => Promise<unknown> } = {}): Promise<ResolvedCollectionInput> {
+  const rawInput = z.string().trim().min(1).max(MAX_RAW_TEXT_LENGTH).parse(raw);
+  const check = async () => { options.signal?.throwIfAborted(); if (options.revalidate) { const result = await options.revalidate(); if (result === null || result === false) throw new CollectionServiceError("permission_revoked", 403); } options.signal?.throwIfAborted(); };
+  await check();
+  const extracted = extractLinkCandidates(InputEnvelopeSchema.parse({ channel: "web", channel_message_id: "prepared-input", parser_version: parserVersion, payload_type: payloadType(rawInput), raw_payload: rawInput, received_at: new Date().toISOString(), sender_account_id: "00000000-0000-4000-8000-000000000000" }));
+  if (!extracted.length) return { status: "invalid", errorCode: "no_content_link", candidates: [] };
+  const candidates = new Map<string, ResolvedCandidate>();
+  for (const item of extracted) {
+    await check();
+    try {
+      const candidate = await resolveCandidate(item.url, options.signal ? { signal: options.signal } : {});
+      await check();
+      if (candidate) candidates.set(candidate.identity.dedupeKey, candidate);
+    } catch (error) {
+      if (error instanceof CandidateUnsafeError) return { status: "unsafe", errorCode: error.message || "unsafe_target", candidates: [] };
+      if (error instanceof CandidatePendingError) return { status: "resolution_pending", candidates: [], ...(error.source ? { source: error.source } : {}) };
+      throw error;
+    }
+  }
+  return candidates.size ? { status: "resolved", candidates: [...candidates.values()] } : { status: "invalid", errorCode: "non_content_target", candidates: [] };
+}
+
+/** This helper is deliberately incapable of establishing a collection. */
+export async function prepareSelectionFromResolved(db: AttentionDatabase, principal: CollectionPrincipal, rawInput: CollectRequest, resolved: ResolvedCollectionInput): Promise<CollectorResponse> {
+  const input = collectRequestSchema.parse(rawInput);
+  if (resolved.status === "resolved" && resolved.candidates.length < 2) throw new CollectionServiceError("selection_requires_multiple_candidates", 422);
+  ensurePrincipal(principal, input.visibility);
+  await assertCollectionAuthority(principal, input.visibility);
+  const { attempt, fresh } = await beginAttempt(db, principal, input);
+  if (!fresh) return replayAttempt(db, principal, attempt);
+  if (resolved.status === "resolved") {
+    return createAmbiguousResponse(db, attempt, resolved.candidates, input.visibility);
+  }
+  if (resolved.status === "resolution_pending") return simpleResponse(db, attempt, { status: resolved.status, ...(resolved.source ? { source: resolved.source } : {}) });
+  return simpleResponse(db, attempt, { status: resolved.status, errorCode: resolved.errorCode ?? "invalid_url" });
+}
+
+export interface PendingCandidateBinding {
+  attemptId: string;
+  pendingId: string;
+  tokenHash: string;
+  vaultDigest: string;
+  visibility: "public" | "private";
+  expiresAt: string;
+  candidateId?: string | undefined;
+}
+const pendingCandidateBindingSchema = z.object({ attemptId: z.string().uuid(), pendingId: z.string().uuid(), tokenHash: z.string().regex(/^[a-f0-9]{64}$/), vaultDigest: z.string().regex(/^[a-f0-9]{64}$/), visibility: z.enum(["public", "private"]), expiresAt: z.string().datetime(), candidateId: z.string().uuid().optional() }).strict();
+export function parsePendingCandidateBinding(value: unknown): PendingCandidateBinding { return pendingCandidateBindingSchema.parse(value); }
+export interface PendingCandidateForReview extends PendingCandidateBinding {
+  attempt: InputAttempt;
+  candidates: CandidateVaultPayload["candidates"];
+  selected?: CandidateVaultPayload["candidates"][number];
+  /** Trusted server only. Never put this token in a model or browser response. */
+  selectionToken: string;
+}
+
+/** Owner-bound, SELECT-only vault bridge; validates both stored hashes and ciphertext digest. */
+export async function loadPendingCandidateForReview(db: AttentionDatabase | AttentionTransaction, owner: string, input: { attemptId: string; candidateId?: string; visibility?: "public" | "private" }): Promise<PendingCandidateForReview> {
+  const [attempt] = await db.select().from(inputAttempts).where(and(eq(inputAttempts.id, input.attemptId), eq(inputAttempts.accountId, owner))).limit(1);
+  const [pending] = await db.select().from(pendingCandidateSets).where(and(eq(pendingCandidateSets.inputAttemptId, input.attemptId), eq(pendingCandidateSets.accountId, owner))).limit(1);
+  if (!attempt || !pending || attempt.status !== "ambiguous" || attempt.selectionConsumedAt || pending.consumedAt || pending.expiresAt <= new Date() || !attempt.selectionExpiresAt || attempt.selectionExpiresAt <= new Date()) throw new CollectionServiceError("selection_expired", 409);
+  const payload = decryptCandidateSet(pending.encryptedPayload);
+  if (tokenHash(payload.selectionToken) !== pending.tokenHash || attempt.selectionTokenHash !== pending.tokenHash || payload.candidates.length !== pending.candidateCount || payload.candidates.length !== attempt.candidateCount) throw new CollectionServiceError("candidate_invalid", 422);
+  if (input.visibility && input.visibility !== payload.visibility) throw new CollectionServiceError("selection_visibility_mismatch", 409);
+  const selected = input.candidateId ? payload.candidates.find((c) => c.candidateId === input.candidateId) : undefined;
+  if (input.candidateId && !selected) throw new CollectionServiceError("candidate_not_found", 404);
+  return { attemptId: attempt.id, pendingId: pending.id, tokenHash: pending.tokenHash, vaultDigest: collectionPlanDigest(payload), visibility: payload.visibility, expiresAt: pending.expiresAt.toISOString(), ...(input.candidateId ? { candidateId: input.candidateId } : {}), attempt, candidates: payload.candidates, ...(selected ? { selected } : {}), selectionToken: payload.selectionToken };
+}
+
+function planChanged(): never { throw new CollectionServiceError("collection_effect_plan_changed", 409); }
+
+/** Caller owns the transaction. Source resolution must already have finished before entry. */
+export async function establishPreparedCollection(tx: AttentionTransaction, principal: CollectionPrincipal, input: { plan: CollectionEffectPlan; attemptInput?: CollectRequest; pending?: PendingCandidateBinding }): Promise<CollectorResponse> {
+  if (Boolean(input.pending) === Boolean(input.attemptInput)) throw new CollectionServiceError("prepared_collection_binding_required", 422);
+  const plan = parseCollectionEffectPlan(input.plan);
+  if (plan.accountId !== principal.accountId) throw new CollectionServiceError("permission_revoked", 403);
+  ensurePrincipal(principal, plan.requestedVisibility);
+  ensurePrincipal(principal, plan.effects.resultingVisibility);
+  principal.signal?.throwIfAborted();
+  await setAccountContext(tx, principal.accountId);
+  if (principal.revalidate && !principal.revalidateInTransaction) throw new CollectionServiceError("transaction_authority_required", 403);
+  if (principal.revalidateInTransaction) await assertCollectionAuthority({ ...principal, revalidate: () => principal.revalidateInTransaction!(tx) }, plan.effects.resultingVisibility);
+  // Same ordering as attention_link_owned_content_alias, including absent owner
+  // collections. All existing content rows are then locked against state changes.
+  const ids = plan.snapshot.contents.map((row) => String(row.id)).sort();
+  for (const id of ids) await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${id}, 0))`);
+  const identityIds = plan.snapshot.identities.map((row) => String(row.id)).sort();
+  if (identityIds.length) await tx.select({ id: contentIdentities.id }).from(contentIdentities).where(inArray(contentIdentities.id, identityIds)).orderBy(contentIdentities.id).for("update");
+  if (ids.length) {
+    await tx.select({ id: contents.id }).from(contents).where(inArray(contents.id, ids)).orderBy(contents.id).for("update");
+    await tx.select({ id: collections.id }).from(collections).where(and(eq(collections.accountId, principal.accountId), inArray(collections.contentId, ids))).orderBy(collections.id).for("update");
+  }
+  const current = await loadCollectionEffectPlan(tx, principal.accountId, plan.candidate, plan.requestedVisibility);
+  if (current.digest !== plan.digest) planChanged();
+  let attempt: InputAttempt;
+  let pendingSelection: PendingSelectionClaim | undefined;
+  if (input.pending) {
+    const binding = parsePendingCandidateBinding(input.pending);
+    const pending = await loadPendingCandidateForReview(tx, principal.accountId, { attemptId: binding.attemptId, ...(binding.candidateId ? { candidateId: binding.candidateId } : {}), visibility: binding.visibility });
+    if (binding.pendingId !== pending.pendingId || binding.tokenHash !== pending.tokenHash || binding.vaultDigest !== pending.vaultDigest || binding.expiresAt !== pending.expiresAt || binding.visibility !== plan.requestedVisibility || !pending.selected || pending.selected.dedupeKey !== plan.candidate.identity.dedupeKey || pending.selected.source !== plan.candidate.identity.adapter || pending.selected.contentType !== plan.candidate.identity.contentType || pending.selected.url !== plan.candidate.selectedUrl) planChanged();
+    attempt = pending.attempt;
+    pendingSelection = { consumedAt: new Date(), pendingId: pending.pendingId, tokenHash: pending.tokenHash };
+  } else {
+    if (!input.attemptInput) throw new CollectionServiceError("attempt_input_required", 422);
+    const request = collectRequestSchema.parse(input.attemptInput);
+    if (request.visibility !== plan.requestedVisibility) planChanged();
+    const begun = await beginAttempt(tx, principal, request);
+    if (!begun.fresh) throw new CollectionServiceError("attempt_already_used", 409);
+    attempt = begun.attempt;
+  }
+  return establishCollectionInTransaction(tx, { ...principal, privateCollectionOnly: false }, attempt, plan.candidate, plan.requestedVisibility, pendingSelection, plan);
 }

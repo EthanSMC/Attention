@@ -31,6 +31,18 @@ const errorMessages: Record<string, string> = {
   action_authentication_changed: "登录会话已变更，请让助手重新准备操作后再确认。",
   action_target_changed: "操作目标已变更，请重新查看并确认新提案。",
   action_outcome_unknown: "暂时无法确认结果。不会自动重试，请刷新并查看当前状态。",
+  candidate_selection_required: "请先选择一个来源，再核对具体操作。",
+  collection_effect_plan_changed: "收藏或来源状态已经变化，请重新准备并确认操作。",
+  selection_expired: "候选选择已经过期，请重新提交原始链接。",
+  source_evidence_required: "请勾选读取来源，在新请求中先读取这篇收藏的完整文章，再准备共享摘要。模型说明或网页标题不能替代读取证据。",
+  source_evidence_expired: "阅读证据已超过两分钟，请重新读取来源并审核新提案。不会自动提交。",
+  source_evidence_changed: "读取证据与当前账号或会话不一致，请重新读取并审核。",
+  source_evidence_invalid: "来源未提供可验证的文章证据，请重新读取；若提示登录，请先完成来源登录。",
+  enrichment_source_changed: "原收藏或最终来源已变化，请重新读取并审核完整摘要。",
+  enrichment_target_changed: "共享内容、关联收藏或公开状态已变化。本次不会重试，请重新审核新提案。",
+  enrichment_target_unavailable: "当前收藏或共享身份不能安全合并，请查看收藏状态后重新准备。",
+  enrichment_permission_revoked: "账号权限已变更，请重新登录并读取来源。",
+  enrichment_review_invalid: "这份摘要审核已失效，请重新读取来源并准备新提案。",
   action_delivery_recipient_required: "请先在账号设置中添加并验证摘要收件邮箱，再重新准备操作。",
 };
 function messageFor(code?: string): string {
@@ -46,6 +58,8 @@ function validSession(value: unknown): value is SessionView {
       typeof action.expiresAt === "string" && typeof action.status === "string" && action.review &&
       typeof action.review.title === "string" && Array.isArray(action.review.details) &&
       action.review.details.every(detail => typeof detail.label === "string" && typeof detail.value === "string") &&
+      (action.candidates === undefined || (Array.isArray(action.candidates) && action.candidates.length >= 2 && action.candidates.length <= 16 &&
+        action.candidates.every(candidate => typeof candidate.candidateId === "string" && typeof candidate.url === "string" && typeof candidate.displayHost === "string" && typeof candidate.source === "string" && typeof candidate.contentType === "string"))) &&
       Array.isArray(action.review.consequences) && action.review.consequences.every(item => typeof item === "string") &&
       (action.receipt === null || (typeof action.receipt?.message === "string" && typeof action.receipt.code === "string")))));
 }
@@ -53,9 +67,10 @@ function validSession(value: unknown): value is SessionView {
 const actionStatus: Record<WebsiteAgentActionView["status"], string> = { pending: "待确认", executing: "执行中", completed: "已完成",
   failed: "未执行", unknown: "结果不确定", cancelled: "已取消", expired: "已过期" };
 function WebsiteActionCard({ action, disabled, onDecision }: {
-  action: WebsiteAgentActionView; disabled: boolean; onDecision(operation: "approve" | "decline", action: WebsiteAgentActionView): void;
+  action: WebsiteAgentActionView; disabled: boolean; onDecision(operation: "approve" | "decline" | "select", action: WebsiteAgentActionView, candidateId?: string): void;
 }) {
   const [reviewed, setReviewed] = useState(false);
+  const [candidateId, setCandidateId] = useState("");
   const [expired, setExpired] = useState(() => Date.parse(action.expiresAt) <= Date.now());
   useEffect(() => {
     const remaining = Date.parse(action.expiresAt) - Date.now();
@@ -70,7 +85,19 @@ function WebsiteActionCard({ action, disabled, onDecision }: {
     <ul>{action.review.consequences.map((item, index) => <li key={index}>{item}</li>)}</ul>
     {action.receipt ? <p role="status">{action.receipt.message}</p> : null}
     {action.status === "unknown" ? <p>这项操作不会自动重试。请先查看当前收藏、日报或裁决状态，再决定下一步。</p> : null}
-    {pending ? <>
+    {pending && action.candidates ? <>
+      <fieldset disabled={disabled}><legend>请选择一个来源（此步不会收藏或发布）</legend>
+        {action.candidates.map(candidate => <label className="website-agent-console__option" key={candidate.candidateId}>
+          <input type="radio" name={`candidate-${action.id}`} value={candidate.candidateId} checked={candidateId === candidate.candidateId}
+            onChange={() => setCandidateId(candidate.candidateId)} />
+          <span>{candidate.displayHost} · {candidate.source} · {candidate.contentType}<br />{candidate.url}</span>
+        </label>)}
+      </fieldset>
+      <div className="website-agent-console__actions">
+        <button type="button" className="button button--primary" disabled={disabled || !candidateId} onClick={() => onDecision("select", action, candidateId)}>选择并查看具体影响</button>
+        <button type="button" className="button" disabled={disabled} onClick={() => onDecision("decline", action)}>取消选择</button>
+      </div>
+    </> : pending ? <>
       <p>仅在下方明确确认后执行上述操作，不会为此调用模型。确认有效至 {new Date(action.expiresAt).toLocaleTimeString("zh-CN")}。</p>
       <label className="website-agent-console__option"><input type="checkbox" checked={reviewed} disabled={disabled}
         onChange={event => setReviewed(event.target.checked)} />我已核对这个目标、全部参数和后果，同意执行这项操作</label>
@@ -186,9 +213,9 @@ export function WebsiteAgentConsole() {
     finally { if (current === generation.current) setLoading(false); }
   }
 
-  async function decideAction(operation: "approve" | "decline", action: WebsiteAgentActionView) {
+  async function decideAction(operation: "approve" | "decline" | "select", action: WebsiteAgentActionView, candidateId?: string) {
     if (!selected || active.current || busy || loading || selected.pending || executingAction || selected.status !== "open") return;
-    if (operation === "approve" && (action.status !== "pending" || Date.parse(action.expiresAt) <= Date.now())) {
+    if (operation !== "decline" && (action.status !== "pending" || Date.parse(action.expiresAt) <= Date.now())) {
       setError(messageFor("action_expired")); return;
     }
     const controller = new AbortController(); active.current = controller;
@@ -198,7 +225,8 @@ export function WebsiteAgentConsole() {
       const response = await fetch(`/api/website-agent/sessions/${encodeURIComponent(id)}/actions/${encodeURIComponent(action.id)}/${operation}`, {
         method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
         body: JSON.stringify({ expected_revision: selected.revision,
-          ...(operation === "approve" ? { expected_arguments_hash: action.argumentsHash, approval: true } : {}) }),
+          ...(operation === "approve" ? { expected_arguments_hash: action.argumentsHash, approval: true } :
+            operation === "select" ? { expected_arguments_hash: action.argumentsHash, candidate_id: candidateId } : {}) }),
       });
       const body = await response.json() as { session?: unknown; error?: { code?: string } };
       if (current !== generation.current) return;
@@ -278,7 +306,7 @@ export function WebsiteAgentConsole() {
     </div>)}</div> : null}
     {pendingQuery || selected?.pending ? <p role="status" className="website-agent-console__message">{pendingQuery ?? selected?.pending?.query}<br /><small>请求尚未确认完成，刷新会话可查看状态。重新连接不会自动重试收费调用。</small></p> : null}
     {selected?.actions?.map(action => <WebsiteActionCard key={`${selected.id}:${selected.revision}:${action.id}`} action={action}
-      disabled={busy || loading || selected.status !== "open" || Boolean(selected.pending) || executingAction} onDecision={(operation, item) => { void decideAction(operation, item); }} />)}
+      disabled={busy || loading || selected.status !== "open" || Boolean(selected.pending) || executingAction} onDecision={(operation, item, candidateId) => { void decideAction(operation, item, candidateId); }} />)}
     <form className="agent-composer" onSubmit={ask}>
       <label className="sr-only" htmlFor="website-agent-query">询问 Attention</label>
       <textarea id="website-agent-query" name="query" maxLength={4_000} required rows={4} placeholder="查找我的收藏，或粘贴需要私密保存的链接与分享文案。" disabled={disabled} />

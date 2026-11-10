@@ -88,12 +88,36 @@ identity, scope or executable token. Reviews describe public, irreversible and
 recurring consequences. Existing reports are identified as duplicates, never
 falsely described as new submissions of changed details.
 
-Candidate selection and public collection currently return explicit
-selection/public-review-required gates; shared enrichment returns a source-
-evidence-and-merge-review-required gate. Those names are callable but do not
-execute those effects yet. Enrichment can merge identities, retire alias
-collections and schedule notifications, so a generic summary confirmation is
-insufficient. Every canonical tool must be classified; unknown future tools
+Public collection now prepares an exact source/effects review without publishing.
+Ambiguous input presents server-owned choices and then a fresh one-candidate
+review. A model candidate-selection call still returns a human-choice-required
+gate and cannot submit a token as approval. The collection review shows the
+persisted outbound destination after alias resolution, planned shared alias
+edges, effective visibility, restored/deleted collections and job effects.
+
+Shared enrichment now has its own evidence-bound review and execution path.
+Only an actual ready/article read through the canonical reader in the current
+website run can create an attestation. The host binds it to the account, auth
+session, website session, run and revision, source operation and URL, extraction
+method, text digest and actual read/observation times. Model-supplied references
+cannot relabel a previous run's cached read. The attestation contains no article
+body and expires within 120 seconds; action approval and execution deadlines
+cannot outlive it. A source-read consent checkbox remains required.
+
+The user reviews the complete title/summary/tags/final URL and the exact shared
+identity, alias, collection restore/merge/delete, visibility, historical-result
+and conditional notification effects. Existing publication-revocation markers
+are preserved. An already-complete summary may still cause the separately
+reviewed merge effects; it is never described as "nothing changed". Approval
+performs no further source fetch or model call. It rechecks the stored evidence,
+locks and reloads the exact target plan, then invokes canonical Core with a
+trusted dependency override bound to that invocation's savepoint. Effects and
+the receipt commit together, or roll back together. Expired, changed or unknown
+actions do not automatically retry.
+
+Every canonical tool has an execution path under its website consent, evidence
+or human-selection policy; this is not unattended write permission for the
+model. Every canonical tool must be classified; unknown future tools
 fail closed instead of silently gaining authority.
 Summarizing a successfully read source in the answer does not mark the shared
 Core summary ready. Collection accepted, body read and summary ready remain
@@ -310,3 +334,18 @@ and [deployment mapping](releases/2026-11-10-application-deployment-mapping.md).
 Migrations 0039/0040 change schema compatibility; the old 0038 app rollback
 record alone is insufficient. Real platform-body acquisition and shared-summary
 submission remain separate tests. Never use production for truncating suites.
+
+## Exact collection and candidate reviews
+
+Website collection uses the shared Core service, not another collection backend:
+
+1. `resolveCollectionInput` reuses the normal extractor and Fetcher without database writes.
+2. `loadCollectionEffectPlan` takes a bounded, SELECT-only snapshot. It binds the complete source identity/URLs, existing or absent identity/alias mappings, owner collection rows, restore/merge/delete effects, resulting visibility/moderation/domain, shared Xiaohongshu URL changes and metadata-job scheduling. It never stores article bodies or job payloads.
+3. The website stores this prepared artifact inside its existing encrypted v2 action envelope. The human review shows its exact source and consequences. Public ambiguity creates only a pending candidate vault, never a public collection first. Private automatic collection keeps its existing no-public/no-merge fence.
+4. The browser picks one of 2–16 server-owned options through the same-origin `actions/:id/select` endpoint. Selection replaces the options card with a new exact-action ID; it does not collect or approve. The selection token stays in the encrypted candidate vault and is removed from live model results. Action metadata contains only the owner/attempt/candidate/token-hash/vault-digest/visibility/expiry binding.
+5. Approval obtains the existing durable one-time claim. Source re-resolution happens **after claim commit but before acquiring effect/authority locks**. Any changed source requires a new review. Once inside the transaction, a closure-backed `createAttentionToolRegistry(core)` invokes `establishPreparedCollection`; no model-supplied approval flag activates this path.
+6. Core locks and compares the target snapshot, checks actual identity/alias/collection unique winners and job outcomes, consumes the candidate capability, and applies the normal collection code. The store commits its receipt in the same transaction. Cookie authority is rechecked using that transaction, including one-connection pools. Cancellation, expiry or mismatched effects roll back. Unknown outcomes are never retried automatically.
+
+Candidate actions expire no later than their vault and the original choice card. Close, revision changes, another authentication session, a consumed token or an expired vault prevent selection/execution. Native Pi AgentSession/SessionManager remains the sole conversation/session implementation.
+
+Offline coverage includes strict metadata/no-body parsing, source-change rejection, exact effective-public and merge review, model-token isolation, candidate HTTP guards and existing one-time action/store regressions. Guarded PostgreSQL cases in `tests/integration/website-agent-http.test.ts` and `collection-review-pg-cases.ts` exercise identity winners, alias drift, real merge/restore, candidate rollback/expiry, HTTP owner isolation, close, source changes, same-transaction receipts and one-connection final cookie checks. Playwright picker cases use the actual console component with synthetic HTTP responses. These guarded database/browser tests must run in the approved isolated CI environment; an offline unit pass is not evidence they executed.

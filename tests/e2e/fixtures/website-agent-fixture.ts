@@ -82,7 +82,7 @@ export function reviewedAction(number: number, patch: Partial<WebsiteAgentAction
   };
 }
 
-export function actionPath(sessionId: string, actionId: string, operation: "approve" | "decline") {
+export function actionPath(sessionId: string, actionId: string, operation: "approve" | "decline" | "select") {
   return `${sessionPath}/${encodeURIComponent(sessionId)}/actions/${encodeURIComponent(actionId)}/${operation}`;
 }
 

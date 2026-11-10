@@ -5,12 +5,19 @@ import { listModerationCourtCases, sql, type AttentionDatabase } from "@attentio
 import { z } from "zod";
 
 import { ATTENTION_TOOL_CONTRACT_VERSION, attentionToolRegistry, type AttentionToolContext, type AttentionToolName } from "./attention-tool-registry";
+import { loadCollectionEffectPlan } from "./collection-effect-plan";
+import { collectionReviewDetails, parseWebsiteCollectionPrepared, prepareWebsiteCollection, type WebsiteCollectionPrepared } from "./website-agent-collection-review";
+import { normalizeContentEnrichmentInput } from "./content-enrichment-model";
+import { parsePreparedEnrichment, prepareWebsiteEnrichment, revalidatePreparedEnrichmentInTransaction,
+  websiteEnrichmentReviewDetails, type WebsiteEnrichmentPrepared } from "./website-agent-enrichment-review";
+import { WebsiteSourceEvidenceError, type WebsiteEnrichmentRunIdentity, type WebsiteSourceEvidenceRun } from "./website-agent-source-evidence";
+import type { AttentionTransaction } from "@attention/db";
 import { getCollectionStatus } from "./collection-status-service";
 import { loadPublicContents } from "./content-queries";
 import { isValidTimeZone, loadDigestSettings, parseWindowStart } from "./digest-settings";
 
 export const WEBSITE_AGENT_REVIEWED_TOOL_NAMES = ["attention_update_collection", "attention_update_digest_settings",
-  "attention_report_content", "attention_cast_moderation_vote"] as const;
+  "attention_report_content", "attention_cast_moderation_vote", "attention_submit_content_enrichment", "attention_collect_content", "attention_select_collection_candidate"] as const;
 export type WebsiteAgentReviewedToolName = (typeof WEBSITE_AGENT_REVIEWED_TOOL_NAMES)[number];
 
 /** Every canonical tool has an explicit transport policy. A new tool must be classified here. */
@@ -21,7 +28,7 @@ export const websiteAgentToolPolicy = {
   attention_read_collection_source: "source_read_consent",
   attention_collect_content: "private_original_collect_or_review_required",
   attention_select_collection_candidate: "candidate_review_required",
-  attention_submit_content_enrichment: "source_evidence_and_merge_review_required",
+  attention_submit_content_enrichment: "reviewed_action",
   attention_update_collection: "reviewed_action", attention_update_digest_settings: "reviewed_action",
   attention_report_content: "reviewed_action", attention_cast_moderation_vote: "reviewed_action",
 } as const satisfies Record<AttentionToolName, string>;
@@ -33,41 +40,46 @@ export class WebsiteAgentActionPolicyError extends Error {
 }
 
 const scopes: Record<WebsiteAgentReviewedToolName, readonly string[]> = {
+  attention_submit_content_enrichment: ["collection:write"],
+  attention_collect_content: ["collection:write"], attention_select_collection_candidate: ["collection:write"],
   attention_update_collection: ["collection:write"], attention_update_digest_settings: ["digest:write"],
   attention_report_content: ["moderation:write"], attention_cast_moderation_vote: ["moderation:court:vote"],
 };
 const reviewSchema = z.object({ title: z.string().min(1).max(200),
-  details: z.array(z.object({ label: z.string().min(1).max(100), value: z.string().max(4_096) }).strict()).min(1).max(12),
+  details: z.array(z.object({ label: z.string().min(1).max(100), value: z.string().max(4_096) }).strict()).min(1).max(16),
   consequences: z.array(z.string().min(1).max(1_000)).min(1).max(6),
 }).strict();
 export type WebsiteAgentActionReview = z.infer<typeof reviewSchema>;
 const proposalSchema = z.object({ version: z.literal(1), toolName: z.enum(WEBSITE_AGENT_REVIEWED_TOOL_NAMES),
   contractVersion: z.string().min(1).max(32), arguments: z.record(z.string(), z.unknown()),
   argumentsHash: z.string().regex(/^[0-9a-f]{64}$/u), targetFingerprint: z.string().regex(/^[0-9a-f]{64}$/u),
+  prepared: z.unknown().optional(),
   requiredScopes: z.array(z.string().min(1).max(64)).min(1).max(4), review: reviewSchema,
 }).strict();
-export type WebsiteAgentActionProposal = z.infer<typeof proposalSchema>;
+export type WebsiteAgentActionProposal = Omit<z.infer<typeof proposalSchema>, "prepared"> & { prepared?: WebsiteCollectionPrepared | WebsiteEnrichmentPrepared };
 
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+export function stableWebsiteActionJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableWebsiteActionJson).join(",")}]`;
   if (value && typeof value === "object") return `{${Object.keys(value).sort().map(key =>
-    `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`).join(",")}}`;
+    `${JSON.stringify(key)}:${stableWebsiteActionJson((value as Record<string, unknown>)[key])}`).join(",")}}`;
   return JSON.stringify(value);
 }
-function fingerprint(namespace: string, value: unknown): string {
-  return createHash("sha256").update(`attention:website-action:${namespace}:v1\0`).update(stableJson(value)).digest("hex");
+export function websiteActionFingerprint(namespace: string, value: unknown): string {
+  return createHash("sha256").update(`attention:website-action:${namespace}:v1\0`).update(stableWebsiteActionJson(value)).digest("hex");
 }
 function reviewedName(value: string): WebsiteAgentReviewedToolName {
   if (!WEBSITE_AGENT_REVIEWED_TOOL_NAMES.includes(value as WebsiteAgentReviewedToolName)) throw new WebsiteAgentActionPolicyError("action_not_supported");
   return value as WebsiteAgentReviewedToolName;
 }
 export function websiteAgentActionInputSchema(toolName: WebsiteAgentReviewedToolName): z.ZodObject {
+  if (toolName === "attention_select_collection_candidate") return z.object({ attempt_id: z.string().uuid(), candidate_id: z.string().uuid(), visibility: z.enum(["public", "private"]) }).strict();
   const definition = attentionToolRegistry.find(tool => tool.name === toolName)!;
   // A model-provided flag or client metadata is never evidence of human approval.
   return definition.inputSchema.omit(toolName === "attention_report_content" || toolName === "attention_cast_moderation_vote"
     ? { client_context: true, explicit_confirmation: true } : { client_context: true });
 }
 function normalizeArguments(toolName: WebsiteAgentReviewedToolName, rawInput: unknown): Record<string, unknown> {
+  if (toolName === "attention_submit_content_enrichment") return normalizeContentEnrichmentInput(rawInput);
   const input = websiteAgentActionInputSchema(toolName).parse(rawInput) as Record<string, unknown>;
   if (toolName === "attention_report_content") {
     input.reason_code = String(input.reason_code).toLowerCase();
@@ -87,7 +99,7 @@ function normalizeArguments(toolName: WebsiteAgentReviewedToolName, rawInput: un
 }
 export function websiteAgentActionArgumentsHash(toolName: WebsiteAgentReviewedToolName, args: Record<string, unknown>,
   contractVersion = ATTENTION_TOOL_CONTRACT_VERSION): string {
-  return fingerprint("arguments", { toolName, contractVersion, arguments: args });
+  return websiteActionFingerprint("arguments", { toolName, contractVersion, arguments: args });
 }
 
 /** Pure envelope validation. Does not access the database, environment, provider, or source reader. */
@@ -95,10 +107,27 @@ export function parseWebsiteAgentActionProposal(value: unknown): WebsiteAgentAct
   try {
     const parsed = proposalSchema.parse(value);
     const normalized = normalizeArguments(parsed.toolName, parsed.arguments);
-    if (Buffer.byteLength(stableJson(parsed), "utf8") > 24_576 || stableJson(normalized) !== stableJson(parsed.arguments) ||
+    const enrichment = parsed.toolName === "attention_submit_content_enrichment";
+    const collection = parsed.toolName === "attention_collect_content" || parsed.toolName === "attention_select_collection_candidate";
+    const prepared = parsed.prepared === undefined ? undefined : enrichment
+      ? parsePreparedEnrichment(parsed.prepared) : parseWebsiteCollectionPrepared(parsed.prepared);
+    if ((collection || enrichment) !== Boolean(prepared)) throw new Error("invalid_proposal");
+    if (prepared?.kind === "enrichment") {
+      if (!enrichment || stableWebsiteActionJson(prepared.plan.input) !== stableWebsiteActionJson(normalized) ||
+          stableWebsiteActionJson(websiteEnrichmentReviewDetails(prepared)) !== stableWebsiteActionJson(parsed.review) ||
+          parsed.targetFingerprint !== websiteActionFingerprint("enrichment-target", prepared)) throw new Error("invalid_proposal");
+    } else if (prepared) {
+      if (stableWebsiteActionJson(collectionReviewDetails(prepared)) !== stableWebsiteActionJson(parsed.review) ||
+          parsed.targetFingerprint !== websiteActionFingerprint("collection-target", prepared)) throw new Error("invalid_proposal");
+      if (prepared.kind === "collection" && (prepared.pending ? parsed.toolName !== "attention_select_collection_candidate" ||
+          prepared.pending.attemptId !== parsed.arguments.attempt_id || prepared.pending.candidateId !== parsed.arguments.candidate_id :
+          parsed.toolName !== "attention_collect_content" || prepared.attemptInput!.raw_input !== parsed.arguments.input || prepared.attemptInput!.idempotency_key !== parsed.arguments.idempotency_key)) throw new Error("invalid_proposal");
+      if ((prepared.kind === "candidate_options" ? prepared.visibility : prepared.plan.requestedVisibility) !== parsed.arguments.visibility) throw new Error("invalid_proposal");
+    }
+    if (Buffer.byteLength(stableWebsiteActionJson(parsed), "utf8") > 40_000 || stableWebsiteActionJson(normalized) !== stableWebsiteActionJson(parsed.arguments) ||
       parsed.argumentsHash !== websiteAgentActionArgumentsHash(parsed.toolName, normalized, parsed.contractVersion) ||
-      stableJson(parsed.requiredScopes) !== stableJson(scopes[parsed.toolName])) throw new Error("invalid_proposal");
-    return parsed;
+      stableWebsiteActionJson(parsed.requiredScopes) !== stableWebsiteActionJson(scopes[parsed.toolName])) throw new Error("invalid_proposal");
+    return { ...parsed, ...(prepared ? { prepared } : {}) } as WebsiteAgentActionProposal;
   } catch { throw new WebsiteAgentActionPolicyError("action_invalid_proposal"); }
 }
 
@@ -124,7 +153,7 @@ async function loadPublicContentVersion(db: AttentionDatabase, publicContentId: 
   const [row] = await db.execute<{ revision: string; source: string }>(sql`select updated_at::text as revision, outbound_url as source
     from contents where public_id = ${publicContentId}::uuid limit 1`);
   if (!row || typeof row.revision !== "string" || typeof row.source !== "string") throw new WebsiteAgentActionPolicyError("action_target_unavailable");
-  return { revision: row.revision, sourceFingerprint: fingerprint("public-source", row.source) };
+  return { revision: row.revision, sourceFingerprint: websiteActionFingerprint("public-source", row.source) };
 }
 const defaults: WebsiteAgentActionPolicyDependencies = { getCollectionStatus, loadDigestSettings, loadPublicContents,
   listModerationCourtCases, loadPublicContentVersion, loadDigestDeliveryRecipient, now: () => new Date() };
@@ -132,12 +161,12 @@ function assertAccess(context: AttentionToolContext, name: WebsiteAgentReviewedT
   context.signal.throwIfAborted();
   if (context.caller.credentialKind !== "session" || context.caller.entrypoint !== "hosted_agent" || !context.isMember ||
     !scopes[name].every(scope => context.scopes.includes(scope)) ||
-    ((name === "attention_cast_moderation_vote" || (name === "attention_update_collection" && input.visibility === "public")) && !context.isFilter))
+    ((name === "attention_cast_moderation_vote" || ((name === "attention_update_collection" || name === "attention_collect_content" || name === "attention_select_collection_candidate") && input.visibility === "public")) && !context.isFilter))
     throw new WebsiteAgentActionPolicyError("permission_revoked");
 }
 
 export async function prepareWebsiteAgentAction(context: AttentionToolContext, toolName: string, rawInput: unknown,
-  dependencies: WebsiteAgentActionPolicyDependencies = defaults): Promise<WebsiteAgentActionProposal> {
+  dependencies: WebsiteAgentActionPolicyDependencies = defaults, evidenceRun?: WebsiteSourceEvidenceRun): Promise<WebsiteAgentActionProposal> {
   const name = reviewedName(toolName);
   let args: Record<string, unknown>;
   try { args = normalizeArguments(name, rawInput); }
@@ -145,7 +174,23 @@ export async function prepareWebsiteAgentAction(context: AttentionToolContext, t
   assertAccess(context, name, args);
   const db = context.getDatabase();
   let target: unknown, review: WebsiteAgentActionReview;
-  if (name === "attention_update_collection") {
+  if (name === "attention_submit_content_enrichment") {
+    if (!evidenceRun) throw new WebsiteSourceEvidenceError("source_evidence_required");
+    const { prepared } = await prepareWebsiteEnrichment(context, args, evidenceRun);
+    return preparedWebsiteEnrichmentProposal(prepared);
+  } else if (name === "attention_collect_content") {
+    try {
+      const prepared = await prepareWebsiteCollection(context, args);
+      return preparedWebsiteCollectionProposal(name, args, prepared);
+    } catch (error) {
+      if (error instanceof WebsiteAgentActionPolicyError) throw error;
+      throw new WebsiteAgentActionPolicyError(error instanceof Error && error.message === "permission_revoked" ? "permission_revoked" : "action_target_unavailable");
+    }
+  } else if (name === "attention_select_collection_candidate") {
+    // Only the human candidate endpoint can construct this exact proposal from
+    // the already durable server-owned choice set. The model cannot choose it.
+    throw new WebsiteAgentActionPolicyError("action_not_supported");
+  } else if (name === "attention_update_collection") {
     const status = await dependencies.getCollectionStatus(db, context, { collection_id: args.collection_id });
     if (!status.collection || !status.content || status.collection.collection_status !== "active") throw new WebsiteAgentActionPolicyError("action_target_unavailable");
     target = { collection: status.collection, content: status.content };
@@ -195,14 +240,49 @@ export async function prepareWebsiteAgentAction(context: AttentionToolContext, t
   context.signal.throwIfAborted();
   return parseWebsiteAgentActionProposal({ version: 1, toolName: name, contractVersion: ATTENTION_TOOL_CONTRACT_VERSION,
     arguments: args, argumentsHash: websiteAgentActionArgumentsHash(name, args), requiredScopes: [...scopes[name]],
-    targetFingerprint: fingerprint("target", { reviewVersion: 1, toolName: name, target }), review });
+    targetFingerprint: websiteActionFingerprint("target", { reviewVersion: 1, toolName: name, target }), review });
 }
 
 export async function revalidateWebsiteAgentAction(context: AttentionToolContext, rawProposal: WebsiteAgentActionProposal,
-  dependencies: WebsiteAgentActionPolicyDependencies = defaults): Promise<void> {
+  dependencies: WebsiteAgentActionPolicyDependencies = defaults, enrichmentIdentity?: WebsiteEnrichmentRunIdentity): Promise<void> {
   const proposal = parseWebsiteAgentActionProposal(rawProposal);
   if (proposal.contractVersion !== ATTENTION_TOOL_CONTRACT_VERSION) throw new WebsiteAgentActionPolicyError("action_contract_changed");
+  if (proposal.prepared) {
+    assertAccess(context, proposal.toolName, proposal.arguments);
+    if (proposal.prepared.kind === "enrichment") {
+      if (!enrichmentIdentity || enrichmentIdentity.accountId !== context.accountId || enrichmentIdentity.authSessionId !== context.caller.credentialId)
+        throw new WebsiteAgentActionPolicyError("permission_revoked");
+      await revalidatePreparedEnrichmentInTransaction(context.getDatabase() as AttentionTransaction, proposal.prepared, enrichmentIdentity, dependencies.now);
+      return;
+    }
+    if (proposal.prepared.kind !== "collection") throw new WebsiteAgentActionPolicyError("action_target_unavailable");
+    const plan = proposal.prepared.plan;
+    if (plan.accountId !== context.accountId || (plan.effects.resultingVisibility === "public" && !context.isFilter)) throw new WebsiteAgentActionPolicyError("permission_revoked");
+    const currentPlan = await loadCollectionEffectPlan(context.getDatabase(), context.accountId, plan.candidate, plan.requestedVisibility);
+    if (currentPlan.digest !== plan.digest) throw new WebsiteAgentActionPolicyError("action_target_changed");
+    return;
+  }
   const current = await prepareWebsiteAgentAction(context, proposal.toolName, proposal.arguments, dependencies);
   if (current.argumentsHash !== proposal.argumentsHash || current.targetFingerprint !== proposal.targetFingerprint)
     throw new WebsiteAgentActionPolicyError("action_target_changed");
+}
+
+/** Called only with server-prepared artifacts, never client/model approval flags. */
+export function preparedWebsiteCollectionProposal(toolName: "attention_collect_content" | "attention_select_collection_candidate",
+  args: Record<string, unknown>, prepared: WebsiteCollectionPrepared): WebsiteAgentActionProposal {
+  const arguments_ = normalizeArguments(toolName, args);
+  return parseWebsiteAgentActionProposal({ version: 1, toolName, contractVersion: ATTENTION_TOOL_CONTRACT_VERSION,
+    arguments: arguments_, argumentsHash: websiteAgentActionArgumentsHash(toolName, arguments_),
+    targetFingerprint: websiteActionFingerprint("collection-target", prepared), requiredScopes: scopes[toolName],
+    prepared, review: collectionReviewDetails(prepared) });
+}
+
+/** Provenance is the current server-owned reader run, never model flags. */
+export function preparedWebsiteEnrichmentProposal(raw: WebsiteEnrichmentPrepared): WebsiteAgentActionProposal {
+  const prepared = parsePreparedEnrichment(raw), toolName = "attention_submit_content_enrichment";
+  const args = normalizeArguments(toolName, prepared.plan.input);
+  return parseWebsiteAgentActionProposal({ version: 1, toolName, contractVersion: ATTENTION_TOOL_CONTRACT_VERSION,
+    arguments: args, argumentsHash: websiteAgentActionArgumentsHash(toolName, args),
+    targetFingerprint: websiteActionFingerprint("enrichment-target", prepared), requiredScopes: scopes[toolName],
+    prepared, review: websiteEnrichmentReviewDetails(prepared) });
 }

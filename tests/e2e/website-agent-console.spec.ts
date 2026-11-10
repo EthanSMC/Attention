@@ -30,7 +30,8 @@ const test = base.extend<{ api: SyntheticWebsiteApi }>({
     for (const call of api.calls.filter(item => item.method === "POST" && /\/actions\//u.test(item.path))) {
       const approve = call.path.endsWith("/approve");
       expect(Object.keys(call.body ?? {}).sort(), "No decision or replay may send replacement arguments").toEqual(
-        approve ? ["approval", "expected_arguments_hash", "expected_revision"] : ["expected_revision"],
+        approve ? ["approval", "expected_arguments_hash", "expected_revision"] : call.path.endsWith("/select")
+          ? ["candidate_id", "expected_arguments_hash", "expected_revision"] : ["expected_revision"],
       );
       if (approve) {
         expect(call.body?.approval).toBe(true);
@@ -715,3 +716,83 @@ for (const width of [320, 375, 390]) {
     await testInfo.attach(`Actual component at ${width}px`, { path: screenshot, contentType: "image/png" });
   });
 }
+
+
+test("candidate picker never approves a source choice and requires a separate exact effects review", async ({ page, api }) => {
+  const candidate = "30000000-0000-4000-8000-000000000001";
+  const picker = reviewedAction(81, { toolName: "attention_collect_content", review: { title: "选择要收藏的来源",
+    details: [{ label: "请求可见性", value: "public" }], consequences: ["选择只会准备下一张具体确认卡，不会发布。"] },
+    candidates: [{ candidateId: candidate, url: "https://example.com/first", displayHost: "example.com", source: "generic_web", contentType: "webpage" },
+      { candidateId: "30000000-0000-4000-8000-000000000002", url: "https://example.com/second", displayHost: "example.com", source: "generic_web", contentType: "webpage" }] });
+  const view = session(81, { actions: [picker] }); api.seed([view]);
+  await open(page, view.id);
+  await expect(page.getByRole("button", { name: "确认执行", exact: true })).toHaveCount(0);
+  const next = page.getByRole("button", { name: "选择并查看具体影响", exact: true });
+  await expect(next).toBeDisabled();
+  await page.getByRole("radio").first().check();
+  const exact = reviewedAction(82, { toolName: "attention_select_collection_candidate", review: { title: "确认收藏来源与全部影响",
+    details: [{ label: "原文来源", value: "https://example.com/first" }, { label: "最终可见性", value: "public" },
+      { label: "合并后删除的收藏", value: "collection-to-merge" }], consequences: ["公开收藏者身份可被发现。", "上述收藏将合并并软删除。"] } });
+  const selected = { ...view, revision: view.revision + 1, actions: [exact] };
+  api.replyNext("POST", actionPath(view.id, picker.id, "select"), { session: selected });
+  await next.click();
+  await expect(page.getByText("collection-to-merge", { exact: true })).toBeVisible();
+  expect(api.calls.find(call => call.path.endsWith("/select"))?.body).toEqual({ expected_revision: view.revision, expected_arguments_hash: picker.argumentsHash, candidate_id: candidate });
+  expect(api.calls.filter(call => call.path.endsWith("/approve"))).toHaveLength(0);
+  const approve = page.getByRole("button", { name: "确认执行", exact: true });
+  await expect(approve).toBeDisabled();
+  await page.getByRole("checkbox", { name: "我已核对这个目标、全部参数和后果，同意执行这项操作", exact: true }).check();
+  await expect(approve).toBeEnabled();
+});
+
+test("candidate dismissal and expiry leave no approval or selection request", async ({ page, api }) => {
+  const picker = reviewedAction(83, { toolName: "attention_collect_content", candidates: [1, 2].map(n => ({
+    candidateId: `30000000-0000-4000-8000-00000000000${n}`, url: `https://example.com/${n}`, displayHost: "example.com", source: "generic_web", contentType: "webpage" })) });
+  const view = session(83, { actions: [picker] }); api.seed([view]);
+  await open(page, view.id);
+  api.replyNext("POST", actionPath(view.id, picker.id, "decline"), { session: { ...view, revision: 2, actions: [{ ...picker, status: "cancelled" }] } });
+  await page.getByRole("button", { name: "取消选择", exact: true }).click();
+  await expect(page.getByRole("radio")).toHaveCount(0);
+  expect(api.calls.filter(call => call.path.endsWith("/select") || call.path.endsWith("/approve"))).toHaveLength(0);
+});
+
+test("shows complete shared enrichment text and all reviewed consequences before exact approval", async ({ page, api }) => {
+  const action = reviewedAction(91, { toolName: "attention_submit_content_enrichment", expiresAt: new Date(fixtureTime + 120_000).toISOString(),
+    review: { title: "提交共享内容摘要", details: [
+      { label: "拟提交标题", value: "A precise shared title" }, { label: "拟提交摘要", value: "Full grounded summary.\n" + "Exact detail. ".repeat(120) },
+      { label: "规范化标签", value: "Agents, MCP" }, { label: "最终来源链接", value: "https://article.example.org/final" },
+      { label: "合并结果", value: "恢复已删除目标收藏并移除旧收藏" },
+      { label: "最终可见性", value: "public；当前未满足公开条件" }, { label: "公开撤销记录", value: "2026-11-10T11:00:00.000Z" },
+      { label: "共享链接身份", value: "建立最终链接到目标内容的共享规范化身份" },
+      { label: "历史提交迁移", value: "将你的 3 条关联历史提交指向目标收藏和内容" },
+    ], consequences: ["标题、摘要、标签和最终链接属于共享内容，其他有权访问的人可能看到。",
+      "只保留已拥有的 WeChat 收藏来源，不复制凭据或绑定，也不创建新连接。",
+      "仅在缺少去重事件时排入通知，面向已有且符合条件的 WeChat 收藏者。不保证实际投递。",
+      "阅读证据：readability；来源文本截断；有效期两分钟。过期或中断不会自动重试。"] } });
+  const view = session(91, { actions: [action] }); api.seed([view]); await open(page);
+  const card = reviewCard(page, action.review.title), approve = card.getByRole("button", { name: "确认执行", exact: true });
+  expect(await card.locator("dd").allTextContents()).toEqual(action.review.details.map(item => item.value));
+  expect(await card.getByRole("listitem").allTextContents()).toEqual(action.review.consequences);
+  await page.locator('input[name="read_sources"]').check(); await expect(approve).toBeDisabled();
+  api.replyNext("POST", actionPath(view.id, action.id, "approve"), { session: { ...view, revision: view.revision + 1,
+    actions: [{ ...action, status: "completed", receipt: { ok: true, code: "completed", message: "The exact reviewed enrichment completed." } }] } });
+  await card.getByRole("checkbox").check(); await approve.click();
+  await expect(card.getByText("已完成", { exact: true })).toBeVisible();
+  expect(api.count("POST", actionPath(view.id, action.id, "approve"))).toBe(1);
+  expect(api.count("POST", queryPath)).toBe(0);
+});
+
+test("reconciles an expired source attestation and asks for a new read without another approval", async ({ page, api }) => {
+  const action = reviewedAction(92, { toolName: "attention_submit_content_enrichment" }), view = session(92, { actions: [action] });
+  api.seed([view]); await open(page);
+  const path = actionPath(view.id, action.id, "approve");
+  api.replyNext("POST", path, { error: { code: "source_evidence_expired" } }, 409);
+  api.sessions.set(view.id, { ...view, revision: 2, actions: [{ ...action, status: "unknown", receipt: {
+    ok: false, code: "action_outcome_unknown", message: "Check current content before a new review. This action will not retry." } }] });
+  const card = reviewCard(page, action.review.title);
+  await card.getByRole("checkbox").check(); await card.getByRole("button", { name: "确认执行", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("阅读证据已超过两分钟");
+  await expect(card.getByText("结果不确定", { exact: true })).toBeVisible();
+  await expect(card.getByRole("button")).toHaveCount(0);
+  expect(api.count("POST", path)).toBe(1); expect(api.count("POST", queryPath)).toBe(0);
+});

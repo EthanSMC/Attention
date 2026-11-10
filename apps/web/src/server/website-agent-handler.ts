@@ -8,7 +8,7 @@ import { z } from "zod";
 
 import { mutationRequestError, noStoreJson } from "./api-guard";
 import { recordAttentionToolAuditBestEffort } from "./attention-tool-audit";
-import type { AttentionToolBaseContext } from "./attention-tool-registry";
+import { createAttentionToolRegistry, defaultAttentionToolCoreDependencies, type AttentionToolBaseContext } from "./attention-tool-registry";
 import { getWebDatabase } from "./db";
 import { InvalidRequestBodyError, readJsonRequestWithinLimit, RequestBodyTooLargeError } from "./request-body";
 import { clearInvalidSessionCookie, getRequestSession, type RequestSession } from "./session";
@@ -17,6 +17,9 @@ import { beginWebsiteAgentTurn, finishWebsiteAgentTurn, isWebsiteAgentTurnActive
 import { websiteAgentAccountEligible, websiteAgentConfig, WebsiteAgentUnavailableError } from "./website-agent-config";
 import { createWebsiteAgentTools, WEBSITE_AGENT_TOOL_SCOPES } from "./website-agent-tools";
 import { pendingWebsiteAgentAction, WEBSITE_AGENT_MAX_NEW_ACTIONS, type StoredWebsiteAgentAction } from "./website-agent-action-state";
+import { createWebsiteSourceEvidenceRun, WebsiteSourceEvidenceError } from "./website-agent-source-evidence";
+import { WebsiteEnrichmentReviewError } from "./website-agent-enrichment-review";
+import { ContentEnrichmentServiceError } from "./content-enrichment-model";
 import { prepareWebsiteAgentAction, WebsiteAgentActionPolicyError } from "./website-agent-action-policy";
 
 export const WEBSITE_AGENT_TIMEOUT_MS = 60_000;
@@ -116,6 +119,9 @@ export async function handleWebsiteAgentRequest(request: Request,
       const latest = await currentPrincipal();
       return latest && await activeTurn() ? context(latest) : null;
     };
+    const evidenceRun = createWebsiteSourceEvidenceRun({ accountId: principal.accountId, authSessionId: principal.sessionId,
+      sessionId: claimedTurn.sessionId, originRunId: claimedTurn.runId, originRevision: claimedTurn.revision });
+    const registry = createAttentionToolRegistry({ ...defaultAttentionToolCoreDependencies, readCollectionSource: evidenceRun.readCollectionSource });
     const proposedActions: StoredWebsiteAgentAction[] = [];
     const result = await dependencies.run({
       apiKey: config.apiKey,
@@ -124,7 +130,7 @@ export async function handleWebsiteAgentRequest(request: Request,
       signal: request.signal,
       limits: { maxRunCostMicrousd: config.maxRunCostMicrousd, maxModelCalls: 6, maxToolCalls: 8,
         maxOutputTokensPerCall: 1_200, maxContextBytes: 131_072, maxToolOutputBytes: 65_536, timeoutMs: WEBSITE_AGENT_TIMEOUT_MS },
-      tools: dependencies.createTools({ context: context(principal), getCurrentContext: currentContext,
+      tools: dependencies.createTools({ registry, context: context(principal), getCurrentContext: currentContext,
         operationId: body.operation_id, query: body.query, collect: body.collect, readSources: body.read_sources,
         proposeAction: async (toolName, rawInput, execution) => {
           execution.signal.throwIfAborted();
@@ -133,7 +139,7 @@ export async function handleWebsiteAgentRequest(request: Request,
           if (!latest) return { ok: false, code: "permission_revoked" };
           try {
             const proposal = await (dependencies.prepareAction ?? prepareWebsiteAgentAction)({ ...latest,
-              runId: `website:${body.operation_id}:${execution.toolCallId}`.slice(0, 128), signal: execution.signal }, toolName, rawInput);
+              runId: `website:${body.operation_id}:${execution.toolCallId}`.slice(0, 128), signal: execution.signal }, toolName, rawInput, undefined, evidenceRun);
             execution.signal.throwIfAborted();
             if (!await currentContext()) return { ok: false, code: "permission_revoked" };
             const action = pendingWebsiteAgentAction({ proposal, authSessionId: principal.sessionId,
@@ -143,7 +149,8 @@ export async function handleWebsiteAgentRequest(request: Request,
               action_title: action.review.title, expires_at: action.expiresAt,
               guidance: "This is a proposal only. The user must review and approve the exact action in the website. Nothing has been changed." } };
           } catch (error) {
-            if (error instanceof WebsiteAgentActionPolicyError) return { ok: false, code: error.code };
+            if (error instanceof WebsiteSourceEvidenceError || error instanceof WebsiteEnrichmentReviewError ||
+                error instanceof ContentEnrichmentServiceError || error instanceof WebsiteAgentActionPolicyError) return { ok: false, code: error.code };
             return { ok: false, code: "action_proposal_unavailable" };
           }
         } }),

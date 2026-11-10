@@ -17,9 +17,17 @@ it does not republish or renumber the deployed CLI/runtime 0.3.21.
 - Classifies all 16 canonical tool names. Adds Filter court reads and exact
   human-review gates for visibility, digest, report and vote actions, with
   one-time encrypted claims and atomic Core-effect/status receipts.
+- Adds exact public-collection review and browser-only candidate selection.
+  Reviews bind the actual persisted outbound URL and planned shared alias
+  edges, not just the resolver's candidate URL or local collection changes.
+- Adds shared enrichment execution backed by a fresh current-run article
+  attestation and full title/summary/identity/merge/notification review. Approval
+  requires the same owner/auth/session/run/revision and unexpired evidence;
+  canonical Core effects and the receipt are atomic. Enrichment now preserves
+  publication-revocation markers when creating a new winner collection.
 - Reads storage envelope 1 and 2; envelope 2 adds action metadata without
-  replacing native Pi history. Candidate/public-collect and shared-enrichment
-  execution still require their separate selection/evidence/merge review.
+  replacing native Pi history. Models cannot approve an action or choose a
+  candidate on the user's behalf.
 - Personal-agent credentials and private sessions remain separate.
 - Supports configurable `members` or `allowlist` rollout audiences while
   retaining authentication, membership and session-ownership checks. The
@@ -32,8 +40,9 @@ it does not republish or renumber the deployed CLI/runtime 0.3.21.
 - Adds `pnpm version:check` for release metadata, health response, immutable CLI
   identity and the recorded SQL migration checksums.
 
-The RC remains local pending final exact-commit checks, native-session and
-database acceptance, and explicit release/deployment approval. It does not
+The implementation is under review in [draft PR #27](https://github.com/EthanSMC/Attention/pull/27).
+Final exact-commit checks, database/browser acceptance and explicit
+release/deployment approval remain required. It does not
 overwrite the separate 0.3.22 candidate or include its unpublished features.
 Image/deployment IDs remain the reviewed commit's 12-character SHA, with the
 exact commit and migration checksums recorded separately. See the

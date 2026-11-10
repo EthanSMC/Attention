@@ -1,6 +1,5 @@
 import "server-only";
 
-import { classifySourceUrl, genericWebAdapter } from "@attention/collector";
 import {
   CHANNEL_SUMMARY_READY_EVENT_TYPE,
   summaryReadyNotificationDedupeKey,
@@ -9,6 +8,9 @@ import {
   and,
   collectionEvents,
   collections,
+  accounts,
+  domains,
+  filterProfiles,
   contentIdentities,
   contents,
   eq,
@@ -19,121 +21,22 @@ import {
   type AttentionTransaction,
   type AttentionDatabase,
 } from "@attention/db";
-import { z } from "zod";
 
-import { validateAgentResolvedPublicUrl } from "./collection-service";
+export { submitContentEnrichmentInputSchema, ContentEnrichmentServiceError } from "./content-enrichment-model";
+export type { ContentEnrichmentPrincipal, SubmitContentEnrichmentInput, SubmitContentEnrichmentResult, ContentEnrichmentServiceErrorCode } from "./content-enrichment-model";
+import { ContentEnrichmentServiceError, assertEnrichmentEligible, normalizeContentEnrichmentInput, enrichmentResolvedIdentity,
+  type ContentEnrichmentPrincipal, type SubmitContentEnrichmentInput, type SubmitContentEnrichmentResult, type OwnedEnrichmentTarget } from "./content-enrichment-model";
 
-export const submitContentEnrichmentInputSchema = z
-  .object({
-    content_id: z.string().uuid(),
-    idempotency_key: z.string().trim().min(8).max(128),
-    resolved_url: z.string().trim().min(1).max(4_096),
-    summary: z.string().trim().min(1).max(2_000),
-    tags: z.array(z.string().trim().min(1).max(64)).min(1).max(8),
-    title: z.string().trim().min(1).max(500),
-  })
-  .strict();
-
-export type SubmitContentEnrichmentInput = z.infer<
-  typeof submitContentEnrichmentInputSchema
->;
-
-export interface ContentEnrichmentPrincipal {
-  accountId: string;
-}
-
-export interface SubmitContentEnrichmentResult {
-  contentId: string;
-  status: "enriched" | "already_enriched";
-  summaryStatus: "ready";
-}
-
-export type ContentEnrichmentServiceErrorCode =
-  | "content_enrichment_hidden"
-  | "content_enrichment_invalid_link"
-  | "content_enrichment_unavailable"
-  | "content_not_eligible"
-  | "content_not_found";
-
-export class ContentEnrichmentServiceError extends Error {
-  readonly code: ContentEnrichmentServiceErrorCode;
-  readonly httpStatus: number;
-
-  constructor(code: ContentEnrichmentServiceErrorCode, httpStatus: number) {
-    super(code);
-    this.name = "ContentEnrichmentServiceError";
-    this.code = code;
-    this.httpStatus = httpStatus;
-  }
-}
-
-function normalizeTags(tags: readonly string[]): string[] {
-  const normalized: string[] = [];
-  const seen = new Set<string>();
-  for (const rawTag of tags) {
-    const tag = rawTag.trim();
-    const key = tag.toLocaleLowerCase("en-US");
-    if (seen.has(key)) continue;
-    seen.add(key);
-    normalized.push(tag);
-  }
-  return normalized;
-}
-
-function normalizeTitle(title: string): string {
-  return title.replace(/\s+/gu, " ").trim();
-}
-
-function resolvedIdentity(resolvedUrl: string) {
-  const match = classifySourceUrl(resolvedUrl);
-  return match?.adapter.identity(resolvedUrl) ??
-    genericWebAdapter.identity(resolvedUrl);
-}
-
-interface OwnedEnrichmentTarget {
-  collectionId: string;
-  communityModerationStatus: "clear" | "hidden" | "pending_review";
-  contentStatus: "active" | "merged";
-  id: string;
-  publicSafetyStatus: "allowed" | "blocked";
-  sourceChannel: "web" | "wechat";
-  summaryStatus: "failed" | "hidden" | "pending" | "ready" | "unavailable";
-  takedownStatus: "none" | "removed";
-}
-
-function assertEnrichmentEligible(owned: OwnedEnrichmentTarget): void {
-  if (owned.summaryStatus === "hidden") {
-    throw new ContentEnrichmentServiceError(
-      "content_enrichment_hidden",
-      409,
-    );
-  }
-  if (
-    owned.contentStatus !== "active" ||
-    owned.publicSafetyStatus !== "allowed" ||
-    owned.takedownStatus !== "none" ||
-    owned.communityModerationStatus !== "clear"
-  ) {
-    throw new ContentEnrichmentServiceError("content_not_eligible", 409);
-  }
-  if (
-    owned.summaryStatus === "unavailable" ||
-    owned.summaryStatus === "failed"
-  ) {
-    throw new ContentEnrichmentServiceError(
-      "content_enrichment_unavailable",
-      409,
-    );
-  }
-}
+import { ContentEnrichmentPlanError, lockAndRevalidateContentEnrichmentPlan, type ContentEnrichmentPlan } from "./content-enrichment-plan";
 
 async function resolveEnrichmentTarget(
   tx: AttentionTransaction,
   principal: ContentEnrichmentPrincipal,
   owned: OwnedEnrichmentTarget,
   resolvedUrl: string,
+  reviewed?: ContentEnrichmentPlan,
 ): Promise<OwnedEnrichmentTarget> {
-  const identity = resolvedIdentity(resolvedUrl);
+  const identity = enrichmentResolvedIdentity(resolvedUrl);
   if (!identity) {
     throw new ContentEnrichmentServiceError(
       "content_enrichment_invalid_link",
@@ -169,6 +72,8 @@ async function resolveEnrichmentTarget(
   if (!primaryContentId) {
     throw new Error("resolved_identity_conflict_without_winner");
   }
+  if (reviewed && (primaryContentId !== reviewed.effects.winnerContentId || Boolean(claimed) !== reviewed.effects.claimIdentity))
+    throw new ContentEnrichmentPlanError("enrichment_target_changed");
   if (primaryContentId === owned.id) return owned;
 
   const [primary] = await tx
@@ -218,6 +123,7 @@ async function resolveEnrichmentTarget(
         collectionStatus: "active",
         contentId: primary.id,
         domainId: currentCollection.domainId,
+        filterRevokedAt: currentCollection.filterRevokedAt,
         moderationStatus: currentCollection.moderationStatus,
         publicSince: currentCollection.publicSince,
         sourceChannel: currentCollection.sourceChannel,
@@ -225,6 +131,8 @@ async function resolveEnrichmentTarget(
       })
       .onConflictDoNothing({ target: [collections.accountId, collections.contentId] })
       .returning();
+    if (reviewed && (!reviewed.effects.createWinnerCollection || !createdPrimaryCollection))
+      throw new ContentEnrichmentPlanError("enrichment_target_changed");
     targetCollection = createdPrimaryCollection ?? (
       await tx
         .select()
@@ -240,6 +148,27 @@ async function resolveEnrichmentTarget(
     )[0];
   }
   if (!targetCollection) throw new Error("primary_collection_create_failed");
+  if (reviewed && (reviewed.effects.winnerCollectionId !== null && targetCollection.id !== reviewed.effects.winnerCollectionId))
+    throw new ContentEnrichmentPlanError("enrichment_target_changed");
+  if (reviewed?.effects.restoreWinnerCollection) {
+    // Reviewed-only ordering fix: the alias function requires both collections
+    // active. Restore only the exact approved winner, inside this savepoint.
+    const [restored] = await tx.update(collections).set({ collectionStatus: "active", updatedAt: now })
+      .where(and(eq(collections.id, targetCollection.id), eq(collections.accountId, principal.accountId),
+        eq(collections.collectionStatus, "deleted"))).returning();
+    if (!restored) throw new ContentEnrichmentPlanError("enrichment_target_changed");
+    targetCollection = restored;
+  }
+
+  if (reviewed?.effects.promoteSourceChannel) {
+    // Preserve the already-owned WeChat source during this reviewed merge.
+    // This copies no credentials or channel binding and creates no connection.
+    const [promoted] = await tx.update(collections).set({ sourceChannel: "wechat", updatedAt: now })
+      .where(and(eq(collections.id, targetCollection.id), eq(collections.accountId, principal.accountId),
+        eq(collections.sourceChannel, "web"), eq(collections.collectionStatus, "active"))).returning();
+    if (!promoted) throw new ContentEnrichmentPlanError("enrichment_target_changed");
+    targetCollection = promoted;
+  }
 
   await tx.execute(sql`
     select public.attention_link_owned_content_alias(
@@ -342,107 +271,132 @@ async function resolveEnrichmentTarget(
   };
 }
 
-export async function submitContentEnrichment(
-  db: AttentionDatabase,
-  principal: ContentEnrichmentPrincipal,
-  rawInput: unknown,
+async function applyContentEnrichmentInTransaction(
+  tx: AttentionTransaction, principal: ContentEnrichmentPrincipal, input: SubmitContentEnrichmentInput, reviewed?: ContentEnrichmentPlan,
 ): Promise<SubmitContentEnrichmentResult> {
-  const input = submitContentEnrichmentInputSchema.parse(rawInput);
-  const tags = normalizeTags(input.tags);
-  const title = normalizeTitle(input.title);
-  const resolvedUrl = validateAgentResolvedPublicUrl(input.resolved_url);
-  if (!resolvedUrl) {
-    throw new ContentEnrichmentServiceError(
-      "content_enrichment_invalid_link",
-      422,
-    );
+  const { tags, title, resolved_url: resolvedUrl } = input;
+  await setAccountContext(tx, principal.accountId);
+  const [owned] = await tx
+    .select({
+      collectionId: collections.id,
+      communityModerationStatus: contents.communityModerationStatus,
+      contentStatus: contents.contentStatus,
+      id: contents.id,
+      publicSafetyStatus: contents.publicSafetyStatus,
+      sourceChannel: collections.sourceChannel,
+      summaryStatus: contents.summaryStatus,
+      takedownStatus: contents.takedownStatus,
+    })
+    .from(collections)
+    .innerJoin(contents, eq(contents.id, collections.contentId))
+    .where(
+      and(
+        eq(collections.accountId, principal.accountId),
+        eq(collections.contentId, input.content_id),
+        eq(collections.collectionStatus, "active"),
+      ),
+    )
+    .for("update")
+    .limit(1);
+
+  if (!owned) {
+    throw new ContentEnrichmentServiceError("content_not_found", 404);
   }
-
-  return db.transaction(async (tx) => {
-    await setAccountContext(tx, principal.accountId);
-    const [owned] = await tx
-      .select({
-        collectionId: collections.id,
-        communityModerationStatus: contents.communityModerationStatus,
-        contentStatus: contents.contentStatus,
-        id: contents.id,
-        publicSafetyStatus: contents.publicSafetyStatus,
-        sourceChannel: collections.sourceChannel,
-        summaryStatus: contents.summaryStatus,
-        takedownStatus: contents.takedownStatus,
-      })
-      .from(collections)
-      .innerJoin(contents, eq(contents.id, collections.contentId))
-      .where(
-        and(
-          eq(collections.accountId, principal.accountId),
-          eq(collections.contentId, input.content_id),
-          eq(collections.collectionStatus, "active"),
-        ),
-      )
-      .for("update")
-      .limit(1);
-
-    if (!owned) {
-      throw new ContentEnrichmentServiceError("content_not_found", 404);
-    }
-    assertEnrichmentEligible(owned);
-    const target = await resolveEnrichmentTarget(
-      tx,
-      principal,
-      owned,
-      resolvedUrl,
-    );
-    assertEnrichmentEligible(target);
-    if (target.summaryStatus === "ready") {
-      return {
-        contentId: target.id,
-        status: "already_enriched",
-        summaryStatus: "ready",
-      };
-    }
-
-    const [updated] = await tx
-      .update(contents)
-      .set({
-        aiSummary: input.summary,
-        aiTags: tags,
-        enrichmentStatus: "complete",
-        outboundUrl: resolvedUrl,
-        summaryStatus: "ready",
-        title,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(contents.id, target.id),
-          eq(contents.summaryStatus, target.summaryStatus),
-        ),
-      )
-      .returning({ id: contents.id });
-
-    if (updated && target.sourceChannel === "wechat") {
-      const occurredAt = new Date();
-      await tx
-        .insert(eventLedger)
-        .values({
-          accountId: null,
-          anonymousSessionId: null,
-          contentId: target.id,
-          dedupeKey: summaryReadyNotificationDedupeKey(target.id),
-          eventType: CHANNEL_SUMMARY_READY_EVENT_TYPE,
-          metadata: { schema_version: 1 },
-          occurredAt,
-          requestId: input.idempotency_key,
-          scope: "private",
-        })
-        .onConflictDoNothing({ target: eventLedger.dedupeKey });
-    }
-
+  assertEnrichmentEligible(owned);
+  const target = await resolveEnrichmentTarget(
+    tx,
+    principal,
+    owned,
+    resolvedUrl,
+    reviewed,
+  );
+  assertEnrichmentEligible(target);
+  if (target.summaryStatus === "ready") {
     return {
       contentId: target.id,
-      status: updated ? "enriched" : "already_enriched",
+      status: "already_enriched",
       summaryStatus: "ready",
     };
+  }
+
+  const [updated] = await tx
+    .update(contents)
+    .set({
+      aiSummary: input.summary,
+      aiTags: tags,
+      enrichmentStatus: "complete",
+      outboundUrl: resolvedUrl,
+      summaryStatus: "ready",
+      title,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(contents.id, target.id),
+        eq(contents.summaryStatus, target.summaryStatus),
+      ),
+    )
+    .returning({ id: contents.id });
+
+  if (updated && target.sourceChannel === "wechat") {
+    const occurredAt = new Date();
+    await tx
+      .insert(eventLedger)
+      .values({
+        accountId: null,
+        anonymousSessionId: null,
+        contentId: target.id,
+        dedupeKey: summaryReadyNotificationDedupeKey(target.id),
+        eventType: CHANNEL_SUMMARY_READY_EVENT_TYPE,
+        metadata: { schema_version: 1 },
+        occurredAt,
+        requestId: input.idempotency_key,
+        scope: "private",
+      })
+      .onConflictDoNothing({ target: eventLedger.dedupeKey });
+  }
+
+  return {
+    contentId: target.id,
+    status: updated ? "enriched" : "already_enriched",
+    summaryStatus: "ready",
+  };
+}
+
+export async function submitContentEnrichment(db: AttentionDatabase, principal: ContentEnrichmentPrincipal, rawInput: unknown): Promise<SubmitContentEnrichmentResult> {
+  const input = normalizeContentEnrichmentInput(rawInput);
+  return db.transaction(tx => applyContentEnrichmentInTransaction(tx, principal, input));
+}
+
+/** Trusted reviewed path only. No provider/network calls; outer action claim and receipt own the commit. */
+export async function applyPreparedContentEnrichment(tx: AttentionTransaction, principal: ContentEnrichmentPrincipal,
+  rawPlan: ContentEnrichmentPlan): Promise<SubmitContentEnrichmentResult> {
+  return tx.transaction(async savepoint => {
+    const plan = await lockAndRevalidateContentEnrichmentPlan(savepoint, principal.accountId, rawPlan);
+    const result = await applyContentEnrichmentInTransaction(savepoint, principal, plan.input, plan);
+    const [target] = await savepoint.select().from(collections).where(and(eq(collections.accountId, principal.accountId),
+      eq(collections.contentId, plan.effects.winnerContentId))).limit(1);
+    const [content] = await savepoint.select().from(contents).where(eq(contents.id, plan.effects.winnerContentId)).limit(1);
+    if (!target || !content || target.collectionStatus !== "active" || target.visibility !== plan.effects.resultingVisibility ||
+        (target.filterRevokedAt?.toISOString() ?? null) !== plan.effects.resultingFilterRevokedAt ||
+        target.moderationStatus !== plan.effects.resultingModeration || target.sourceChannel !== plan.effects.resultingSourceChannel ||
+        content.summaryStatus !== "ready" || (plan.effects.writeSharedSummary && (content.aiSummary !== plan.input.summary ||
+          content.title !== plan.input.title || content.outboundUrl !== plan.input.resolved_url)))
+      throw new ContentEnrichmentPlanError("enrichment_target_changed");
+    // Domain/profile rows are not arbitrarily privilege-expanded for locking.
+    // Re-read their current publication inputs at the effect linearization point.
+    const [domain] = await savepoint.select({ active: domains.active }).from(domains).where(eq(domains.id, target.domainId)).limit(1);
+    const [account] = await savepoint.select({ status: accounts.status }).from(accounts).where(eq(accounts.id, principal.accountId)).limit(1);
+    const [filter] = await savepoint.select({ active: filterProfiles.active, revokedAt: filterProfiles.revokedAt }).from(filterProfiles)
+      .where(eq(filterProfiles.accountId, principal.accountId)).limit(1);
+    if ((domain?.active === true) !== plan.snapshot.domainActive || (account?.status === "active") !== plan.snapshot.accountActive ||
+        (filter?.active === true && filter.revokedAt === null) !== plan.snapshot.filterActive)
+      throw new ContentEnrichmentPlanError("enrichment_target_changed");
+    const effectivelyPublic = target.visibility === "public" && target.moderationStatus === "clear" &&
+      target.filterRevokedAt === null && account?.status === "active" && filter?.active === true && filter.revokedAt === null &&
+      domain?.active === true && content.contentStatus === "active" && content.publicSafetyStatus === "allowed" &&
+      content.communityModerationStatus === "clear" && content.takedownStatus === "none";
+    if (effectivelyPublic !== plan.effects.effectivelyPublic) throw new ContentEnrichmentPlanError("enrichment_target_changed");
+    return result;
   });
 }

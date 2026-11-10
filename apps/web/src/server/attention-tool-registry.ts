@@ -554,7 +554,7 @@ function knownServiceError(error: unknown): AttentionToolResult | null {
   return null;
 }
 
-const defaultCoreDependencies: AttentionToolCoreDependencies = {
+export const defaultAttentionToolCoreDependencies: AttentionToolCoreDependencies = {
   castModerationVote,
   collectFromWeb,
   getCollectionStatus,
@@ -574,7 +574,7 @@ const defaultCoreDependencies: AttentionToolCoreDependencies = {
 };
 
 export function createAttentionToolRegistry(
-  core: AttentionToolCoreDependencies = defaultCoreDependencies,
+  core: AttentionToolCoreDependencies = defaultAttentionToolCoreDependencies,
 ): readonly AttentionToolDefinition[] {
   return [
     defineAttentionTool({

@@ -1,8 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -14,6 +14,7 @@ import { expect, test as base } from "@playwright/test";
 import { build } from "../../../apps/cli/node_modules/esbuild/lib/main.js";
 import { assertWebsiteHttpTestDatabase, websiteHttpTestDatabaseUrls } from "../../integration/website-agent-http-guard";
 import { productionFixtureMarker, providerKey } from "./website-agent-offline-provider";
+import { copyWebsiteStandalone } from "./website-agent-standalone-copy";
 
 export const productionOrigin = "http://127.0.0.1:4179";
 const root = fileURLToPath(new URL("../../../", import.meta.url));
@@ -61,12 +62,11 @@ export class ProductionWebsiteFixture {
 
     this.temporary = await mkdtemp(join(tmpdir(), "attention-website-production-"));
     const standalone = join(this.temporary, "standalone");
-    // Supported standalone packaging. Exclude any local dotenv files and retain no dependency on a dev server.
-    await cp(join(root, "apps/web/.next/standalone"), standalone, {
-      recursive: true, dereference: true, filter: source => !basename(source).startsWith(".env"),
+    // Keep Next's traced pnpm package links: flattening changes dependency lookup ancestry.
+    await copyWebsiteStandalone({
+      standalone: join(root, "apps/web/.next/standalone"), destination: standalone,
+      staticFiles: join(root, "apps/web/.next/static"), publicFiles: join(root, "apps/web/public"),
     });
-    await cp(join(root, "apps/web/.next/static"), join(standalone, "apps/web/.next/static"), { recursive: true });
-    await cp(join(root, "apps/web/public"), join(standalone, "apps/web/public"), { recursive: true });
     await build({ entryPoints: [join(root, "tests/e2e/fixtures/website-agent-production-preload.ts")],
       outfile: join(this.temporary, "offline-preload.mjs"), bundle: true, platform: "node", format: "esm", target: "node24" });
     await this.start();

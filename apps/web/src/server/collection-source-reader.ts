@@ -18,6 +18,12 @@ export interface SourceReadPrincipal {accountId: string; scopes: readonly string
 export interface SourceReadContext {
   accountId: string; runId: string; signal: AbortSignal; getDatabase(): AttentionDatabase;
   revalidate?: () => Promise<SourceReadPrincipal | null>;
+  /** Trusted host observer only. Never accepted from tool input or source content. */
+  observeReadyEvidence?: (evidence: CollectionSourceReadyEvidence) => void;
+}
+export interface CollectionSourceReadyEvidence {
+  collectionId: string; contentId: string; operation: string; sourceFingerprint: string; sourceUrl: string;
+  result: Extract<ReadResult, {outcome: "ready"}>;
 }
 export class CollectionSourceReadError extends Error {
   constructor(readonly code: "invalid_request" | "permission_revoked" | "collection_not_found", readonly httpStatus: number) {
@@ -102,7 +108,13 @@ export async function readCollectionSource(context: SourceReadContext, rawInput:
     if (!current || current.operation !== identity.operation) throw new CollectionSourceReadError("permission_revoked", 403);
   };
   const finalize = async (value: ReadResult) => {
-    try {await recheck(); lifetime.throwIfAborted(); return owned(value);}
+    try {
+      await recheck(); lifetime.throwIfAborted();
+      if (value.outcome === "ready") context.observeReadyEvidence?.({collectionId: input.collection_id,
+        contentId: initial.content!.content_id, operation: identity.operation, sourceFingerprint: identity.sourceFingerprint,
+        sourceUrl: identity.url, result: value});
+      lifetime.throwIfAborted(); return owned(value);
+    }
     catch {evidenceMemory.forget(context.accountId); return owned(failed(base, "permission_revoked", value.attempts));}
   };
   const cached = deps.memory.get(context.accountId, key);

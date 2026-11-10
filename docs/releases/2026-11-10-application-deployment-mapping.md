@@ -1,7 +1,10 @@
 # Attention application and deployment mapping
 
 Date: 2026-11-10. Status: **0.3.23-rc.1, unreleased and not deployed**.
-This record does not approve a tag, push, publication, migration or deployment.
+This record is not approval for a tag, merge, migration or deployment. The user
+separately approved publishing the implementation to a feature branch and
+[draft PR #27](https://github.com/EthanSMC/Attention/pull/27), with CI. That public
+review does not promote the RC or change the live application.
 
 ## Identity map
 
@@ -9,6 +12,7 @@ This record does not approve a tag, push, publication, migration or deployment.
 | --- | --- |
 | Repository/application version | `0.3.23-rc.1`; canonical root `release.json`, mirrored by root `package.json`. |
 | Candidate source provenance | Website-agent working tree based on reconciliation commit `b52a21547cd333308dfb63c2532008a212154c8d`. This base does **not** identify the final RC bytes. |
+| Public review | Draft PR #27, remote branch `feat/native-pi-website-agent-20261110`; its latest immutable head and exact-head CI identify a review checkpoint, not a release tag or deployed image. |
 | Final reviewed RC commit | Pending. Record the full immutable commit when final checks are complete. Do not use the base SHA for the changed working tree. |
 | RC image/deployment ID | Pending the final reviewed commit. Keep the existing first-12-hex-character Git SHA convention, never the SemVer string. |
 | Verified live baseline | `c0628d25e9fc573310e216304bf0a37c17ac780e`; inspected Web/Worker/Fetcher image release ID `c0628d25e9fc`; recorded schema `0038`. |

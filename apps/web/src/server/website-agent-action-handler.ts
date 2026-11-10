@@ -13,6 +13,11 @@ import { InvalidRequestBodyError, readJsonRequestWithinLimit, RequestBodyTooLarg
 import { clearInvalidSessionCookie, getRequestSession } from "./session";
 import { storedWebsiteAgentActionProposal, WEBSITE_AGENT_ACTION_LEASE_MS } from "./website-agent-action-state";
 import { invokeReviewedWebsiteDatabaseAction } from "./website-agent-action-execution";
+import { CollectionServiceError } from "./collection-service";
+import { preflightWebsiteEnrichment, WebsiteEnrichmentReviewError } from "./website-agent-enrichment-review";
+import { WebsiteSourceEvidenceError, type WebsiteEnrichmentRunIdentity } from "./website-agent-source-evidence";
+import { ContentEnrichmentServiceError } from "./content-enrichment-model";
+import { reResolveWebsiteCollection } from "./website-agent-collection-review";
 import { WebsiteAgentActionPolicyError } from "./website-agent-action-policy";
 import { WebsiteAgentAdmissionError } from "./website-agent-budget";
 import { websiteAgentAccountEligible, websiteAgentConfig, WebsiteAgentUnavailableError } from "./website-agent-config";
@@ -36,6 +41,7 @@ export interface WebsiteAgentActionRequestDependencies {
   decline: typeof declineWebsiteAgentAction;
   invoke: typeof invokeReviewedWebsiteDatabaseAction;
   audit: typeof recordAttentionToolAuditBestEffort;
+  preflight?: typeof reResolveWebsiteCollection;
 }
 const defaults: WebsiteAgentActionRequestDependencies = { getDatabase: getWebDatabase, getSession: getRequestSession,
   getConfig: websiteAgentConfig, resolveSession, claim: claimWebsiteAgentAction, execute: executeClaimedWebsiteAgentAction,
@@ -96,11 +102,30 @@ export async function handleWebsiteAgentActionRequest(request: Request, operatio
         isMember: current.isMember, isFilter: current.isFilter, scopes: ATTENTION_MCP_OAUTH_SCOPES,
         requestId: identity.actionId, serviceOrigin: new URL(request.url).origin };
     };
+    // Claim is durable, but no effect transaction/authority locks are held while
+    // resolving the source. A changed source consumes no candidate capability.
+    const prepared = claimed.proposal?.prepared;
+    let enrichmentIdentity: WebsiteEnrichmentRunIdentity | undefined;
+    if (prepared?.kind === "enrichment") {
+      if (!claimed.origin) throw new WebsiteAgentActionPolicyError("action_invalid_proposal");
+      enrichmentIdentity = { accountId: principal.accountId, authSessionId: principal.sessionId, sessionId, ...claimed.origin };
+      preflightWebsiteEnrichment(prepared, enrichmentIdentity); // No network after the durable claim.
+    }
+    const collectionPreflight = prepared && prepared.kind !== "enrichment" ? await (dependencies.preflight ?? reResolveWebsiteCollection)({
+      accountId: principal.accountId, caller: { clientId: "attention-website", credentialId: principal.sessionId, credentialKind: "session", entrypoint: "hosted_agent" },
+      getDatabase: () => db!, isMember: principal.isMember, isFilter: principal.isFilter, scopes: ATTENTION_MCP_OAUTH_SCOPES,
+      requestId: identity.actionId, runId: `website-action:${identity.actionId}`, serviceOrigin: new URL(request.url).origin, signal: executionSignal,
+      revalidate: async () => { const latest = (await dependencies.getSession(request)).principal;
+        return eligible(latest) ? { accountId: latest.accountId, scopes: ATTENTION_MCP_OAUTH_SCOPES, isFilter: latest.isFilter, isMember: latest.isMember } : null; },
+    }, prepared) : undefined;
     const result = await dependencies.execute(db, identity, async (tx, action) => {
+      if (enrichmentIdentity && (action.originRunId !== enrichmentIdentity.originRunId || action.originRevision !== enrichmentIdentity.originRevision ||
+          action.authSessionId !== enrichmentIdentity.authSessionId || action.targetFingerprint !== claimed.proposal?.targetFingerprint))
+        throw new WebsiteAgentActionPolicyError("action_invalid_proposal");
       const context = await revalidate(tx);
       if (!context) throw new WebsiteAgentActionPolicyError("permission_revoked");
       const executed = await dependencies.invoke(tx, { context, proposal: storedWebsiteAgentActionProposal(action),
-        actionId: identity.actionId, signal: executionSignal, revalidate });
+        actionId: identity.actionId, signal: executionSignal, revalidate, ...(enrichmentIdentity ? { enrichmentIdentity } : {}), ...(collectionPreflight ? { collectionPreflight } : {}) });
       if (!await revalidate(tx)) throw new WebsiteAgentActionPolicyError("permission_revoked");
       const duplicate = executed.result.ok && executed.result.value.duplicate === true;
       const receipt = executed.result.ok
@@ -120,6 +145,11 @@ export async function handleWebsiteAgentActionRequest(request: Request, operatio
   } catch (error) {
     if (error instanceof RequestBodyTooLargeError) return noStoreJson({ error: { code: "request_too_large" } }, { status: 413 });
     if (error instanceof z.ZodError || error instanceof InvalidRequestBodyError) return noStoreJson({ error: { code: "invalid_request" } }, { status: 400 });
+    if (error instanceof WebsiteSourceEvidenceError || error instanceof WebsiteEnrichmentReviewError)
+      return noStoreJson({ error: { code: error.code } }, { status: error.code === "enrichment_permission_revoked" ? 403 : 409 });
+    if (error instanceof ContentEnrichmentServiceError) return noStoreJson({ error: { code: error.code } }, { status: error.httpStatus });
+    if (error instanceof CollectionServiceError) return noStoreJson({ error: { code: error.code } }, { status: error.httpStatus });
+    if (error instanceof Error && ["action_target_changed", "candidate_selection_required", "permission_revoked"].includes(error.message)) return noStoreJson({ error: { code: error.message } }, { status: error.message === "permission_revoked" ? 403 : 409 });
     if (error instanceof WebsiteAgentActionPolicyError) return noStoreJson({ error: { code: error.code } }, { status: error.code === "permission_revoked" ? 403 : 409 });
     if (error instanceof WebsiteAgentSessionError) return noStoreJson({ error: { code: error.code } }, {
       status: error.code === "session_not_found" || error.code === "action_not_found" ? 404 : error.code === "session_unavailable" ? 503 : 409 });

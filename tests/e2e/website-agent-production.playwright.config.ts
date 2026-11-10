@@ -9,6 +9,9 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
+  // Both cases depend on one pristine DB/worker. Preserve the first failure,
+  // rather than restarting a worker that would correctly reject the migrated DB.
+  maxFailures: 1,
   timeout: 120_000,
   expect: { timeout: 15_000 },
   reporter: [["list"], ["junit", { outputFile: "output/playwright/website-agent-production/results.xml" }]],

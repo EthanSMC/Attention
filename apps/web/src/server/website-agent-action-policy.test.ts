@@ -38,7 +38,7 @@ const digest = { enabled: true, domain_slugs: ["science", "ai"], timezone: "Asia
 describe("trusted website action proposals", () => {
   it("classifies all canonical tools, including explicit blocked gates", () => {
     expect(Object.keys(websiteAgentToolPolicy).sort()).toEqual([...ATTENTION_TOOL_NAMES].sort());
-    expect(websiteAgentToolPolicy.attention_submit_content_enrichment).toBe("source_evidence_and_merge_review_required");
+    expect(websiteAgentToolPolicy.attention_submit_content_enrichment).toBe("reviewed_action");
     expect(websiteAgentToolPolicy.attention_select_collection_candidate).toBe("candidate_review_required");
   });
   it("binds an owned visibility target and displays the public consequence", async () => {
@@ -113,7 +113,7 @@ describe("trusted website action proposals", () => {
       await expect(prepareWebsiteAgentAction(context, "attention_update_digest_settings", { ...digest, ...change }, dependencies()))
         .rejects.toMatchObject({ code: "action_invalid_proposal" });
     });
-  it.each(["attention_collect_content", "attention_select_collection_candidate", "attention_submit_content_enrichment", "made_up"])(
+  it.each(["made_up"])(
     "never creates executable proposals for gated tool %s", async name => {
       await expect(prepareWebsiteAgentAction(context, name, {}, dependencies())).rejects.toMatchObject({ code: "action_not_supported" });
     });

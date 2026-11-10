@@ -11,7 +11,10 @@ import type * as CloseRoute from "../../apps/web/src/app/api/website-agent/sessi
 import type * as SessionRoute from "../../apps/web/src/app/api/website-agent/sessions/[sessionId]/route";
 import type * as SessionsRoute from "../../apps/web/src/app/api/website-agent/sessions/route";
 import type * as ApproveRoute from "../../apps/web/src/app/api/website-agent/sessions/[sessionId]/actions/[actionId]/approve/route";
+import type * as SelectRoute from "../../apps/web/src/app/api/website-agent/sessions/[sessionId]/actions/[actionId]/select/route";
+import { registerCollectionReviewCoreCases } from "./collection-review-pg-cases";
 import type * as DeclineRoute from "../../apps/web/src/app/api/website-agent/sessions/[sessionId]/actions/[actionId]/decline/route";
+import type { AttentionToolName } from "../../apps/web/src/server/attention-tool-registry";
 import type { WebsiteAgentReviewedToolName } from "../../apps/web/src/server/website-agent-action-policy";
 import { claimWebsiteAgentAction, decryptWebsiteAgentSessionState, encryptWebsiteAgentSessionState,
   type WebsiteAgentSessionState, type WebsiteAgentSessionView } from "../../apps/web/src/server/website-agent-sessions";
@@ -22,7 +25,7 @@ const origin = "https://attention.example.test";
 type Member = { accountId: string; sessionId: string; token: string; cookie: string };
 type SessionBody = { session: WebsiteAgentSessionView };
 type ActionView = NonNullable<WebsiteAgentSessionView["actions"]>[number];
-type ProviderStep = { tool: { name: WebsiteAgentReviewedToolName; arguments: Record<string, unknown> } } | { answer: string };
+type ProviderStep = { tool: { name: AttentionToolName; arguments: Record<string, unknown> } } | { answer: string };
 
 /** Actual Web Request -> route -> cookie/auth -> native Pi -> PostgreSQL.
  * Only the external provider's fetch is replaced by offline protocol-valid SSE.
@@ -39,7 +42,11 @@ describe.skipIf(!enabled)("website agent authenticated HTTP on isolated PostgreS
     query: typeof QueryRoute;
     approve: typeof ApproveRoute;
     decline: typeof DeclineRoute;
+    select: typeof SelectRoute;
   };
+  let sourceFinalOverride: string | undefined;
+  let sourceReadCount = 0;
+  let sourceReadBlocked = false;
   let providerCalls: Record<string, unknown>[] = [];
   let providerAnswer = "Synthetic native answer";
   let beforeProviderResult: (() => Promise<void>) | undefined;
@@ -84,8 +91,26 @@ describe.skipIf(!enabled)("website agent authenticated HTTP on isolated PostgreS
     vi.stubEnv("ATTENTION_WEBSITE_AGENT_SESSION_SECRET", "synthetic-http-session-encryption-secret-2026");
     vi.stubEnv("ATTENTION_HMAC_SECRET", "synthetic-http-request-hmac-secret-2026");
     vi.stubEnv("ATTENTION_AUTH_SECRET", "synthetic-http-account-auth-secret-2026");
+    vi.stubEnv("FETCHER_BASE_URL", "https://fetcher.example.test");
+    vi.stubEnv("FETCHER_SHARED_SECRET", "synthetic-http-fetcher-secret-2026-long");
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = input instanceof Request ? input.url : String(input);
+      if (url === "https://fetcher.example.test/v1/read") {
+        sourceReadCount += 1;
+        const payload = JSON.parse(String(init?.body));
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer synthetic-http-fetcher-secret-2026-long");
+        return Response.json({ schema_version: 1, request_ref: payload.request_ref, attempt_ref: payload.attempt_ref,
+          ...(sourceReadBlocked ? { outcome: "blocked", code: "login_required", evidence_kind: "metadata_only",
+            scope: "source", recovery: "needs_action", retry_after_ms: null } : { outcome: "ready", evidence_kind: "article",
+            source_kind: payload.sourceKind, final_public_url: sourceFinalOverride ?? payload.url, extraction_method: "readability",
+            temporary_text: "RAW_HTTP_SOURCE_BODY_MUST_NOT_PERSIST", read_at: new Date().toISOString(), truncated: false }),
+          metadata: { title: null, author: null, description: null, published_at: null }, attempts: [{ method: "static", duration_ms: 1 }] });
+      }
+      if (url === "https://fetcher.example.test/v1/fetch") {
+        const payload = JSON.parse(String(init?.body)) as { url: string; mode: string };
+        if (payload.mode !== "resolve") throw new Error("Only source resolution is allowed in this fixture");
+        return Response.json({ finalUrl: sourceFinalOverride ?? payload.url, redirects: [], status: 200 });
+      }
       if (url !== "https://api.deepseek.com/chat/completions") {
         throw new Error("Unexpected network request in offline HTTP acceptance");
       }
@@ -115,10 +140,13 @@ describe.skipIf(!enabled)("website agent authenticated HTTP on isolated PostgreS
       query: await import("../../apps/web/src/app/api/website-agent/query/route"),
       approve: await import("../../apps/web/src/app/api/website-agent/sessions/[sessionId]/actions/[actionId]/approve/route"),
       decline: await import("../../apps/web/src/app/api/website-agent/sessions/[sessionId]/actions/[actionId]/decline/route"),
+      select: await import("../../apps/web/src/app/api/website-agent/sessions/[sessionId]/actions/[actionId]/select/route"),
     };
   }, 120_000);
 
   beforeEach(() => {
+    sourceFinalOverride = undefined;
+    sourceReadCount = 0; sourceReadBlocked = false;
     providerCalls = [];
     providerAnswer = "Synthetic native answer";
     beforeProviderResult = undefined;
@@ -653,4 +681,204 @@ describe.skipIf(!enabled)("website agent authenticated HTTP on isolated PostgreS
     expect(await digestEffects(actor)).toBe(before);
     expect(providerCalls).toHaveLength(2);
   }, 30_000);
+
+  async function enrichmentFixture(actor: Member, options: { blocked?: boolean; consent?: boolean } = {}) {
+    const target = await contentFixture(actor, "private"), url = `https://article.example.org/${target.contentId}`;
+    await owner.db.update(contents).set({ summaryStatus: "pending", aiSummary: null, aiTags: [], title: null,
+      outboundUrl: url, normalizedUrl: url, canonicalUrl: url }).where(eq(contents.id, target.contentId));
+    const view = await create(actor);
+    const args = { content_id: target.contentId, idempotency_key: `enrichment-http:${view.id}`, title: "Synthetic exact shared title",
+      summary: "Synthetic exact grounded shared summary.", tags: ["Agents"], resolved_url: url };
+    sourceReadBlocked = options.blocked ?? false;
+    providerSteps = [
+      { tool: { name: "attention_read_collection_source", arguments: { collection_id: target.collectionId, attempt_ref: "model-reference" } } },
+      { tool: { name: "attention_submit_content_enrichment", arguments: args } },
+      { answer: "Review the exact shared summary and consequences in the website card." },
+    ];
+    const response = await routes.query.POST(request("/query", actor, { query: "Read my article and propose a shared summary",
+      session_id: view.id, expected_revision: view.revision, operation_id: randomUUID(), data_consent: true, read_sources: options.consent ?? true }));
+    expect(response.status).toBe(200);
+    return { target, args, proposed: ((await response.json()) as SessionBody).session };
+  }
+  it("reads actual authenticated source evidence, reviews and applies exact enrichment once without approval-time network", async () => {
+    const actor = await member(), { target, args, proposed } = await enrichmentFixture(actor);
+    expect(proposed.actions).toHaveLength(1);
+    expect(proposed.actions![0]).toMatchObject({ toolName: "attention_submit_content_enrichment", status: "pending" });
+    expect(proposed.actions![0]!.review.details).toContainEqual({ label: "拟提交摘要", value: args.summary });
+    const stored = await storedSession(actor, proposed.id);
+    expect(stored.state.version).toBe(2);
+    if (stored.state.version !== 2) throw new Error("missing action state");
+    const evidence = stored.state.actions[0]!.prepared;
+    expect(evidence).toMatchObject({ kind: "enrichment", evidence: { accountId: actor.accountId, authSessionId: actor.sessionId, sessionId: proposed.id } });
+    expect(JSON.stringify(stored.state.nativeSession)).not.toContain("RAW_HTTP_SOURCE_BODY");
+    expect(JSON.stringify(stored.state.actions)).not.toContain("RAW_HTTP_SOURCE_BODY");
+    expect(JSON.stringify(stored.state.nativeSession)).not.toContain(args.summary);
+    expect((await owner.db.select().from(contents).where(eq(contents.id, target.contentId)))[0]?.summaryStatus).toBe("pending");
+    const reads = sourceReadCount, calls = providerCalls.length;
+    const response = await approve(actor, proposed); expect(response.status).toBe(200);
+    await expectReceipt(actor, ((await response.json()) as SessionBody).session);
+    expect((await owner.db.select().from(contents).where(eq(contents.id, target.contentId)))[0]).toMatchObject({
+      summaryStatus: "ready", aiSummary: args.summary, title: args.title, outboundUrl: args.resolved_url, aiTags: args.tags });
+    expect((await approve(actor, proposed)).status).toBe(200);
+    expect(sourceReadCount).toBe(reads); expect(providerCalls).toHaveLength(calls);
+  }, 30_000);
+  it.each(["blocked", "consent"] as const)("does not manufacture an executable review without source article evidence: %s", async missing => {
+    const actor = await member(), { proposed, target } = await enrichmentFixture(actor, missing === "blocked" ? { blocked: true } : { consent: false });
+    expect(proposed.actions ?? []).toEqual([]);
+    expect(JSON.stringify(providerCalls.at(-1))).toContain("source_evidence_required");
+    expect((await owner.db.select().from(contents).where(eq(contents.id, target.contentId)))[0]?.summaryStatus).toBe("pending");
+  }, 30_000);
+  it("rejects a target revision race after source review and never reapplies an unknown claim", async () => {
+    const actor = await member(), { target, proposed } = await enrichmentFixture(actor);
+    await owner.db.update(contents).set({ outboundUrl: "https://article.example.org/changed", updatedAt: new Date() }).where(eq(contents.id, target.contentId));
+    await expectError(await approve(actor, proposed), 409, "enrichment_target_changed");
+    const reloaded = ((await (await load(actor, proposed.id)).json()) as SessionBody).session;
+    expect(reloaded.actions![0]!.status).toBe("unknown");
+    expect((await approve(actor, proposed)).status).toBe(200);
+    expect((await owner.db.select().from(contents).where(eq(contents.id, target.contentId)))[0]?.summaryStatus).toBe("pending");
+  }, 30_000);
+  it("rolls back enrichment and a transaction-local cookie revocation at final authority recheck", async () => {
+    const actor = await member(), { target, proposed } = await enrichmentFixture(actor);
+    const name = `http_enrichment_revoke_${randomUUID().replaceAll("-", "")}`;
+    await owner.sql.unsafe(`CREATE FUNCTION public.${name}() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+      BEGIN IF NEW.id='${target.contentId}'::uuid AND NEW.summary_status='ready' THEN
+        UPDATE public.sessions SET revoked_at=clock_timestamp() WHERE id='${actor.sessionId}'::uuid;
+        END IF; RETURN NEW; END $$;
+      REVOKE ALL ON FUNCTION public.${name}() FROM PUBLIC;
+      CREATE TRIGGER ${name} AFTER UPDATE OF summary_status ON public.contents FOR EACH ROW EXECUTE FUNCTION public.${name}();`);
+    try { await expectError(await approve(actor, proposed), 403, "permission_revoked"); }
+    finally { await owner.sql.unsafe(`DROP TRIGGER ${name} ON public.contents; DROP FUNCTION public.${name}()`); }
+    expect((await owner.db.select().from(contents).where(eq(contents.id, target.contentId)))[0]).toMatchObject({ summaryStatus: "pending", aiSummary: null });
+    expect((await owner.sql`SELECT revoked_at FROM sessions WHERE id=${actor.sessionId}`)[0]?.revoked_at).toBeNull();
+    expect(((await (await load(actor, proposed.id)).json()) as SessionBody).session.actions![0]!.status).toBe("unknown");
+  }, 30_000);
+  it("atomically rolls back actual enrichment when the outer action receipt fails", async () => {
+    const actor = await member(), { target, proposed } = await enrichmentFixture(actor);
+    const name = `http_enrichment_receipt_failure_${randomUUID().replaceAll("-", "")}`;
+    await owner.sql.unsafe(`CREATE FUNCTION public.${name}() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+      BEGIN IF NEW.account_id='${actor.accountId}'::uuid AND OLD.active_run_id IS NOT NULL AND NEW.active_run_id IS NULL
+        AND EXISTS(SELECT 1 FROM public.contents WHERE id='${target.contentId}'::uuid AND summary_status='ready')
+        THEN RAISE EXCEPTION 'synthetic_enrichment_receipt_failure'; END IF; RETURN NEW; END $$;
+      REVOKE ALL ON FUNCTION public.${name}() FROM PUBLIC;
+      CREATE TRIGGER ${name} BEFORE UPDATE ON public.website_agent_sessions FOR EACH ROW EXECUTE FUNCTION public.${name}();`);
+    try { await expectError(await approve(actor, proposed), 503, "action_outcome_unknown"); }
+    finally { await owner.sql.unsafe(`DROP TRIGGER ${name} ON public.website_agent_sessions; DROP FUNCTION public.${name}()`); }
+    expect((await owner.db.select().from(contents).where(eq(contents.id, target.contentId)))[0]).toMatchObject({ summaryStatus: "pending", aiSummary: null });
+    expect((await owner.sql`SELECT count(*)::int AS n FROM content_identities WHERE content_id=${target.contentId}`)[0]?.n).toBe(0);
+    expect(((await (await load(actor, proposed.id)).json()) as SessionBody).session.actions![0]!.status).toBe("unknown");
+  }, 30_000);
+
+  registerCollectionReviewCoreCases(() => ({ owner, runtime }));
+
+  async function proposeCollection(actor: Member, input: string): Promise<WebsiteAgentSessionView> {
+    await owner.db.insert(filterProfiles).values({ accountId: actor.accountId, displayName: "Synthetic collection Filter" }).onConflictDoNothing();
+    const session = await create(actor);
+    providerSteps = [{ tool: { name: "attention_collect_content", arguments: { visibility: "public" } } }, { answer: "Review the source before publishing." }];
+    const response = await query(actor, session, input);
+    expect(response.status).toBe(200);
+    const result = await response.json() as SessionBody;
+    expect(result.session.actions).toHaveLength(1);
+    expect((await owner.sql`SELECT count(*)::int AS n FROM collections WHERE account_id=${actor.accountId}`)[0]?.n).toBe(0);
+    return result.session;
+  }
+  function select(actor: Member, session: WebsiteAgentSessionView, candidateId: string): Promise<Response> {
+    const action = session.actions![0]!;
+    return routes.select.POST(request(`/sessions/${session.id}/actions/${action.id}/select`, actor, {
+      expected_revision: session.revision, expected_arguments_hash: action.argumentsHash, candidate_id: candidateId,
+    }), { params: Promise.resolve({ sessionId: session.id, actionId: action.id }) });
+  }
+  it("prepares public ambiguous input without publishing, then requires browser choice and a fresh exact review", async () => {
+    const actor = await member(), key = randomUUID();
+    const proposed = await proposeCollection(actor, `https://example.com/${key}/first https://example.com/${key}/second`);
+    expect(proposed.actions![0]!.candidates).toHaveLength(2);
+    await expectError(await approve(actor, proposed), 409, "candidate_selection_required");
+    const another = await member();
+    await expectError(await select(another, proposed, proposed.actions![0]!.candidates![0]!.candidateId), 404, "session_not_found");
+    const response = await select(actor, proposed, proposed.actions![0]!.candidates![1]!.candidateId);
+    expect(response.status).toBe(200);
+    const selected = ((await response.json()) as SessionBody).session;
+    expect(selected.actions![0]!.id).not.toBe(proposed.actions![0]!.id);
+    expect(selected.actions![0]!.toolName).toBe("attention_select_collection_candidate");
+    expect(selected.actions![0]!.candidates).toBeUndefined();
+    expect(JSON.stringify(selected)).not.toContain("selection_token");
+    expect(JSON.stringify(providerCalls)).not.toContain("selection_token");
+    expect((await owner.sql`SELECT count(*)::int AS n FROM collections WHERE account_id=${actor.accountId}`)[0]?.n).toBe(0);
+    const approved = await approve(actor, selected);
+    expect(approved.status).toBe(200);
+    expect(((await approved.json()) as SessionBody).session.actions![0]!.status).toBe("completed");
+    expect(await owner.sql`SELECT visibility FROM collections WHERE account_id=${actor.accountId}`).toEqual([expect.objectContaining({ visibility: "public" })]);
+    expect((await owner.sql`SELECT consumed_at IS NOT NULL AS consumed, encrypted_payload FROM pending_candidate_sets WHERE account_id=${actor.accountId}`)[0])
+      .toMatchObject({ consumed: true, encrypted_payload: "" });
+    expect(providerCalls).toHaveLength(2);
+  }, 30_000);
+  it("rejects a changed source on approval before opening the effect transaction, without publishing", async () => {
+    const actor = await member(), proposed = await proposeCollection(actor, `https://example.com/${randomUUID()}`);
+    sourceFinalOverride = `https://example.com/${randomUUID()}`;
+    await expectError(await approve(actor, proposed), 409, "action_target_changed");
+    expect((await owner.sql`SELECT count(*)::int AS n FROM collections WHERE account_id=${actor.accountId}`)[0]?.n).toBe(0);
+    const reloaded = ((await (await load(actor, proposed.id)).json()) as SessionBody).session;
+    expect(reloaded.actions![0]!.status).toBe("unknown");
+  }, 30_000);
+  it("cannot select candidates after close or after their vault expires", async () => {
+    for (const kind of ["close", "expire"] as const) {
+      const actor = await member(), key = randomUUID();
+      const proposed = await proposeCollection(actor, `https://example.com/${key}/a https://example.com/${key}/b`);
+      if (kind === "close") expect((await close(actor, proposed)).status).toBe(200);
+      else await owner.sql`UPDATE pending_candidate_sets SET expires_at=clock_timestamp()-interval '1 second' WHERE account_id=${actor.accountId}`;
+      const response = await select(actor, proposed, proposed.actions![0]!.candidates![0]!.candidateId);
+      expect(response.status).toBe(409);
+      expect((await owner.sql`SELECT count(*)::int AS n FROM collections WHERE account_id=${actor.accountId}`)[0]?.n).toBe(0);
+    }
+  }, 30_000);
+
+
+  it("approves a prepared collection with one runtime connection and transaction-local final cookie auth", async () => {
+    const actor = await member(), proposed = await proposeCollection(actor, `https://example.com/${randomUUID()}`);
+    const single = createDatabase(websiteHttpTestDatabaseUrls(process.env).runtime, { maxConnections: 1 });
+    const globals = globalThis as typeof globalThis & { __attentionDatabaseHandle?: DatabaseHandle };
+    const previous = globals.__attentionDatabaseHandle;
+    globals.__attentionDatabaseHandle = single;
+    try {
+      const response = await approve(actor, proposed);
+      expect(response.status).toBe(200);
+      expect(((await response.json()) as SessionBody).session.actions![0]!.status).toBe("completed");
+      expect((await owner.sql`SELECT count(*)::int AS n FROM collections WHERE account_id=${actor.accountId}`)[0]?.n).toBe(1);
+    } finally {
+      if (previous) globals.__attentionDatabaseHandle = previous; else delete globals.__attentionDatabaseHandle;
+      await single.close();
+    }
+  }, 30_000);
+
+
+  it("rolls a candidate capability back with failed collection effects while committing only the failed receipt", async () => {
+    const actor = await member(), key = randomUUID();
+    const proposed = await proposeCollection(actor, `https://example.com/${key}/a https://example.com/${key}/b`);
+    const selectedResponse = await select(actor, proposed, proposed.actions![0]!.candidates![0]!.candidateId);
+    expect(selectedResponse.status).toBe(200);
+    const selected = ((await selectedResponse.json()) as SessionBody).session;
+    const name = `http_collection_failure_${randomUUID().replaceAll("-", "")}`;
+    await owner.sql.unsafe(`CREATE FUNCTION public.${name}() RETURNS trigger LANGUAGE plpgsql
+      SECURITY DEFINER SET search_path=pg_catalog,public AS $$ BEGIN
+        IF NEW.account_id='${actor.accountId}'::uuid THEN RAISE EXCEPTION 'synthetic_candidate_effect_failure'; END IF;
+        RETURN NEW; END $$;
+      REVOKE ALL ON FUNCTION public.${name}() FROM PUBLIC;
+      CREATE TRIGGER ${name} AFTER INSERT ON public.collections FOR EACH ROW EXECUTE FUNCTION public.${name}();`);
+    const response = await approve(actor, selected);
+    expect(response.status).toBe(200);
+    const completed = ((await response.json()) as SessionBody).session;
+    expect(completed.actions![0]).toMatchObject({ status: "failed", receipt: { ok: false } });
+    expect((await owner.sql`SELECT count(*)::int AS n FROM collections WHERE account_id=${actor.accountId}`)[0]?.n).toBe(0);
+    expect((await owner.sql`SELECT consumed_at FROM pending_candidate_sets WHERE account_id=${actor.accountId}`)[0]?.consumed_at).toBeNull();
+    expect((await approve(actor, completed)).status).toBe(200);
+    expect((await owner.sql`SELECT consumed_at FROM pending_candidate_sets WHERE account_id=${actor.accountId}`)[0]?.consumed_at).toBeNull();
+  }, 30_000);
+  it("requires a new review when a candidate URL changes before the human choice", async () => {
+    const actor = await member(), key = randomUUID();
+    const proposed = await proposeCollection(actor, `https://example.com/${key}/a https://example.com/${key}/b`);
+    sourceFinalOverride = `https://example.com/${randomUUID()}/changed`;
+    await expectError(await select(actor, proposed, proposed.actions![0]!.candidates![0]!.candidateId), 409, "action_target_changed");
+    expect((await owner.sql`SELECT consumed_at FROM pending_candidate_sets WHERE account_id=${actor.accountId}`)[0]?.consumed_at).toBeNull();
+    expect((await owner.sql`SELECT count(*)::int AS n FROM collections WHERE account_id=${actor.accountId}`)[0]?.n).toBe(0);
+  }, 30_000);
+
 });

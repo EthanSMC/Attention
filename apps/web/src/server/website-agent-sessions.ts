@@ -7,11 +7,13 @@ import { and, desc, eq, isNull, sql, setAccountContext, websiteAgentRuns, websit
 import { appendInterruptedNativeWebsiteSession, assertNativeWebsiteSessionContinuation, createNativeWebsiteSession,
   parseNativeWebsiteSession, websiteAgentSessionMessages, type NativeWebsiteAgentSession } from "@attention/website-agent";
 
+import { parseWebsiteAgentActionProposal, type WebsiteAgentActionProposal } from "./website-agent-action-policy";
+
 import { assertWebsiteAgentAccountIdle, lockWebsiteAgentAccount, reserveWebsiteAgentRunInTransaction, validateWebsiteAgentRunReservation,
   type WebsiteAgentRunReservationInput } from "./website-agent-budget";
 import { appendWebsiteAgentActions, cancelPendingWebsiteAgentActions, parseStoredWebsiteAgentActions,
   settleWebsiteAgentActions, websiteAgentActionViews, WEBSITE_AGENT_ACTION_LEASE_MS,
-  type StoredWebsiteAgentAction, type WebsiteAgentActionView } from "./website-agent-action-state";
+  pendingWebsiteAgentAction, storedWebsiteAgentActionProposal, type StoredWebsiteAgentAction, type WebsiteAgentActionView } from "./website-agent-action-state";
 
 export const WEBSITE_AGENT_SESSION_IDLE_MS = 7 * 24 * 60 * 60 * 1000;
 export const WEBSITE_AGENT_INTERRUPTED_ANSWER = "This turn did not finish. No automatic retry was made. An earlier tool action may have completed; check its current status before requesting another action.";
@@ -21,7 +23,7 @@ const MAX_PLAINTEXT_BYTES = 600_000;
 
 type SessionRow = typeof websiteAgentSessions.$inferSelect;
 type SessionMetadata = Pick<SessionRow, "id" | "revision" | "closedAt" | "expiresAt" | "createdAt" | "updatedAt">;
-export type WebsiteAgentSessionErrorCode = "session_not_found" | "session_closed" | "session_expired" | "session_conflict" | "session_full" | "session_unavailable" | "action_not_found" | "action_expired" | "action_authentication_changed";
+export type WebsiteAgentSessionErrorCode = "session_not_found" | "session_closed" | "session_expired" | "session_conflict" | "session_full" | "session_unavailable" | "action_not_found" | "action_expired" | "action_authentication_changed" | "candidate_selection_required";
 export class WebsiteAgentSessionError extends Error {
   constructor(readonly code: WebsiteAgentSessionErrorCode) {
     super(code);
@@ -71,7 +73,7 @@ function object(value: unknown): value is Record<string, unknown> { return value
 function exactKeys(value: Record<string, unknown>, expected: string[]): boolean {
   return Object.keys(value).length === expected.length && expected.every(key => Object.hasOwn(value, key));
 }
-function parseState(value: unknown, sessionId: string): WebsiteAgentSessionState {
+function parseState(value: unknown, sessionId: string, accountId: string): WebsiteAgentSessionState {
   try {
     if (!object(value) || (value.version !== 1 && value.version !== 2) ||
         !exactKeys(value, value.version === 1 ? ["version", "nativeSession", "pending"] : ["version", "nativeSession", "pending", "actions"])) return unavailable();
@@ -84,6 +86,8 @@ function parseState(value: unknown, sessionId: string): WebsiteAgentSessionState
         !Number.isFinite(Date.parse(candidate.deadline)) || new Date(candidate.deadline).toISOString() !== candidate.deadline) return unavailable();
       pending = { query: candidate.query, runId: candidate.runId, deadline: candidate.deadline };
     }
+    if (value.version === 2 && parseStoredWebsiteAgentActions(value.actions).some(action => action.prepared?.kind === "enrichment" &&
+        (action.prepared.evidence.sessionId !== sessionId || action.prepared.evidence.accountId !== accountId))) return unavailable();
     return value.version === 1 ? { version: 1, nativeSession, pending }
       : { version: 2, nativeSession, pending, actions: parseStoredWebsiteAgentActions(value.actions) };
   } catch { return unavailable(); }
@@ -104,7 +108,7 @@ function aad(input: { accountId: string; sessionId: string; revision: number }):
 export function encryptWebsiteAgentSessionState(input: {
   accountId: string; sessionId: string; revision: number; state: WebsiteAgentSessionState;
 }): string {
-  const plaintext = Buffer.from(JSON.stringify(parseState(input.state, input.sessionId)));
+  const plaintext = Buffer.from(JSON.stringify(parseState(input.state, input.sessionId, input.accountId)));
   if (plaintext.length > MAX_PLAINTEXT_BYTES) return unavailable();
   const nonce = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", encryptionKey(), nonce);
@@ -129,7 +133,7 @@ export function decryptWebsiteAgentSessionState(input: {
     const decipher = createDecipheriv("aes-256-gcm", encryptionKey(), nonce);
     decipher.setAAD(aad(input));
     decipher.setAuthTag(tag);
-    return parseState(JSON.parse(Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8")), input.sessionId);
+    return parseState(JSON.parse(Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8")), input.sessionId, input.accountId);
   } catch { return unavailable(); }
 }
 
@@ -366,7 +370,7 @@ async function boundActionTransaction(tx: AttentionTransaction): Promise<void> {
 export async function claimWebsiteAgentAction(db: AttentionDatabase, input: {
   accountId: string; sessionId: string; actionId: string; authSessionId: string;
   expectedRevision: number; argumentsHash: string;
-}): Promise<{ claim: WebsiteAgentActionClaim | null; session: WebsiteAgentSessionView }> {
+}): Promise<{ claim: WebsiteAgentActionClaim | null; session: WebsiteAgentSessionView; proposal?: WebsiteAgentActionProposal; origin?: { originRunId: string; originRevision: number } }> {
   assertOwnerKey(input.accountId, input.sessionId);
   if (!UUID.test(input.actionId) || !UUID.test(input.authSessionId) || !/^[a-f0-9]{64}$/u.test(input.argumentsHash)) throw new WebsiteAgentSessionError("action_not_found");
   return db.transaction(async tx => {
@@ -379,6 +383,7 @@ export async function claimWebsiteAgentAction(db: AttentionDatabase, input: {
     if (!action || action.argumentsHash !== input.argumentsHash) throw new WebsiteAgentSessionError("action_not_found");
     if (action.authSessionId !== input.authSessionId) throw new WebsiteAgentSessionError("action_authentication_changed");
     // Replayed approval only reads the existing receipt. It never executes again.
+    if (action.prepared?.kind === "candidate_options") throw new WebsiteAgentSessionError("candidate_selection_required");
     if (action.status !== "pending") return { claim: null, session: view(row, state, now) };
     assertOpen(row, input.expectedRevision, now);
     if (state.pending || actionsFor(state).some(item => item.status === "executing")) throw new WebsiteAgentSessionError("session_conflict");
@@ -394,7 +399,8 @@ export async function claimWebsiteAgentAction(db: AttentionDatabase, input: {
     const next = withActions(state, actionsFor(state).map(item => item.id === action.id ? claimed : item));
     const updated = await replaceState(tx, row, next, now);
     return { claim: { accountId: input.accountId, sessionId: input.sessionId, actionId: action.id,
-      authSessionId: input.authSessionId, claimId, revision: updated.revision }, session: view(updated, next, now) };
+      authSessionId: input.authSessionId, claimId, revision: updated.revision }, session: view(updated, next, now), proposal: storedWebsiteAgentActionProposal(action),
+      origin: { originRunId: action.originRunId, originRevision: action.originRevision } };
   });
 }
 
@@ -459,6 +465,58 @@ export async function declineWebsiteAgentAction(db: AttentionDatabase, input: {
     if (!action) throw new WebsiteAgentSessionError("action_not_found");
     if (action.status !== "pending") return view(row, state, now);
     const next = withActions(state, actionsFor(state).map(item => item.id === action.id ? { ...item, status: "cancelled" } : item));
+    const updated = await replaceState(tx, row, next, now);
+    return view(updated, next, now);
+  });
+}
+
+/** Read the server-owned candidate proposal before source resolution. No lock survives this call. */
+export async function loadWebsiteAgentCandidateAction(db: AttentionDatabase, input: {
+  accountId: string; sessionId: string; actionId: string; authSessionId: string; expectedRevision: number; argumentsHash: string;
+}): Promise<StoredWebsiteAgentAction> {
+  assertOwnerKey(input.accountId, input.sessionId);
+  return db.transaction(async tx => {
+    await setAccountContext(tx, input.accountId);
+    const now = await databaseNow(tx), row = await findSession(tx, input.accountId, input.sessionId);
+    assertOpen(row, input.expectedRevision, now);
+    const state = stateFor(row), action = actionsFor(state).find(item => item.id === input.actionId);
+    if (state.pending || actionsFor(state).some(item => item.status === "executing")) throw new WebsiteAgentSessionError("session_conflict");
+    if (!action || action.argumentsHash !== input.argumentsHash || action.prepared?.kind !== "candidate_options" || action.status !== "pending") throw new WebsiteAgentSessionError("action_not_found");
+    if (action.authSessionId !== input.authSessionId) throw new WebsiteAgentSessionError("action_authentication_changed");
+    if (Date.parse(action.expiresAt) <= now.getTime()) throw new WebsiteAgentSessionError("action_expired");
+    return structuredClone(action);
+  });
+}
+
+/** Replace a choice card with a new exact-action ID. Selecting never executes collection effects. */
+export async function replaceWebsiteAgentCandidateAction(db: AttentionDatabase, input: {
+  accountId: string; sessionId: string; expectedRevision: number; original: StoredWebsiteAgentAction; proposal: WebsiteAgentActionProposal;
+  revalidate(tx: AttentionTransaction): Promise<boolean>;
+}): Promise<WebsiteAgentSessionView> {
+  assertOwnerKey(input.accountId, input.sessionId);
+  return db.transaction(async tx => {
+    await lockWebsiteAgentAccount(tx, input.accountId);
+    const now = await databaseNow(tx), row = await findSession(tx, input.accountId, input.sessionId);
+    assertOpen(row, input.expectedRevision, now);
+    const state = stateFor(row), original = actionsFor(state).find(item => item.id === input.original.id);
+    if (state.pending || actionsFor(state).some(item => item.status === "executing") || !original ||
+        original.status !== "pending" || original.prepared?.kind !== "candidate_options" ||
+        JSON.stringify(original) !== JSON.stringify(input.original)) throw new WebsiteAgentSessionError("session_conflict");
+    if (Date.parse(original.expiresAt) <= now.getTime()) throw new WebsiteAgentSessionError("action_expired");
+    if (!await input.revalidate(tx)) throw new WebsiteAgentSessionError("action_authentication_changed");
+    const proposal = parseWebsiteAgentActionProposal(input.proposal);
+    const prepared = proposal.prepared;
+    const choices = original.prepared;
+    if (proposal.toolName !== "attention_select_collection_candidate" || prepared?.kind !== "collection" || !prepared.pending ||
+        prepared.plan.accountId !== input.accountId || !choices.options.some(option => option.candidateId === prepared.pending!.candidateId) ||
+        prepared.pending.attemptId !== choices.attemptId || prepared.pending.pendingId !== choices.pendingId ||
+        prepared.pending.tokenHash !== choices.tokenHash || prepared.pending.vaultDigest !== choices.vaultDigest ||
+        prepared.pending.visibility !== choices.visibility || prepared.pending.expiresAt !== choices.expiresAt) throw new WebsiteAgentSessionError("action_not_found");
+    const nextAction = pendingWebsiteAgentAction({ proposal, authSessionId: original.authSessionId,
+      originRunId: original.originRunId, originRevision: original.originRevision, now });
+    // Selection cannot extend the original approval window or the candidate vault lease.
+    nextAction.expiresAt = new Date(Math.min(Date.parse(original.expiresAt), Date.parse(nextAction.expiresAt))).toISOString();
+    const next = withActions(state, actionsFor(state).map(item => item.id === original.id ? nextAction : item));
     const updated = await replaceState(tx, row, next, now);
     return view(updated, next, now);
   });

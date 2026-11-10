@@ -115,6 +115,37 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Accept content enrichment on a dedicated disposable database
+        env:
+          PGPASSWORD: postgres
+          ATTENTION_MIGRATION_DATABASE_NAME: attention_website_enrichment_test_ci
+          MIGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/attention_website_enrichment_test_ci
+          TEST_CONTENT_ENRICHMENT_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/attention_website_enrichment_test_ci
+        run: |
+          # This suite truncates its synthetic fixtures. Run it sequentially on
+          # its own pristine database, never the main, HTTP, or production DB.
+          # CREATE must fail if the database exists; do not reuse or drop it.
+          psql --host 127.0.0.1 --username postgres --dbname postgres \
+            --set ON_ERROR_STOP=1 \
+            --command "CREATE DATABASE attention_website_enrichment_test_ci" \
+            --command "COMMENT ON DATABASE attention_website_enrichment_test_ci IS 'attention-website-enrichment-acceptance-v1'"
+          psql --host 127.0.0.1 --username postgres --dbname attention_website_enrichment_test_ci \
+            --set ON_ERROR_STOP=1 <<'SQL'
+          DO $$ BEGIN
+            IF current_database() <> 'attention_website_enrichment_test_ci'
+              OR current_user <> 'postgres'
+              OR current_setting('server_version_num') !~ '^17[0-9]{4}$'
+              OR (SELECT shobj_description(oid, 'pg_database') FROM pg_database
+                  WHERE datname = current_database()) IS DISTINCT FROM 'attention-website-enrichment-acceptance-v1'
+              OR EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid
+                  WHERE c.relkind IN ('r', 'p') AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+                    AND n.nspname NOT LIKE 'pg_toast%') THEN
+              RAISE EXCEPTION 'Enrichment acceptance requires its fresh marked PostgreSQL 17 database';
+            END IF;
+          END $$;
+          SQL
+          pnpm exec vitest run apps/web/src/server/content-enrichment-service.test.ts
+
       - name: Accept real-cookie website agent HTTP lifecycle on an isolated database
         env:
           PGPASSWORD: postgres

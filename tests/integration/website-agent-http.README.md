@@ -5,7 +5,8 @@ Request/Response objects. It issues real opaque session cookies for synthetic
 accounts, resolves them through the actual authentication functions and full
 PostgreSQL schema, and uses the non-owner `attention_web_runtime` connection.
 No fake principal, auth function, store, route, or native Pi implementation is
-injected. Only external provider fetch is replaced by deterministic DeepSeek SSE;
+injected. External provider fetch is replaced by deterministic DeepSeek SSE, and
+authenticated Fetcher resolution/article responses use synthetic protocol fixtures;
 unexpected network destinations fail. No paid API call is made.
 
 Coverage includes anonymous/forged-cookie/bearer-only denial, Member eligibility,
@@ -15,6 +16,16 @@ and revocation during persistence before a final response. The final transaction
 test preserves a completed durable run while withholding its answer from a newly
 revoked caller. Test-only PostgreSQL triggers cause real auth revocation; they do
 not replace authentication or application logic.
+
+Enrichment coverage runs the actual native Pi source-read and enrichment tools,
+then validates the resulting human-only review, encrypted run-bound evidence,
+no raw article persistence, exact savepoint-bound apply, one-time replay, source
+consent/login blockers, changed-target rejection, final cookie revocation and
+outer-receipt rollback. Approval makes no model or Fetcher request. Core alias,
+restore, WeChat promotion, revoked-public-visibility and notification cases also
+live in the separately guarded `content-enrichment-service.test.ts` suite; run
+that suite sequentially on its disposable test database, never concurrently with
+other truncating suites.
 
 ## Safe execution
 
