@@ -8723,3 +8723,14 @@ body:has(.site-header--focused) {
     scroll-padding-inline: 16px;
   }
 }
+/* Website agent uses the existing form surface and semantic color tokens. */
+.website-agent-console__notice { color: var(--muted); }
+.website-agent-console__option { display: flex; align-items: flex-start; gap: 0.65rem; font-size: 0.875rem; line-height: 1.55; }
+.website-agent-console__option input { flex: 0 0 auto; margin-top: 0.3rem; }
+.website-agent-console__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+.website-agent-console__answer { white-space: pre-wrap; overflow-wrap: anywhere; }
+.website-agent-console__history { display: grid; gap: 0.75rem; }
+.website-agent-console__message { border: 1px solid var(--line); border-radius: var(--radius-control); padding: 0.75rem 1rem; overflow-wrap: anywhere; }
+.website-agent-console__message p { white-space: pre-wrap; margin-bottom: 0; }
+.website-agent-console__message--user { background: var(--surface-muted); }
+.website-agent-console__message small { color: var(--muted); }

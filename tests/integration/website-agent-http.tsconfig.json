@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    "jsx": "preserve"
+  },
+  "include": ["website-agent-http*.ts", "../../apps/web/next-env.d.ts"]
+}

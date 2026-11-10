@@ -274,6 +274,20 @@
       "when": 1788770822320,
       "tag": "0038_source_read_coordination",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1794290854112,
+      "tag": "0039_website_agent_budget",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1794293293969,
+      "tag": "0040_website_agent_sessions",
+      "breakpoints": true
     }
   ]
 }

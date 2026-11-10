@@ -143,7 +143,9 @@ async function boundedReaderJson(response: Response, limit: number): Promise<unk
 export async function resolveExternalUrl(
   url: string,
   sourceKind: SourceAdapterId,
+  options: { signal?: AbortSignal } = {},
 ): Promise<ResolvedExternalUrl> {
+  options.signal?.throwIfAborted();
   const configuration = fetcherConfiguration();
   let response: Response;
   try {
@@ -156,13 +158,15 @@ export async function resolveExternalUrl(
       },
       method: "POST",
       redirect: "error",
-      signal: AbortSignal.timeout(12_000),
+      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(12_000)]) : AbortSignal.timeout(12_000),
     });
   } catch {
+    options.signal?.throwIfAborted();
     throw new FetcherClientError("fetcher_unavailable");
   }
 
   const payload: unknown = await response.json().catch(() => undefined);
+  options.signal?.throwIfAborted();
   if (!response.ok) {
     const parsed = fetcherErrorSchema.safeParse(payload);
     const code = parsed.success ? parsed.data.error.code : "fetcher_failed";

@@ -2264,6 +2264,55 @@ export const collectionEvents = pgTable(
   (table) => [index("collection_events_collection_time_idx").on(table.collectionId, table.occurredAt)]
 );
 
+// Website-only native Pi session archives and pending prompts are encrypted here.
+// Native receipts are sanitized; never raw tool/source bodies, reasoning, or credentials.
+export const websiteAgentSessions = pgTable("website_agent_sessions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  revision: integer("revision").default(0).notNull(),
+  encryptedState: text("encrypted_state").notNull(),
+  activeRunId: uuid("active_run_id"),
+  activeRunDeadline: timestamp("active_run_deadline", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+  ...timestampColumns(),
+}, table => [
+  unique("website_agent_session_owner_unique").on(table.accountId, table.id),
+  index("website_agent_session_owner_updated_idx").on(table.accountId, table.updatedAt),
+  check("website_agent_session_revision", sql`${table.revision} >= 0`),
+  check("website_agent_session_ciphertext", sql`octet_length(${table.encryptedState}) BETWEEN 50 AND 1048576`),
+  check("website_agent_session_run_shape", sql`(${table.activeRunId} IS NULL AND ${table.activeRunDeadline} IS NULL) OR (${table.activeRunId} IS NOT NULL AND ${table.activeRunDeadline} IS NOT NULL AND ${table.closedAt} IS NULL)`),
+  pgPolicy("website_agent_session_owner_access", { for: "all", to: "attention_web_runtime",
+    using: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`,
+    withCheck: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid` }),
+]).enableRLS();
+
+// Cost reservations only: no prompts, answers, source text, model reasoning, or credentials.
+export const websiteAgentRuns = pgTable("website_agent_runs", {
+  sessionId: uuid("session_id"),
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  operationId: uuid("operation_id").notNull(),
+  requestFingerprint: char("request_fingerprint", { length: 64 }).notNull(),
+  budgetDate: date("budget_date").notNull(),
+  reservedCostMicrousd: integer("reserved_cost_microusd").notNull(),
+  outcome: varchar("outcome", { length: 16 }).default("reserved").notNull(),
+  deadline: timestamp("deadline", { withTimezone: true }).notNull(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, table => [
+  foreignKey({ name: "website_agent_run_session_owner_fk", columns: [table.accountId, table.sessionId],
+    foreignColumns: [websiteAgentSessions.accountId, websiteAgentSessions.id] }),
+  uniqueIndex("website_agent_operation_unique").on(table.accountId, table.operationId),
+  index("website_agent_account_budget_idx").on(table.accountId, table.budgetDate),
+  check("website_agent_reservation_positive", sql`${table.reservedCostMicrousd} BETWEEN 1 AND 100000000`),
+  check("website_agent_fingerprint_shape", sql`${table.requestFingerprint} ~ '^[0-9a-f]{64}$'`),
+  check("website_agent_outcome_shape", sql`(${table.outcome} = 'reserved' AND ${table.finishedAt} IS NULL) OR (${table.outcome} IN ('completed', 'failed', 'cancelled') AND ${table.finishedAt} IS NOT NULL)`),
+  pgPolicy("website_agent_run_owner_access", { for: "all", to: "attention_web_runtime",
+    using: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid`,
+    withCheck: sql`${table.accountId} = NULLIF(current_setting('app.account_id', true), '')::uuid` }),
+]).enableRLS();
+
 export const eventLedger = pgTable(
   "event_ledger",
   {

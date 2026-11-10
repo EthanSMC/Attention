@@ -115,6 +115,41 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Accept real-cookie website agent HTTP lifecycle on an isolated database
+        env:
+          PGPASSWORD: postgres
+          TEST_WEBSITE_AGENT_DISPOSABLE: attention-website-http-acceptance-v1
+          TEST_WEBSITE_AGENT_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/attention_website_http_test_ci
+          TEST_WEBSITE_AGENT_RUNTIME_DATABASE_URL: postgresql://attention_web_runtime:attention_ci_web_password@127.0.0.1:5432/attention_website_http_test_ci
+        run: |
+          # This dedicated database is never shared with the truncating suites.
+          # Refuse a pre-existing database instead of deleting or reusing it.
+          psql --host 127.0.0.1 --username postgres --dbname postgres \
+            --set ON_ERROR_STOP=1 \
+            --command "CREATE DATABASE attention_website_http_test_ci" \
+            --command "COMMENT ON DATABASE attention_website_http_test_ci IS 'attention-website-http-acceptance-v1'"
+          pnpm exec tsc --project tests/integration/website-agent-http.tsconfig.json
+          pnpm exec vitest run \
+            tests/integration/website-agent-http-guard.test.ts \
+            tests/integration/website-agent-http.test.ts
+
+      - name: Typecheck browser acceptance and install Chromium
+        run: |
+          pnpm exec tsc --project tests/e2e/website-agent.tsconfig.json
+          pnpm exec playwright install --with-deps chromium
+
+      - name: Accept website agent console in sandboxed Chromium
+        run: pnpm exec playwright test --config tests/e2e/website-agent.playwright.config.ts
+
+      - name: Preserve website agent browser acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: website-agent-browser-acceptance
+          path: output/playwright/website-agent-console/
+          retention-days: 7
+          if-no-files-found: warn
+
       - name: Build all production artifacts
         run: pnpm build
 

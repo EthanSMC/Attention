@@ -12,6 +12,27 @@ Attention 不试图用 AI 生产更多内容，而是让人的判断成为过滤
 
 ## 当前版本
 
+当前仓库应用版本为 **0.3.23-rc.1**，仍是未发布、未部署的候选版本。
+根目录 [`release.json`](release.json) 是应用版本的唯一来源，根 `package.json`
+与它保持一致。它延续 Attention 既有的 0.3.x 历史，不覆盖独立保留的 0.3.22
+集成候选，也不改变已恢复的 CLI/runtime **0.3.21**、Skill **1.10.0** 或
+工具合同 **1.7.0**。Web 私有包的 `0.1.0`、Pi SDK `0.85.1`、原生会话格式
+`3` 和应用存储封装版本 `1` 都是独立的版本标识。
+
+`GET /api/health` 从静态打包的版本文件返回
+`{"status":"ok","version":"0.3.23-rc.1"}`，不返回主机、环境配置或凭据。
+该接口只表示进程存活，不证明数据库迁移完成或功能已通过验收。
+应用版本不会替换现有的 Git SHA12 镜像/部署 ID。版本来源、0038 → 0039 → 0040
+迁移校验和与发布门槛见 [版本历史](docs/releases/2026-11-10-attention-version-history.md)、
+[发布映射](docs/releases/2026-11-10-application-deployment-mapping.md) 和
+[`CHANGELOG.md`](CHANGELOG.md)。
+
+此 RC 在既有第一期基线之后新增网站 Agent：它复用个人 Agent 的 Attention
+工具与 Core，使用 DeepSeek V4.1 Flash 和 Pi 原生会话管理，并按登录账号隔离
+持久会话。功能默认关闭；多用户开放范围、验收结果与待完成门槛见
+[`docs/website-agent-architecture.md`](docs/website-agent-architecture.md)。
+下文的“第一期不托管 Agent”描述原有首发范围，不撤销本次已明确要求的新增范围。
+
 Attention 是一个“人筛选，AI 整理”的收藏与公开信息层。当前仓库已经形成账号体系首版：Guest 公开预览、邮箱验证码注册/登录、注册即 Member、Filter 公开供给、OAuth + PKCE、API Key、Hosted MCP、云同步、Consumer 裂变、Filter 年卡兑换和续费积分账本都执行真实的服务端身份与权限判断。第一期不提供官方 Hosted Agent 或 Hosted Channel；用户使用自己的 Agent，Attention 交付 Skill、MCP、OAuth 与 Local Channel Runtime 基础设施。
 
 第一期范围以 [`docs/first-release-scope.md`](docs/first-release-scope.md) 为唯一口径。系统架构与 Attention MCP 见 [`docs/architecture.md`](docs/architecture.md)；本地 Agent、Desktop 交互与 iLink Runtime 边界见 [`Local Agent Channel Runtime 设计`](docs/superpowers/specs/2026-08-07-local-agent-channel-runtime-design.md)。当前账号、注册 Member、OAuth、云同步和增长机制的产品决策见 [`账号与会员设计`](docs/superpowers/specs/2026-08-04-attention-identity-membership-growth-design.md)。Web 视觉 token、组件和交互规则见 [`docs/design-system.md`](docs/design-system.md)；机器可读设计基线见 [`DESIGN.md`](DESIGN.md)，产品上下文见 [`PRODUCT.md`](PRODUCT.md)，设置页审查见 [`docs/settings-design-audit.md`](docs/settings-design-audit.md)。
@@ -105,6 +126,13 @@ Member 与 Filter 可在 `/account/digests` 订阅 Domain 并设置 IANA 时区�
 
 ## Agent、MCP 与同步
 
+网页 Agent 内测实现位于 `/agent/website`，使用原生 Pi Agent Core 与 DeepSeek
+V4.1 Flash，并与个人 Agent 的 MCP 接入共用业务工具与权限校验。入口默认关闭，
+启用后可选择向所有当前有效会员开放（`members`），或按账号白名单开放
+（`allowlist`，安全默认值）；两种模式都保留身份、会员权益与会话归属校验。
+当前实现、费用设置与上线前验收缺口见
+[`Website Agent 架构`](docs/website-agent-architecture.md)。
+
 公开接入文档位于 `/doc`，并为 OpenClaw、Hermes、Codex、Claude Code、
 WorkBuddy 和 DeepSeek Harness 提供独立 URL。`/agent` 提供本地 Agent 的一键接入提示词和配置流程；登录后的
 `/account/connections` 只管理 OAuth 授权状态和 API Key，不再铺开安装命令。支持浏览器
@@ -135,7 +163,7 @@ WorkBuddy 的宿主内微信状态或尚未交付的 Codex/Claude inbound compan
 
 公开 Skill 位于 `/skills/attention/SKILL.md`，不会嵌入 token。`/mcp` 与 `/api/sync` 只接受 OAuth/API Key Bearer credential；网站 Cookie 不能冒充 Agent credential。OAuth 客户端必须按 RFC 8707 在授权请求和 token 请求（包括刷新）中发送同一个 `resource`：MCP 使用 `ATTENTION_MCP_PUBLIC_URL`（默认 `${NEXT_PUBLIC_APP_URL}/mcp`），同步使用 `ATTENTION_SYNC_PUBLIC_URL`（默认 `${NEXT_PUBLIC_APP_URL}/api/sync`），本地 Channel Runtime 使用 `ATTENTION_CHANNEL_RUNTIME_PUBLIC_URL`（默认 `${NEXT_PUBLIC_APP_URL}/api/runtime`）且只接受 OAuth。三个 resource 的 token 不能交叉使用。Runtime 的短期配对码只以 `ATTENTION_CHANNEL_PAIRING_SECRET` 派生的 HMAC 落库；该 secret 只注入 Web 服务端，必须与 Auth、旧 Channel 和 Adapter secret 独立。首次本地历史同步必须标记 `historical=true`，服务端会强制作为私密收藏导入。
 
-公开 Tool Contract 当前为 `1.3.0`：包含账号与会员状态读取、收藏、候选选择、处理状态、个人列表、可见性修改、公开流、Member 搜索、内容举报、Filter 小法庭案件/投票与日报读写 14 个工具。小法庭投票只接受当前有效 Filter，并强制逐案逐决定传入 `explicit_confirmation: true`；Skill 禁止模型自行推断确认。收藏调用必须提供由客户端生成并在重试间复用的 `idempotency_key`；一次性候选选择明确标记为非幂等。工具调用审计只记录受限的版本、耗时、稳定状态和 HMAC 工作流指纹，不记录 URL、query、分享文本、正文、token 或一次性凭证。
+公开 Tool Contract 当前为 `1.7.0`：包含账号与会员状态读取、收藏、来源读取、整理结果提交、候选选择、处理状态、个人列表、可见性修改、公开流、Member 搜索、内容举报、Filter 小法庭案件/投票与日报读写 16 个工具。小法庭投票只接受当前有效 Filter，并强制逐案逐决定传入 `explicit_confirmation: true`；Skill 禁止模型自行推断确认。收藏调用必须提供由客户端生成并在重试间复用的 `idempotency_key`；一次性候选选择明确标记为非幂等。工具调用审计只记录受限的版本、耗时、稳定状态和 HMAC 工作流指纹，不记录 URL、query、分享文本、正文、token 或一次性凭证。
 
 生产构建会把 Worker 及其工作区依赖打包为单一 Node.js 产物，运行时不依赖 `tsx`：
 
@@ -182,6 +210,7 @@ ATTENTION_WORKER_DATABASE_ROLE=attention_worker_runtime
 ## 验证
 
 ```bash
+pnpm version:check
 pnpm typecheck
 TEST_DATABASE_URL=postgresql:///attention_test pnpm test
 pnpm lint

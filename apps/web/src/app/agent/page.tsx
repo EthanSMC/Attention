@@ -7,6 +7,7 @@ import { buildAgentConnectionPrompt } from "../../server/agent-connection-prompt
 import { projectAgentConnections } from "../../server/agent-connection-projection";
 import { getWebDatabase } from "../../server/db";
 import { getPagePrincipal } from "../../server/session";
+import { websiteAgentAvailableFor } from "../../server/website-agent-config";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +63,7 @@ export default async function AgentPage() {
         }
         supportedAgents={supportedAgents}
         wechatBindingStatus={connectionOverview?.wechatBindingStatus ?? "signed_out"}
+        websiteAgentAvailable={principal?.isMember === true && websiteAgentAvailableFor(principal.accountId)}
       />
     </div>
   );

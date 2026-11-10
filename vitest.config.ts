@@ -14,6 +14,7 @@ export default defineConfig({
     alias: {
       "@attention/fetcher/url-policy": `${root}apps/fetcher/src/url-policy.ts`,
       "@attention/reader-browser/protocol": `${root}apps/reader-browser/src/protocol.ts`,
+      "@attention/website-agent": `${root}packages/website-agent/src/index.ts`,
       "@attention/ai": `${root}packages/ai/src/index.ts`,
       "@attention/auth": `${root}packages/auth/src/index.ts`,
       "@attention/collector": `${root}packages/collector/src/index.ts`,

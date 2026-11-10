@@ -69,7 +69,20 @@ const attemptLeaseMilliseconds = 5 * 60 * 1_000;
 type CollectionPrincipal = Pick<
   SessionPrincipal,
   "accountId" | "isFilter" | "isMember"
->;
+> & {
+  signal?: AbortSignal;
+  revalidate?: () => Promise<{ accountId: string; scopes: readonly string[]; isFilter: boolean; isMember: boolean } | null>;
+};
+
+export async function assertCollectionAuthority(principal: CollectionPrincipal, visibility: "public" | "private"): Promise<void> {
+  principal.signal?.throwIfAborted();
+  if (principal.revalidate) {
+    const current = await principal.revalidate();
+    principal.signal?.throwIfAborted();
+    if (!current || current.accountId !== principal.accountId || !current.scopes.includes("collection:write") ||
+        (visibility === "public" && !current.isFilter)) throw new CollectionServiceError("permission_revoked", 403);
+  }
+}
 
 export const collectRequestSchema = z
   .object({
@@ -301,7 +314,8 @@ export function validateAgentResolvedPublicUrl(rawUrl: string): string | null {
   return parsed.href;
 }
 
-async function resolveCandidate(rawUrl: string): Promise<ResolvedCandidate | null> {
+export async function resolveCandidate(rawUrl: string, options: { signal?: AbortSignal } = {}): Promise<ResolvedCandidate | null> {
+  options.signal?.throwIfAborted();
   let currentUrl = rawUrl;
   let match = classifySourceUrl(currentUrl);
   if (!match) return null;
@@ -331,14 +345,19 @@ async function resolveCandidate(rawUrl: string): Promise<ResolvedCandidate | nul
   }
 
   const initialSource = match.adapter.id;
+  const initialMatch = match;
   const initialIdentity =
     match.adapter.identity(rawUrl) ?? genericWebAdapter.identity(rawUrl);
   let redirectChain: string[];
   try {
-    const resolved = await resolveExternalUrl(currentUrl, initialSource);
+    const resolved = options.signal
+      ? await resolveExternalUrl(currentUrl, initialSource, { signal: options.signal })
+      : await resolveExternalUrl(currentUrl, initialSource);
+    options.signal?.throwIfAborted();
     currentUrl = resolved.finalUrl;
     redirectChain = resolved.redirectChain;
   } catch (error) {
+    options.signal?.throwIfAborted();
     if (error instanceof FetcherClientError) {
       const fallback = fallbackDirectCandidate(currentUrl, match);
       if (fallback) {
@@ -375,6 +394,65 @@ async function resolveCandidate(rawUrl: string): Promise<ResolvedCandidate | nul
     )
   ) {
     throw new CandidateUnsafeError("dangerous_query");
+  }
+  // A login gate does not invalidate the note. Shortlinks lose their note
+  // identity during resolution, but the official login URL retains it in
+  // redirectPath. Recover only a validated public Xiaohongshu note URL.
+  if (
+    initialSource === "xiaohongshu" &&
+    parsedResolved.protocol === "https:" &&
+    parsedResolved.port === "" &&
+    (parsedResolved.hostname === "xiaohongshu.com" ||
+      parsedResolved.hostname === "www.xiaohongshu.com") &&
+    /^\/login\/?$/u.test(parsedResolved.pathname)
+  ) {
+    if (initialMatch.classification.kind === "content") {
+      const fallback = fallbackDirectCandidate(rawUrl, initialMatch);
+      return fallback ? { ...fallback, redirectChain } : null;
+    }
+    if (initialMatch.classification.kind !== "shortlink") return null;
+    const redirectPaths = parsedResolved.searchParams.getAll("redirectPath");
+    if (redirectPaths.length === 0) throw new CandidatePendingError(initialSource);
+    if (redirectPaths.length !== 1) return null;
+    const redirectPath = redirectPaths[0];
+    if (!redirectPath) return null;
+    const noteUrl = parseHttpUrl(redirectPath.startsWith("/")
+      ? `${parsedResolved.origin}${redirectPath}` : redirectPath);
+    // Parsing rejects credentials and strips only the scheme's default port.
+    if (
+      !noteUrl || !["http:", "https:"].includes(noteUrl.protocol) ||
+      noteUrl.port !== "" ||
+      (noteUrl.hostname !== "xiaohongshu.com" &&
+        noteUrl.hostname !== "www.xiaohongshu.com") ||
+      !/^\/(?:explore|discovery\/item)\/[A-Za-z0-9_-]{6,128}\/?$/u.test(noteUrl.pathname)
+    ) return null;
+    const noteMatch = classifySourceUrl(noteUrl);
+    if (noteMatch?.adapter.id !== "xiaohongshu" ||
+      noteMatch.classification.kind !== "content") return null;
+    if (dangerousForAdapter(noteUrl.href, "xiaohongshu", "content")) {
+      throw new CandidateUnsafeError("dangerous_query");
+    }
+    // The official HTTPS login page can embed an HTTP note URL. Treat it
+    // only as identity metadata; after validation, construct HTTPS access
+    // without requesting the embedded address or relaxing Fetcher policy.
+    noteUrl.protocol = "https:";
+    const fallback = fallbackDirectCandidate(noteUrl.href, noteMatch);
+    if (!fallback) return null;
+    return {
+      ...fallback,
+      aliasIdentities:
+        initialIdentity && initialIdentity.dedupeKey !== fallback.identity.dedupeKey
+          ? [initialIdentity]
+          : [],
+      redirectChain,
+      selectedUrl: rawUrl,
+    };
+  }
+  // A known shortlink that has not resolved is temporarily unreadable, not
+  // an invalid user URL. Do not create content from the shortlink landing page.
+  if (initialMatch.classification.kind === "shortlink" &&
+    match.classification.kind === "shortlink" && match.adapter.id === initialSource) {
+    throw new CandidatePendingError(initialSource);
   }
   if (
     match.classification.kind === "download" ||
@@ -775,9 +853,11 @@ async function establishCollection(
   visibility: "public" | "private",
   pendingSelection?: PendingSelectionClaim,
 ): Promise<CollectorResponse> {
+  await assertCollectionAuthority(principal, visibility);
   const now = new Date();
   const established = await db.transaction(async (tx) => {
     await setAccountContext(tx, principal.accountId);
+    principal.signal?.throwIfAborted();
 
     if (pendingSelection) {
       const [claimedCandidateSet] = await tx
@@ -1063,6 +1143,8 @@ async function establishCollection(
     if (!updatedAttempt) {
       throw new CollectionServiceError("attempt_lease_lost", 409);
     }
+    // Cancellation before the transaction finishes rolls every write back.
+    principal.signal?.throwIfAborted();
     return { collectionResult, contentResult, status };
   });
 
@@ -1100,6 +1182,7 @@ export async function collectFromWeb(
 ): Promise<CollectorResponse> {
   const input = collectRequestSchema.parse(rawInput);
   ensurePrincipal(principal, input.visibility);
+  await assertCollectionAuthority(principal, input.visibility);
   const { attempt, fresh } = await beginAttempt(db, principal, input);
   if (!fresh) return replayAttempt(db, principal, attempt);
 
@@ -1122,8 +1205,10 @@ export async function collectFromWeb(
 
   const resolved = new Map<string, ResolvedCandidate>();
   for (const candidate of extracted) {
+    await assertCollectionAuthority(principal, input.visibility);
     try {
-      const result = await resolveCandidate(candidate.url);
+      const result = await resolveCandidate(candidate.url, principal.signal ? { signal: principal.signal } : {});
+      await assertCollectionAuthority(principal, input.visibility);
       if (result) resolved.set(result.identity.dedupeKey, result);
     } catch (error) {
       if (error instanceof CandidateUnsafeError) {
@@ -1143,6 +1228,7 @@ export async function collectFromWeb(
   }
 
   const candidates = [...resolved.values()];
+  await assertCollectionAuthority(principal, input.visibility);
   if (candidates.length === 0) {
     return simpleResponse(db, attempt, {
       errorCode: "non_content_target",

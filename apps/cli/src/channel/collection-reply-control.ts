@@ -38,6 +38,9 @@ export type CollectionReplyControl =
       readonly kind: "fixed";
       readonly reply:
         | "未保存：链接无效。"
+        | "未保存：没有找到 HTTP(S) 内容链接。"
+        | "未保存：未识别到可收藏的内容页，请提供笔记或文章的分享链接。"
+        | "未保存：暂时无法识别这个链接。"
         | "未保存：链接未通过安全检查。"
         | "链接仍在解析，收藏尚未完成。"
         | "收藏结果无法确认，请稍后重试。"
@@ -183,7 +186,16 @@ export function applyAttentionToolResult(
       return UNCONFIRMED_COLLECTION_REPLY;
     }
     if (payload.status === "invalid") {
-      return { kind: "fixed", reply: "未保存：链接无效。" };
+      switch (payload.error_code) {
+        case "no_content_link":
+          return { kind: "fixed", reply: "未保存：没有找到 HTTP(S) 内容链接。" };
+        case "non_content_target":
+          return { kind: "fixed", reply: "未保存：未识别到可收藏的内容页，请提供笔记或文章的分享链接。" };
+        case "invalid_url":
+          return { kind: "fixed", reply: "未保存：链接无效。" };
+        default:
+          return { kind: "fixed", reply: "未保存：暂时无法识别这个链接。" };
+      }
     }
     if (payload.status === "unsafe") {
       return { kind: "fixed", reply: "未保存：链接未通过安全检查。" };

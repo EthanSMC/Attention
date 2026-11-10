@@ -74,7 +74,7 @@ export function getAttentionPublicToolNames(): readonly AttentionToolName[] {
 export interface AttentionToolCaller {
   clientId: string | null;
   credentialId: string;
-  credentialKind: "oauth" | "pat";
+  credentialKind: "oauth" | "pat" | "session";
   entrypoint: "hosted_agent" | "hosted_mcp";
 }
 
@@ -1062,7 +1062,11 @@ export function createAttentionToolRegistry(
           return insufficientScope("ai:search");
         }
         try {
-          const result = await core.retrieveForAgent(
+          // The website Agent already owns the bounded model loop. Search must
+          // not start an unmetered second provider or change data recipients.
+          const result = context.caller.entrypoint === "hosted_agent"
+            ? await core.retrieveForAgent(context.getDatabase(), context.accountId, query, { generatedAnswer: false })
+            : await core.retrieveForAgent(
             context.getDatabase(),
             context.accountId,
             query,

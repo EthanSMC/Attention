@@ -1,6 +1,6 @@
 {
   "name": "attention",
-  "version": "0.1.0",
+  "version": "0.3.23-rc.1",
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
@@ -9,6 +9,7 @@
     "node": ">=24.0.0"
   },
   "scripts": {
+    "version:check": "vitest run tests/release-version.test.ts",
     "agent-installations:check": "pnpm --filter @attention/cli exec tsx ../../scripts/sync-agent-installation-artifacts.ts --check",
     "agent-installations:sync": "pnpm --filter @attention/cli exec tsx ../../scripts/sync-agent-installation-artifacts.ts",
     "cli-artifact:check": "pnpm --filter @attention/cli build && pnpm --filter @attention/cli exec tsx ../../scripts/sync-attention-cli-artifact.ts --check",

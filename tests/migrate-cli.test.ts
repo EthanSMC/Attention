@@ -16,7 +16,8 @@ describe("migration CLI", () => {
     const result = spawnSync(
       process.execPath,
       [
-        resolve(root, "packages/db/node_modules/tsx/dist/cli.mjs"),
+        "--import",
+        resolve(root, "packages/db/node_modules/tsx/dist/loader.mjs"),
         resolve(root, "packages/db/src/migrate-cli.ts"),
       ],
       { encoding: "utf8", env },

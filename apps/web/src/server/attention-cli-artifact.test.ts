@@ -25,20 +25,29 @@ describe("public Attention CLI artifact", () => {
       new URL("../../public/cli", import.meta.url),
     ).sort();
 
-    expect(publicCliFiles).toEqual([
+    expect(publicCliFiles).toEqual([...new Set([
       "attention-0.3.17.mjs",
       "attention-0.3.18.mjs",
       "attention-0.3.19.mjs",
+      "attention-0.3.20.mjs",
+      "attention-0.3.21.mjs",
       `attention-${manifest.version}.mjs`,
       "manifest.json",
       "permissions",
-    ]);
+    ])].sort());
     expect(createHash("sha256").update(readFileSync(new URL("../../public/cli/attention-0.3.17.mjs", import.meta.url))).digest("hex")).toBe("4fd5f4d07fffb280402c9bf2418c3b18ac3a53d970712551bc8f638f88f6fd5d");
     expect(createHash("sha256").update(readFileSync(new URL("../../public/cli/attention-0.3.18.mjs", import.meta.url))).digest("hex")).toBe("67df5cbb311df339ca560fee2ee063f21192ac441b0477990d069f8ab45eb23e");
   });
 
   it("keeps the 0.3.19 release immutable", () => {
     expect(createHash("sha256").update(readFileSync(new URL("../../public/cli/attention-0.3.19.mjs", import.meta.url))).digest("hex")).toBe("6385dea175013805234f2a0bcfe16b711f4345bc7cc1316760fa046d78e7c3d6");
+  });
+
+  it.each([
+    ["0.3.20", "2c28822d96130744953d779e1ce50d725c9b976a471fcf2babe45a78860fd2b3"],
+    ["0.3.21", "47ec8b0f7b7921d13979400a8b14a712301e737a4291ae91e3ceef1ae9052117"],
+  ])("keeps the verified %s release immutable", (version, sha256) => {
+    expect(createHash("sha256").update(readFileSync(new URL(`../../public/cli/attention-${version}.mjs`, import.meta.url))).digest("hex")).toBe(sha256);
   });
 
   it("publishes the strict permission profile matching the manifest fingerprint",()=>{
