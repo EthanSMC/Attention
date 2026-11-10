@@ -1,0 +1,9 @@
+{
+  "extends": "./website-agent.tsconfig.json",
+  "include": [
+    "website-agent-production.spec.ts", "website-agent-production.playwright.config.ts",
+    "website-agent-offline-provider.test.ts",
+    "fixtures/website-agent-production-fixture.ts", "fixtures/website-agent-production-preload.ts",
+    "fixtures/website-agent-offline-provider.ts"
+  ]
+}

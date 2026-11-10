@@ -159,6 +159,34 @@ jobs:
       - name: Build all production artifacts
         run: pnpm build
 
+      - name: Accept production standalone website agent over loopback HTTP
+        env:
+          PGPASSWORD: postgres
+          TEST_WEBSITE_AGENT_DISPOSABLE: attention-website-http-acceptance-v1
+          TEST_WEBSITE_AGENT_PRODUCTION: attention-website-production-acceptance-v1
+          TEST_WEBSITE_AGENT_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/attention_website_http_test_production_ci
+          TEST_WEBSITE_AGENT_RUNTIME_DATABASE_URL: postgresql://attention_web_runtime:attention_ci_web_password@127.0.0.1:5432/attention_website_http_test_production_ci
+        run: |
+          # A separate pristine database, never the main or route-suite database.
+          # Fail if it already exists; no truncation, reuse, or drop operation.
+          psql --host 127.0.0.1 --username postgres --dbname postgres \
+            --set ON_ERROR_STOP=1 \
+            --command "CREATE DATABASE attention_website_http_test_production_ci" \
+            --command "COMMENT ON DATABASE attention_website_http_test_production_ci IS 'attention-website-http-acceptance-v1'"
+          pnpm exec tsc --project tests/e2e/website-agent-production.tsconfig.json
+          pnpm exec vitest run tests/e2e/website-agent-offline-provider.test.ts
+          pnpm exec playwright test --config tests/e2e/website-agent-production.playwright.config.ts
+
+      - name: Preserve production website agent acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: website-agent-production-acceptance
+          # Production fixture traces/videos are disabled; scoped synthetic evidence only.
+          path: output/playwright/website-agent-production/
+          retention-days: 7
+          if-no-files-found: warn
+
       - name: Render the isolated staging Compose model
         run: |
           install -d -m 0700 /tmp/attention-staging-ci

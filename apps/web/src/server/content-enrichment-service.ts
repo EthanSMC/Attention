@@ -310,7 +310,7 @@ async function resolveEnrichmentTarget(
     await tx
       .update(contents)
       .set({
-        firstPublicAt: sql`coalesce(${contents.firstPublicAt}, ${now})`,
+        firstPublicAt: sql`coalesce(${contents.firstPublicAt}, ${now.toISOString()}::timestamptz)`,
         updatedAt: now,
         visibilityVersion: sql`${contents.visibilityVersion} + 1`,
       })

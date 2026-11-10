@@ -1073,7 +1073,7 @@ async function establishCollection(
         await tx
           .update(contents)
           .set({
-            firstPublicAt: sql`coalesce(${contents.firstPublicAt}, ${publicSince ?? now})`,
+            firstPublicAt: sql`coalesce(${contents.firstPublicAt}, ${(publicSince ?? now).toISOString()}::timestamptz)`,
             updatedAt: now,
             visibilityVersion: sql`${contents.visibilityVersion} + 1`,
           })
