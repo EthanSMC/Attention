@@ -2638,7 +2638,9 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
         revalidate: outsideAuthority, revalidateInTransaction: finalAuthority }, {
         raw_input: "https://example.org/website-final-authority", visibility: "private", idempotency_key: "website-final-authority",
       })).rejects.toMatchObject({ code: "permission_revoked" }));
-      expect(outsideAuthority).toHaveBeenCalledTimes(5);
+      // Before the attempt; resolver entry/before/after resolution; after resolution;
+      // and before the effect transaction. Final authority remains transaction-bound.
+      expect(outsideAuthority).toHaveBeenCalledTimes(6);
       expect(finalAuthority).toHaveBeenCalledTimes(1);
       expect(await businessSnapshot()).toEqual(before);
       expect(await resolveSession(handle.db, redeemed.session.token, { touch: false })).toBeNull();
