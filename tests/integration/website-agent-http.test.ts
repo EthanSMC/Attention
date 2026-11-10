@@ -234,7 +234,8 @@ describe.skipIf(!enabled)("website agent authenticated HTTP on isolated PostgreS
     const next: WebsiteAgentSessionState = { ...stored.state, actions };
     const encrypted = encryptWebsiteAgentSessionState({ accountId: actor.accountId, sessionId: id, revision: stored.row.revision, state: next });
     const lease = kind === "lease_expired" ? new Date(current - 1_000) : stored.row.active_run_deadline;
-    await owner.sql`UPDATE website_agent_sessions SET encrypted_state=${encrypted},active_run_deadline=${lease}
+    const leaseTimestamp = lease instanceof Date ? lease.toISOString() : lease;
+    await owner.sql`UPDATE website_agent_sessions SET encrypted_state=${encrypted},active_run_deadline=${leaseTimestamp}::timestamptz
       WHERE id=${id} AND account_id=${actor.accountId} AND revision=${stored.row.revision}`;
   }
   async function contentFixture(actor: Member, visibility: "private" | "public") {
@@ -485,9 +486,9 @@ describe.skipIf(!enabled)("website agent authenticated HTTP on isolated PostgreS
     expect(response.status).toBe(200);
     const completed = ((await response.json()) as SessionBody).session;
     await expectReceipt(actor, completed);
-    expect((await owner.sql`SELECT visibility,public_since FROM collections WHERE id=${target.collectionId}`)[0])
-      .toMatchObject({ visibility: "public", public_since: expect.any(Date) });
-    expect((await owner.sql`SELECT first_public_at FROM contents WHERE id=${target.contentId}`)[0]?.first_public_at).toBeInstanceOf(Date);
+    expect((await owner.sql`SELECT visibility,public_since IS NOT NULL AS published FROM collections WHERE id=${target.collectionId}`)[0])
+      .toMatchObject({ visibility: "public", published: true });
+    expect((await owner.sql`SELECT first_public_at IS NOT NULL AS published FROM contents WHERE id=${target.contentId}`)[0]?.published).toBe(true);
     expect((await owner.sql`SELECT count(*)::int AS n FROM collection_events WHERE collection_id=${target.collectionId} AND event_type='made_public'`)[0]?.n).toBe(1);
     expect((await approve(actor, proposed)).status).toBe(200);
     expect((await owner.sql`SELECT count(*)::int AS n FROM collection_events WHERE collection_id=${target.collectionId} AND event_type='made_public'`)[0]?.n).toBe(1);
