@@ -13,6 +13,9 @@ export default defineConfig({
   reporter: [["list"], ["junit", { outputFile: "output/playwright/website-agent-console/results.xml" }]],
   use: {
     browserName: "chromium",
+    // Ubuntu's existing Chrome profile covers the official installed binary.
+    // Never change host security or fall back to a sandbox-disabled launch.
+    ...(process.env.CI ? { channel: "chrome" } : {}),
     viewport: { width: 1280, height: 900 },
     locale: "zh-CN",
     timezoneId: "UTC",

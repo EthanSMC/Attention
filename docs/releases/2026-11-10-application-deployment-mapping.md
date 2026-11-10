@@ -16,7 +16,7 @@ This record does not approve a tag, push, publication, migration or deployment.
 | Retained CLI/runtime | `0.3.21`, unchanged package, runtime constant and public artifact manifest. |
 | Retained CLI artifact | `apps/web/public/cli/attention-0.3.21.mjs`, SHA-256 `47ec8b0f7b7921d13979400a8b14a712301e737a4291ae91e3ceef1ae9052117`. |
 | Retained Skill / tool contract | `1.10.0` / `1.7.0`. No synchronization to the application SemVer. |
-| Website-agent dependency/storage versions | Pi SDK `0.85.1`; native session format `3`; application storage envelope `1`. These are not Attention release versions. |
+| Website-agent dependency/storage versions | Pi SDK `0.85.1`; native session format `3`; application storage envelope `1` / `2` (backward compatible). These are not Attention release versions. |
 | Independent integration candidate | `0.3.22`, unpublished, snapshot provenance `c1dbc27b5562579660c90de91980dc6ba2c07506`, based on `c0628d25e9fc573310e216304bf0a37c17ac780e`. Its browser/private-reading features are not imported here. |
 
 The candidate snapshot's commit label is provenance, not proof that every

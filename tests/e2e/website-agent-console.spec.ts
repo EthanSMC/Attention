@@ -2,11 +2,14 @@ import { expect, test as base } from "@playwright/test";
 import type { Page } from "@playwright/test";
 
 import {
+  actionPath,
   fetchObservations,
+  fixtureTime,
   origin,
   pendingSession,
   queryPath,
   queryReply,
+  reviewedAction,
   session,
   sessionPath,
   SyntheticWebsiteApi,
@@ -17,11 +20,23 @@ const test = base.extend<{ api: SyntheticWebsiteApi }>({
     const api = new SyntheticWebsiteApi();
     const errors: string[] = [];
     page.on("pageerror", error => errors.push(error.message));
+    // Fixed Date.now keeps review deadlines deterministic without freezing timers.
+    await page.clock.setFixedTime(fixtureTime);
     await api.install(page);
     await use(api);
     await page.unrouteAll({ behavior: "ignoreErrors" });
     expect(api.unexpectedRequests, "Every request must stay in the synthetic fixture").toEqual([]);
     expect(errors, "The real component must not throw in the browser").toEqual([]);
+    for (const call of api.calls.filter(item => item.method === "POST" && /\/actions\//u.test(item.path))) {
+      const approve = call.path.endsWith("/approve");
+      expect(Object.keys(call.body ?? {}).sort(), "No decision or replay may send replacement arguments").toEqual(
+        approve ? ["approval", "expected_arguments_hash", "expected_revision"] : ["expected_revision"],
+      );
+      if (approve) {
+        expect(call.body?.approval).toBe(true);
+        expect(call.body?.expected_arguments_hash).toMatch(/^[a-f0-9]{64}$/u);
+      }
+    }
   },
 });
 
@@ -51,6 +66,14 @@ async function watchForStaleText(page: Page, text: string) {
     });
     observer.observe(root, { childList: true, subtree: true, characterData: true });
   }, text);
+}
+
+function reviewCard(page: Page, title: string) {
+  return page.getByRole("region", { name: `操作确认：${title}`, exact: true });
+}
+
+async function settleBrowserRender(page: Page) {
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 }
 
 test("creates an account session and requires explicit consent before submitting", async ({ page, api }) => {
@@ -289,6 +312,382 @@ test("aborts an in-flight poll and removes its interval on unmount", async ({ pa
   expect(api.count("GET", `${sessionPath}/${view.id}`)).toBe(reads);
   await expect(page.locator("#fixture-root")).toBeEmpty();
 });
+
+test("renders every reviewed detail and consequence as literal text and requires its own explicit checkbox", async ({ page, api }) => {
+  const action = reviewedAction(1, { review: {
+    title: "Synthetic exact review",
+    details: [
+      { label: "目标 ID", value: "synthetic-target-001" },
+      { label: "全部参数", value: 'visibility=private\nannotation="Keep this exact value"' },
+      { label: "原始文本", value: '<img src="https://invalid.example.test/tracker" onerror="alert(1)">' },
+    ],
+    consequences: ["Only synthetic-target-001 will change.", "This choice cannot undo any previous action."],
+  } });
+  api.seed([session(1, { actions: [action] })]);
+  await open(page);
+  const card = reviewCard(page, action.review.title);
+  await expect(card.getByRole("heading", { level: 3 })).toHaveText(action.review.title);
+  expect(await card.locator("dt").allTextContents()).toEqual(action.review.details.map(detail => detail.label));
+  expect(await card.locator("dd").allTextContents()).toEqual(action.review.details.map(detail => detail.value));
+  expect(await card.getByRole("listitem").allTextContents()).toEqual(action.review.consequences);
+  await expect(card.locator("img, script")).toHaveCount(0);
+  await expect(card.getByText("待确认", { exact: true })).toBeVisible();
+  const checkbox = card.getByRole("checkbox");
+  const confirm = card.getByRole("button", { name: "确认执行", exact: true });
+  await expect(checkbox).not.toBeChecked();
+  await expect(confirm).toBeDisabled();
+  // Model data consent is not approval of a proposed database action.
+  await page.locator('input[name="data_consent"]').check();
+  await expect(confirm).toBeDisabled();
+  await checkbox.check();
+  await expect(confirm).toBeEnabled();
+  await checkbox.uncheck();
+  await expect(confirm).toBeDisabled();
+  expect(api.calls.filter(call => call.method === "POST")).toEqual([]);
+});
+
+test("confirms only the exact reviewed hash and revision once and excludes concurrent decisions", async ({ page, api }) => {
+  const action = reviewedAction(1), other = reviewedAction(2);
+  const view = session(1, { revision: 7, actions: [action, other] });
+  api.seed([view, session(2)]);
+  await open(page);
+  const path = actionPath(view.id, action.id, "approve");
+  const held = api.holdNext("POST", path);
+  const card = reviewCard(page, action.review.title);
+  await card.getByRole("checkbox").check();
+  await card.getByRole("button", { name: "确认执行", exact: true }).evaluate(button => {
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  const call = await held.received;
+  expect(call).toEqual({ method: "POST", path, body: {
+    expected_revision: 7, expected_arguments_hash: action.argumentsHash, approval: true,
+  } });
+  await expect(card.getByRole("button", { name: "确认执行", exact: true })).toBeDisabled();
+  await expect(card.getByRole("button", { name: "拒绝这项操作", exact: true })).toBeDisabled();
+  await expect(reviewCard(page, other.review.title).getByRole("checkbox")).toBeDisabled();
+  await expect(page.getByRole("button", { name: "刷新会话", exact: true })).toBeDisabled();
+  await expect(page.getByRole("combobox", { name: "选择会话" })).toBeDisabled();
+  await expect(page.getByRole("textbox")).toBeDisabled();
+  expect(api.count("POST", path)).toBe(1);
+  await held.respond({ session: { ...view, revision: 8, actions: [
+    { ...action, status: "completed", receipt: { ok: true, code: "completed", message: "Only the exact reviewed action completed." } }, other,
+  ] } });
+  await expect(card.getByRole("status")).toHaveText("Only the exact reviewed action completed.");
+  await expect(card.getByRole("button", { name: "确认执行", exact: true })).toHaveCount(0);
+  await expect(reviewCard(page, other.review.title).getByRole("button", { name: "确认执行", exact: true })).toBeDisabled();
+  expect(api.calls.filter(item => item.method === "POST")).toEqual([call]);
+  expect(api.count("POST", queryPath)).toBe(0);
+});
+
+test("declines without approval and sends only the selected session revision", async ({ page, api }) => {
+  const action = reviewedAction(1), view = session(1, { revision: 4, actions: [action] });
+  api.seed([view]);
+  await open(page);
+  const card = reviewCard(page, action.review.title);
+  await expect(card.getByRole("checkbox")).not.toBeChecked();
+  const path = actionPath(view.id, action.id, "decline"), held = api.holdNext("POST", path);
+  await card.getByRole("button", { name: "拒绝这项操作", exact: true }).click();
+  const call = await held.received;
+  expect(call).toEqual({ method: "POST", path, body: { expected_revision: 4 } });
+  await held.respond({ session: { ...view, revision: 5, actions: [{ ...action, status: "cancelled" }] } });
+  await expect(card.getByText("已取消", { exact: true })).toBeVisible();
+  await expect(card.getByRole("button")).toHaveCount(0);
+  expect(api.calls.filter(item => item.method === "POST")).toEqual([call]);
+});
+
+for (const state of ["completed", "unknown", "expired", "executing"] as const) {
+  test(`keeps a ${state} action read-only across refresh and reload without retrying it`, async ({ page, api }) => {
+    const action = reviewedAction(1, {
+      status: state,
+      receipt: state === "completed" || state === "unknown"
+        ? { ok: state === "completed", code: state, message: `Synthetic ${state} receipt` } : null,
+    });
+    api.seed([session(1, { actions: [action] })]);
+    await open(page);
+    const card = reviewCard(page, action.review.title);
+    await expect(card.getByRole("button")).toHaveCount(0);
+    await expect(card.getByRole("checkbox")).toHaveCount(0);
+    if (state === "unknown") await expect(card).toContainText("这项操作不会自动重试");
+    if (action.receipt) await expect(card.getByRole("status")).toHaveText(action.receipt.message);
+    await page.getByRole("button", { name: "刷新会话", exact: true }).click();
+    await expect(page.getByRole("button", { name: "刷新会话", exact: true })).toBeEnabled();
+    await page.reload();
+    await expect(card).toBeVisible();
+    await expect(card.getByRole("button")).toHaveCount(0);
+    expect(api.calls.filter(call => call.method === "POST")).toEqual([]);
+  });
+}
+
+test("makes an already expired pending card non-actionable without sending a decision", async ({ page, api }) => {
+  const action = reviewedAction(1, { expiresAt: new Date(fixtureTime - 1).toISOString() });
+  api.seed([session(1, { actions: [action] })]);
+  await open(page);
+  const card = reviewCard(page, action.review.title);
+  await expect(card.getByText("已过期", { exact: true })).toBeVisible();
+  await expect(card.getByRole("button")).toHaveCount(0);
+  await expect(card.getByRole("checkbox")).toHaveCount(0);
+  expect(api.calls.filter(call => call.method === "POST")).toEqual([]);
+});
+
+test("expires an already checked review card on its timer without another user interaction", async ({ page, api }) => {
+  const action = reviewedAction(1, { expiresAt: new Date(fixtureTime + 2_000).toISOString() });
+  api.seed([session(1, { actions: [action] })]);
+  await open(page);
+  const card = reviewCard(page, action.review.title);
+  await card.getByRole("checkbox").check();
+  await expect(card.getByRole("button", { name: "确认执行", exact: true })).toBeEnabled();
+  // Move wall time beyond expiry while leaving the real timeout running. No
+  // click, refresh or parent state change should be needed to retire the card.
+  await page.clock.setFixedTime(fixtureTime + 2_001);
+  await expect(card.getByText("已过期", { exact: true })).toBeVisible();
+  await expect(card.getByRole("button")).toHaveCount(0);
+  expect(api.calls.filter(call => call.method === "POST")).toEqual([]);
+});
+
+test("checks expiry at confirmation time even before the scheduled expiry rerender", async ({ page, api }) => {
+  const action = reviewedAction(1);
+  api.seed([session(1, { actions: [action] })]);
+  await open(page);
+  const card = reviewCard(page, action.review.title);
+  await card.getByRole("checkbox").check();
+  await page.clock.setFixedTime(fixtureTime + 300_001);
+  await card.getByRole("button", { name: "确认执行", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("这项确认已过期");
+  expect(api.calls.filter(call => call.method === "POST")).toEqual([]);
+});
+
+test("polls a reconnected executing action with no model run and stops after its receipt arrives", async ({ page, api }) => {
+  const action = reviewedAction(1, { status: "executing" });
+  const other = reviewedAction(2);
+  const view = session(1, { pending: null, actions: [action, other] });
+  api.seed([view]);
+  await open(page);
+  const card = reviewCard(page, action.review.title);
+  await expect(card.getByText("执行中", { exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox")).toBeDisabled();
+  await expect(reviewCard(page, other.review.title).getByRole("checkbox")).toBeDisabled();
+  await expect(reviewCard(page, other.review.title).getByRole("button", { name: "确认执行", exact: true })).toBeDisabled();
+  // A soft close stays available; it does not promise to undo an existing effect.
+  await expect(page.getByRole("button", { name: "结束会话", exact: true })).toBeEnabled();
+  // Even a directly dispatched event must hit the executing-action method guard.
+  await page.locator("form").dispatchEvent("submit");
+  const poll = api.holdNext("GET", `${sessionPath}/${view.id}`);
+  await poll.received;
+  await poll.respond({ session: { ...view, revision: 2, actions: [{ ...action, status: "completed", receipt: {
+    ok: true, code: "completed", message: "Reconnected execution receipt",
+  } }, other] } });
+  await expect(card.getByRole("status")).toHaveText("Reconnected execution receipt");
+  await expect(page.getByRole("textbox")).toBeEnabled();
+  await expect(reviewCard(page, other.review.title).getByRole("checkbox")).toBeEnabled();
+  await expect(reviewCard(page, other.review.title).getByRole("button", { name: "确认执行", exact: true })).toBeDisabled();
+  const reads = api.count("GET", `${sessionPath}/${view.id}`);
+  await page.waitForTimeout(1_700);
+  expect(api.count("GET", `${sessionPath}/${view.id}`)).toBe(reads);
+  expect(api.calls.filter(call => call.method === "POST")).toEqual([]);
+});
+
+test("requires fresh review after refresh changes the revision, parameters and hash", async ({ page, api }) => {
+  const action = reviewedAction(1), view = session(1, { revision: 2, actions: [action] });
+  api.seed([view]);
+  await open(page);
+  const card = reviewCard(page, action.review.title);
+  await card.getByRole("checkbox").check();
+  const updated = { ...action, argumentsHash: "f".repeat(64), review: {
+    ...action.review, details: [{ label: "目标", value: "New reviewed target" }],
+  } };
+  const fresh = { ...view, revision: 3, actions: [updated] };
+  const refresh = api.holdNext("GET", `${sessionPath}/${view.id}`);
+  await page.getByRole("button", { name: "刷新会话", exact: true }).click();
+  await refresh.received;
+  await expect(card.getByRole("button", { name: "确认执行", exact: true })).toBeDisabled();
+  await refresh.respond({ session: fresh });
+  await expect(card.locator("dd")).toHaveText("New reviewed target");
+  await expect(card.getByRole("checkbox")).not.toBeChecked();
+  await expect(card.getByRole("button", { name: "确认执行", exact: true })).toBeDisabled();
+  expect(api.calls.filter(call => call.method === "POST")).toEqual([]);
+  const approve = api.holdNext("POST", actionPath(view.id, action.id, "approve"));
+  await card.getByRole("checkbox").check();
+  await card.getByRole("button", { name: "确认执行", exact: true }).click();
+  expect((await approve.received).body).toEqual({ expected_revision: 3, expected_arguments_hash: updated.argumentsHash, approval: true });
+  await approve.respond({ session: { ...fresh, revision: 4, actions: [{ ...updated, status: "completed", receipt: {
+    ok: true, code: "completed", message: "Freshly reviewed version completed",
+  } }] } });
+  await expect(card.getByRole("status")).toHaveText("Freshly reviewed version completed");
+});
+
+test("does not carry a checked approval across session switches even when action IDs match", async ({ page, api }) => {
+  const action = reviewedAction(1);
+  const first = session(1, { actions: [action] });
+  const secondAction = { ...action, argumentsHash: "b".repeat(64), review: { ...action.review, title: "Other session review" } };
+  const second = session(2, { actions: [secondAction] });
+  api.seed([first, second]);
+  await open(page);
+  await reviewCard(page, action.review.title).getByRole("checkbox").check();
+  await page.getByRole("combobox", { name: "选择会话" }).selectOption(second.id);
+  await expect(reviewCard(page, secondAction.review.title).getByRole("checkbox")).not.toBeChecked();
+  await expect(reviewCard(page, secondAction.review.title).getByRole("button", { name: "确认执行", exact: true })).toBeDisabled();
+  await page.getByRole("combobox", { name: "选择会话" }).selectOption(first.id);
+  await expect(reviewCard(page, action.review.title).getByRole("checkbox")).not.toBeChecked();
+  expect(api.calls.filter(call => call.method === "POST")).toEqual([]);
+});
+
+test("ignores a late action card from a previous session poll after switching", async ({ page, api }) => {
+  const action = reviewedAction(1), currentAction = reviewedAction(2);
+  const first = pendingSession(1, { actions: [action] }), second = session(2, { actions: [currentAction] });
+  api.seed([first, second]);
+  await open(page);
+  await watchForStaleText(page, "STALE ACTION REVIEW");
+  const poll = api.holdNext("GET", `${sessionPath}/${first.id}`);
+  await poll.received;
+  await page.getByRole("combobox", { name: "选择会话" }).selectOption(second.id);
+  await expect(reviewCard(page, currentAction.review.title)).toBeVisible();
+  await expectAborted(page, "GET", `${sessionPath}/${first.id}`);
+  await poll.respond({ session: { ...first, revision: 100, actions: [{ ...action, review: { ...action.review, title: "STALE ACTION REVIEW" } }] } }, { clientAborted: true });
+  await page.getByRole("button", { name: "刷新会话", exact: true }).click();
+  await expect(page.getByRole("button", { name: "刷新会话", exact: true })).toBeEnabled();
+  await expect(page.getByRole("combobox", { name: "选择会话" })).toHaveValue(second.id);
+  await expect(reviewCard(page, currentAction.review.title).getByRole("checkbox")).not.toBeChecked();
+  await expect(page.locator("#fixture-root")).not.toHaveAttribute("data-stale-seen", "true");
+  expect(api.calls.filter(call => call.method === "POST")).toEqual([]);
+});
+
+test("aborts an action decision on unmount and ignores its late receipt", async ({ page, api }) => {
+  const action = reviewedAction(1), view = session(1, { actions: [action] });
+  api.seed([view]);
+  await open(page);
+  const path = actionPath(view.id, action.id, "approve"), held = api.holdNext("POST", path);
+  const card = reviewCard(page, action.review.title);
+  await card.getByRole("checkbox").check();
+  await card.getByRole("button", { name: "确认执行", exact: true }).click();
+  await held.received;
+  await page.getByRole("button", { name: "Unmount test component", exact: true }).click();
+  await expectAborted(page, "POST", path);
+  await held.respond({ session: { ...view, revision: 2, actions: [{ ...action, status: "completed", receipt: {
+    ok: true, code: "completed", message: "LATE ACTION RECEIPT",
+  } }] } }, { clientAborted: true });
+  await settleBrowserRender(page);
+  await expect(page.locator("#fixture-root")).toBeEmpty();
+  expect(api.count("POST", path)).toBe(1);
+  expect(api.count("GET", `${sessionPath}/${view.id}`)).toBe(1);
+});
+
+for (const operation of ["refresh", "session switch"] as const) {
+  test(`ignores a late ${operation} review response after unmount`, async ({ page, api }) => {
+    const action = reviewedAction(1), first = session(1, { actions: [action] }), second = session(2, { actions: [action] });
+    api.seed([first, second]);
+    await open(page);
+    await watchForStaleText(page, "LATE REVIEW AFTER UNMOUNT");
+    const target = operation === "refresh" ? first : second;
+    const held = api.holdNext("GET", `${sessionPath}/${target.id}`);
+    if (operation === "refresh") await page.getByRole("button", { name: "刷新会话", exact: true }).click();
+    else await page.getByRole("combobox", { name: "选择会话" }).selectOption(second.id);
+    await held.received;
+    await page.getByRole("button", { name: "Unmount test component", exact: true }).click();
+    const response = page.waitForResponse(`${origin}${sessionPath}/${target.id}`);
+    await held.respond({ session: { ...target, revision: 2, actions: [{ ...action, review: { ...action.review, title: "LATE REVIEW AFTER UNMOUNT" } }] } });
+    await response;
+    await settleBrowserRender(page);
+    await expect(page.locator("#fixture-root")).toBeEmpty();
+    await expect(page.locator("#fixture-root")).not.toHaveAttribute("data-stale-seen", "true");
+    expect(api.calls.filter(call => call.method === "POST")).toEqual([]);
+  });
+}
+
+test("rejects a decision reply for another session and refreshes only the selected session", async ({ page, api }) => {
+  const action = reviewedAction(1), view = session(1, { actions: [action] });
+  api.seed([view]);
+  await open(page);
+  await watchForStaleText(page, "FOREIGN ACTION RECEIPT");
+  const held = api.holdNext("POST", actionPath(view.id, action.id, "approve"));
+  const card = reviewCard(page, action.review.title);
+  await card.getByRole("checkbox").check();
+  await card.getByRole("button", { name: "确认执行", exact: true }).click();
+  await held.received;
+  api.sessions.set(view.id, { ...view, revision: 2, actions: [{ ...action, status: "unknown", receipt: {
+    ok: false, code: "outcome_unknown", message: "Selected session needs reconciliation",
+  } }] });
+  await held.respond({ session: session(99, { actions: [{ ...action, status: "completed", receipt: {
+    ok: true, code: "completed", message: "FOREIGN ACTION RECEIPT",
+  } }] }) });
+  await expect(card.getByRole("status")).toHaveText("Selected session needs reconciliation");
+  await expect(page.getByRole("combobox", { name: "选择会话" })).toHaveValue(view.id);
+  await expect(page.locator("#fixture-root")).not.toHaveAttribute("data-stale-seen", "true");
+  expect(api.count("GET", `${sessionPath}/${session(99).id}`)).toBe(0);
+  expect(api.count("POST", queryPath)).toBe(0);
+});
+
+test("reconciles an uncertain decision with a read and never retries the effect", async ({ page, api }) => {
+  const action = reviewedAction(1), view = session(1, { actions: [action] });
+  api.seed([view]);
+  await open(page);
+  const path = actionPath(view.id, action.id, "approve");
+  api.failNext("POST", path);
+  api.sessions.set(view.id, { ...view, revision: 2, actions: [{ ...action, status: "unknown", receipt: {
+    ok: false, code: "outcome_unknown", message: "Synthetic uncertain result: check current state first",
+  } }] });
+  const card = reviewCard(page, action.review.title);
+  await card.getByRole("checkbox").check();
+  await card.getByRole("button", { name: "确认执行", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("不会自动重试");
+  await expect(card.getByRole("status")).toHaveText("Synthetic uncertain result: check current state first");
+  expect(api.count("POST", path)).toBe(1);
+  expect(api.count("GET", `${sessionPath}/${view.id}`)).toBe(2);
+  await page.getByRole("button", { name: "刷新会话", exact: true }).click();
+  await expect(card.getByRole("status")).toHaveText("Synthetic uncertain result: check current state first");
+  await expect(card.getByRole("button")).toHaveCount(0);
+  await page.reload();
+  await expect(card.getByText("结果不确定", { exact: true })).toBeVisible();
+  expect(api.count("POST", path)).toBe(1);
+});
+
+test("reconciles an expired decision response without automatically submitting it again", async ({ page, api }) => {
+  const action = reviewedAction(1), view = session(1, { actions: [action] });
+  api.seed([view]);
+  await open(page);
+  const path = actionPath(view.id, action.id, "approve");
+  api.replyNext("POST", path, { error: { code: "action_expired" } }, 409);
+  api.sessions.set(view.id, { ...view, revision: 2, actions: [{ ...action, status: "expired" }] });
+  const card = reviewCard(page, action.review.title);
+  await card.getByRole("checkbox").check();
+  await card.getByRole("button", { name: "确认执行", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("这项确认已过期");
+  await expect(card.getByText("已过期", { exact: true })).toBeVisible();
+  await expect(card.getByRole("button")).toHaveCount(0);
+  expect(api.count("POST", path)).toBe(1);
+  expect(api.count("POST", queryPath)).toBe(0);
+});
+
+for (const width of [320, 375, 390]) {
+  test(`keeps long review parameters and consequences within a ${width}px mobile viewport`, async ({ page, api }, testInfo) => {
+    const action = reviewedAction(1, { review: {
+      title: `Synthetic review ${"r".repeat(150)}`,
+      details: [
+        { label: "Exact long target URL", value: `https://example.test/${"target".repeat(400)}` },
+        { label: "Exact multiline parameters", value: `First line\n${"参数".repeat(300)}\nFinal line` },
+      ],
+      consequences: [`This exact consequence remains visible: ${"long-value".repeat(80)}`],
+    } });
+    api.seed([session(1, { actions: [action] })]);
+    await page.setViewportSize({ width, height: 844 });
+    await open(page);
+    const card = reviewCard(page, action.review.title);
+    expect(await card.locator("dd").allTextContents()).toEqual(action.review.details.map(detail => detail.value));
+    const dimensions = await card.evaluate(element => ({
+      viewport: window.innerWidth, document: document.documentElement.scrollWidth,
+      items: Array.from(element.querySelectorAll<HTMLElement>("h3, dd, li, button"))
+        .map(item => ({ text: item.textContent?.slice(0, 50), left: item.getBoundingClientRect().left, right: item.getBoundingClientRect().right })),
+    }));
+    expect(dimensions.document).toBeLessThanOrEqual(dimensions.viewport);
+    for (const item of dimensions.items) {
+      expect(item.left, item.text ?? "review left edge").toBeGreaterThanOrEqual(0);
+      expect(item.right, item.text ?? "review right edge").toBeLessThanOrEqual(width);
+    }
+    const screenshot = testInfo.outputPath(`website-agent-review-mobile-${width}.png`);
+    await page.screenshot({ path: screenshot, fullPage: true });
+    await testInfo.attach(`Actual review card at ${width}px`, { path: screenshot, contentType: "image/png" });
+  });
+}
 
 for (const width of [320, 375, 390]) {
   test(`keeps the actual composer and long history within a ${width}px mobile viewport`, async ({ page, api }, testInfo) => {

@@ -7,10 +7,17 @@ const accountId = "00000000-0000-4000-8000-000000000001";
 const operationId = "00000000-0000-4000-8000-000000000002";
 const input = { accountId, operationId, requestFingerprint: "a".repeat(64), maxRunCostMicrousd: 400_000,
   dailyCostMicrousd: 1_000_000, timeoutMs: 60_000 };
+function queryText(value: unknown): string {
+  const seen = new WeakSet<object>();
+  return JSON.stringify(value, (_key, child: unknown) => {
+    if (child !== null && typeof child === "object") { if (seen.has(child)) return "[circular]"; seen.add(child); }
+    return child;
+  });
+}
 function fakeDatabase(results: unknown[][] = [[], [], [{ total: "0" }]]) {
   const selects = [...results];
   const tx = {
-    execute: vi.fn(async (_query: ReturnType<typeof sql>) => []),
+    execute: vi.fn(async (query: ReturnType<typeof sql>) => queryText(query).includes("AS busy") ? [{ busy: false }] : []),
     select: vi.fn(() => {
       const result = selects.shift() ?? [];
       const chain = { from: () => chain, where: () => chain, limit: async () => result,
@@ -30,7 +37,7 @@ describe("website agent durable budget admission", () => {
   it("sets account scope and locks the account before checking prior operations/budgets", async () => {
     const { db, tx } = fakeDatabase();
     expect(await reserveWebsiteAgentRun(db, input)).toBe(operationId);
-    const queries = tx.execute.mock.calls.map(args => JSON.stringify(args[0]));
+    const queries = tx.execute.mock.calls.map(args => queryText(args[0]));
     expect(queries[0]).toContain("set_config");
     expect(queries[1]).toContain("pg_advisory_xact_lock");
     expect(vi.mocked(tx.execute).mock.invocationCallOrder[1]).toBeLessThan(tx.select.mock.invocationCallOrder[0]!);

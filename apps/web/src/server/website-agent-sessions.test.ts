@@ -51,7 +51,8 @@ function fakeDatabase(results: unknown[][] = [], row = stored(), compareAndSwapS
   let committed = false;
   const tx = {
     execute: vi.fn(async (query: ReturnType<typeof sql>) => {
-      return JSON.stringify(query).includes("AS now") ? [{ now: now.toISOString() }] : [];
+      const text = queryText(query);
+      return text.includes("AS now") ? [{ now: now.toISOString() }] : text.includes("AS busy") ? [{ busy: false }] : [];
     }),
     select: vi.fn(() => {
       const result = selects.shift() ?? [];

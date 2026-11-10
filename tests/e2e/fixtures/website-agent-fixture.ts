@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import type { Page, Route } from "@playwright/test";
 import type { NextConfig } from "../../../apps/web/node_modules/next";
+import type { WebsiteAgentActionView } from "../../../apps/web/src/server/website-agent-action-state";
 // Reuse the workspace's existing, lockfile-pinned build tool. No new dependency.
 import { build } from "../../../apps/cli/node_modules/esbuild/lib/main.js";
 
@@ -20,6 +21,7 @@ export interface SessionView {
   expiresAt: string;
   messages: Array<{ role: "user" | "assistant"; text: string }>;
   pending: { query: string; runId: string; deadline: string } | null;
+  actions?: WebsiteAgentActionView[];
 }
 
 export interface ApiCall {
@@ -57,6 +59,31 @@ export function pendingSession(number: number, patch: Partial<SessionView> = {})
     },
     ...patch,
   });
+}
+
+export function reviewedAction(number: number, patch: Partial<WebsiteAgentActionView> = {}): WebsiteAgentActionView {
+  return {
+    id: `10000000-0000-4000-8000-${String(number).padStart(12, "0")}`,
+    toolName: "attention_update_collection",
+    argumentsHash: number.toString(16).padStart(64, "0"),
+    expiresAt: new Date(fixtureTime + 300_000).toISOString(),
+    status: "pending",
+    review: {
+      title: `Synthetic reviewed change ${number}`,
+      details: [
+        { label: "目标", value: `Synthetic collection ${number}` },
+        { label: "收藏 ID", value: `20000000-0000-4000-8000-${String(number).padStart(12, "0")}` },
+        { label: "修改后可见性", value: "私密" },
+      ],
+      consequences: ["This exact collection will become private.", "Already completed changes are not automatically undone."],
+    },
+    receipt: null,
+    ...patch,
+  };
+}
+
+export function actionPath(sessionId: string, actionId: string, operation: "approve" | "decline") {
+  return `${sessionPath}/${encodeURIComponent(sessionId)}/actions/${encodeURIComponent(actionId)}/${operation}`;
 }
 
 let documentPromise: Promise<string> | undefined;
@@ -110,6 +137,7 @@ export function componentDocument(): Promise<string> {
         `,
       },
       bundle: true,
+      metafile: true,
       write: false,
       minify: true,
       format: "iife",
@@ -130,6 +158,11 @@ export function componentDocument(): Promise<string> {
     });
     const javascript = result.outputFiles?.[0]?.text;
     if (!javascript) throw new Error("The actual component browser bundle is empty");
+    if (!result.metafile) throw new Error("Browser bundle input provenance is missing");
+    const serverInputs = Object.keys(result.metafile.inputs).filter(path => /(?:^|\/)src\/server\//u.test(path));
+    if (serverInputs.length) {
+      throw new Error(`Server implementation entered the browser fixture: ${serverInputs.join(", ")}`);
+    }
     if (/\bprocess\.env\b/u.test(javascript)) {
       throw new Error("The browser fixture needs a newly introduced Next compile-time setting");
     }
@@ -178,6 +211,10 @@ export class SyntheticWebsiteApi {
 
   replyNext(method: string, path: string, json: unknown, status = 200): void {
     this.enqueue(method, path, route => route.fulfill({ status, json }));
+  }
+
+  failNext(method: string, path: string): void {
+    this.enqueue(method, path, route => route.abort("failed"));
   }
 
   holdNext(method: string, path: string): HeldRequest {

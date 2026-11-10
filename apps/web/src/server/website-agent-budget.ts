@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHmac } from "node:crypto";
 
-import { and, eq, sql, setAccountContext, websiteAgentRuns, type AttentionDatabase, type AttentionTransaction } from "@attention/db";
+import { and, eq, sql, setAccountContext, websiteAgentRuns, websiteAgentSessions, type AttentionDatabase, type AttentionTransaction } from "@attention/db";
 
 export class WebsiteAgentAdmissionError extends Error {
   constructor(readonly code: "operation_already_used" | "operation_payload_mismatch" | "website_agent_busy" | "website_agent_daily_budget_exhausted") {
@@ -37,6 +37,18 @@ export async function lockWebsiteAgentAccount(tx: AttentionTransaction, accountI
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('attention:website-agent:v1'), hashtext(${accountId}))`);
 }
 
+/** The account lock must be held. Model runs and reviewed actions share one lane. */
+export async function assertWebsiteAgentAccountIdle(tx: AttentionTransaction, accountId: string): Promise<void> {
+  const [row] = await tx.execute<{ busy: boolean }>(sql`SELECT (
+    EXISTS (SELECT 1 FROM ${websiteAgentRuns} WHERE ${websiteAgentRuns.accountId} = ${accountId}
+      AND ${websiteAgentRuns.outcome} = 'reserved' AND ${websiteAgentRuns.deadline} > clock_timestamp())
+    OR EXISTS (SELECT 1 FROM ${websiteAgentSessions} WHERE ${websiteAgentSessions.accountId} = ${accountId}
+      AND ${websiteAgentSessions.activeRunId} IS NOT NULL AND ${websiteAgentSessions.activeRunDeadline} > clock_timestamp())
+  ) AS busy`);
+  if (!row || typeof row.busy !== "boolean") throw new Error("website_agent_admission_unavailable");
+  if (row.busy) throw new WebsiteAgentAdmissionError("website_agent_busy");
+}
+
 export function validateWebsiteAgentRunReservation(input: WebsiteAgentRunReservationInput): void {
   if (![input.maxRunCostMicrousd, input.timeoutMs].every(value => Number.isSafeInteger(value) && value > 0) ||
       input.maxRunCostMicrousd > 100_000_000 ||
@@ -56,6 +68,7 @@ export async function reserveWebsiteAgentRunInTransaction(tx: AttentionTransacti
     sql`${websiteAgentRuns.deadline} > clock_timestamp()`,
   )).limit(1);
   if (active) throw new WebsiteAgentAdmissionError("website_agent_busy");
+  await assertWebsiteAgentAccountIdle(tx, input.accountId);
   const [usage] = await tx.select({ total: sql<string>`coalesce(sum(${websiteAgentRuns.reservedCostMicrousd}), 0)::text` })
     .from(websiteAgentRuns).where(and(eq(websiteAgentRuns.accountId, input.accountId),
       sql`${websiteAgentRuns.budgetDate} = (clock_timestamp() AT TIME ZONE 'UTC')::date`));

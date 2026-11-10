@@ -49,6 +49,7 @@ import {
   upsertCollectionInTransaction,
   upsertContentByIdentityInTransaction,
   type AttentionDatabase,
+  type AttentionTransaction,
 } from "@attention/db";
 import { z } from "zod";
 
@@ -70,8 +71,11 @@ type CollectionPrincipal = Pick<
   SessionPrincipal,
   "accountId" | "isFilter" | "isMember"
 > & {
+  /** Trusted transport policy only; never parsed from collection request data. */
+  privateCollectionOnly?: boolean;
   signal?: AbortSignal;
   revalidate?: () => Promise<{ accountId: string; scopes: readonly string[]; isFilter: boolean; isMember: boolean } | null>;
+  revalidateInTransaction?: (tx: AttentionTransaction) => Promise<{ accountId: string; scopes: readonly string[]; isFilter: boolean; isMember: boolean } | null>;
 };
 
 export async function assertCollectionAuthority(principal: CollectionPrincipal, visibility: "public" | "private"): Promise<void> {
@@ -858,6 +862,10 @@ async function establishCollection(
   const established = await db.transaction(async (tx) => {
     await setAccountContext(tx, principal.accountId);
     principal.signal?.throwIfAborted();
+    const requirePrivateOnly = () => {
+      throw new CollectionServiceError("website_collection_review_required", 409);
+    };
+    if (principal.privateCollectionOnly && visibility !== "private") requirePrivateOnly();
 
     if (pendingSelection) {
       const [claimedCandidateSet] = await tx
@@ -908,6 +916,14 @@ async function establishCollection(
       source: candidate.identity.adapter,
       sourceAdapter: candidate.identity.adapter,
     });
+    if (principal.privateCollectionOnly && !contentResult.created) {
+      // Stabilize shared URL/alias state through commit. A provisional upsert
+      // loser was removed in this transaction and is not itself a merge effect.
+      const [currentContent] = await tx.select().from(contents)
+        .where(eq(contents.id, contentResult.content.id)).for("update").limit(1);
+      if (!currentContent) throw new Error("collection_content_missing");
+      contentResult.content = currentContent;
+    }
     const pendingAliasContentIds: string[] = [];
     for (const aliasIdentity of candidate.aliasIdentities) {
       const [existingAliasIdentity] = await tx
@@ -933,6 +949,7 @@ async function establishCollection(
           })
           .onConflictDoNothing({ target: contentIdentities.dedupeKey });
       } else if (existingAliasIdentity.contentId !== contentResult.content.id) {
+        if (principal.privateCollectionOnly) requirePrivateOnly();
         pendingAliasContentIds.push(existingAliasIdentity.contentId);
       }
     }
@@ -940,6 +957,8 @@ async function establishCollection(
       candidate.identity.adapter === "xiaohongshu" &&
       candidate.outboundUrl !== candidate.identity.normalizedUrl
     ) {
+      if (principal.privateCollectionOnly && !contentResult.created &&
+          contentResult.content.outboundUrl !== candidate.outboundUrl) requirePrivateOnly();
       await tx
         .update(contents)
         .set({ outboundUrl: candidate.outboundUrl, updatedAt: now })
@@ -958,6 +977,7 @@ async function establishCollection(
       sourceChannel: "web",
       visibility,
     });
+    if (principal.privateCollectionOnly && collectionResult.collection.visibility !== "private") requirePrivateOnly();
     for (const aliasContentId of pendingAliasContentIds) {
       await upsertCollectionInTransaction(tx, {
         accountId: principal.accountId,
@@ -1002,6 +1022,7 @@ async function establishCollection(
         aliasCollection.id !== collectionResult.collection.id,
     );
     if (mergedAliasCollections.length > 0) {
+      if (principal.privateCollectionOnly) requirePrivateOnly();
       const collectionsToMerge = [
         collectionResult.collection,
         ...mergedAliasCollections,
@@ -1143,7 +1164,13 @@ async function establishCollection(
     if (!updatedAttempt) {
       throw new CollectionServiceError("attempt_lease_lost", 409);
     }
-    // Cancellation before the transaction finishes rolls every write back.
+    // Never call a root-database revalidation callback while holding this
+    // connection. The website supplies a same-transaction fresh authority read.
+    if (principal.revalidateInTransaction) {
+      await assertCollectionAuthority({ ...principal, revalidate: () => principal.revalidateInTransaction!(tx) }, visibility);
+    }
+    // Revocation/cancellation rolls back every business write, including
+    // provisional identities, events, links and jobs.
     principal.signal?.throwIfAborted();
     return { collectionResult, contentResult, status };
   });

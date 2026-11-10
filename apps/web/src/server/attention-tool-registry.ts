@@ -7,6 +7,7 @@ import {
   listModerationCourtCases,
   ModerationRepositoryError,
   type AttentionDatabase,
+  type AttentionTransaction,
 } from "@attention/db";
 import { z } from "zod";
 
@@ -92,6 +93,7 @@ export interface AttentionToolBaseContext {
   serviceOrigin: string;
   scopes: readonly string[];
   revalidate?: () => Promise<SourceReadPrincipal | null>;
+  revalidateInTransaction?: (tx: AttentionTransaction) => Promise<SourceReadPrincipal | null>;
 }
 
 export interface AttentionToolContext extends AttentionToolBaseContext {
@@ -489,6 +491,7 @@ const stableErrorGuidance: Readonly<Record<string, string>> = {
   selection_expired: "Submit the original content again to get a new selection token.",
   selection_visibility_mismatch: "Use the visibility chosen by the original collection attempt.",
   unsafe_target: "Attention refused the destination for safety reasons.",
+  website_collection_review_required: "This collection would keep public visibility, merge existing collections, or change a shared source link. Review those exact changes before saving; no collection changes were committed.",
   vote_already_cast: "This Filter already voted in the current case and the decision cannot be changed.",
   voting_closed: "Refresh the moderation case list; the voting window has closed.",
 };
@@ -751,7 +754,11 @@ export function createAttentionToolRegistry(
           );
         }
         try {
-          const result = await core.collectFromWeb(context.getDatabase(), context, {
+          const result = await core.collectFromWeb(context.getDatabase(), {
+            ...context,
+            // This transport marker is server authority, never model input.
+            privateCollectionOnly: context.caller.entrypoint === "hosted_agent" && visibility === "private",
+          }, {
             idempotency_key,
             raw_input: input,
             visibility,

@@ -1,5 +1,5 @@
 import type { SessionPrincipal } from "@attention/auth";
-import type { AttentionDatabase } from "@attention/db";
+import type { AttentionDatabase, AttentionTransaction } from "@attention/db";
 import { createNativeWebsiteSession, WebsiteAgentError } from "@attention/website-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -34,6 +34,22 @@ afterEach(() => { vi.unstubAllEnvs(); });
 function activateFingerprint() { vi.stubEnv("ATTENTION_HMAC_SECRET", "synthetic-hmac-secret-at-least-32-characters"); }
 
 describe("website agent HTTP boundary", () => {
+  it("revalidates collection commits on the same transaction without touching the auth session", async () => {
+    activateFingerprint(); const deps = dependencies();
+    const token = "x".repeat(43), tx = {} as AttentionTransaction;
+    deps.resolveSessionInTransaction = vi.fn(async () => principal);
+    const complete = vi.mocked(deps.run).getMockImplementation()!;
+    vi.mocked(deps.run).mockImplementation(async options => {
+      const context = vi.mocked(deps.createTools).mock.calls[0]![0].context;
+      await expect(context.revalidateInTransaction!(tx)).resolves.toMatchObject({ accountId, isMember: true });
+      expect(deps.resolveSessionInTransaction).toHaveBeenCalledWith(tx, token, { touch: false });
+      expect(deps.isActive).toHaveBeenCalledWith(tx, expect.objectContaining({ accountId, sessionId: agentSessionId }));
+      vi.mocked(deps.resolveSessionInTransaction!).mockResolvedValue(null);
+      await expect(context.revalidateInTransaction!(tx)).resolves.toBeNull();
+      return complete(options);
+    });
+    expect((await handleWebsiteAgentRequest(request({}, { cookie: `attention_session=${token}` }), deps)).status).toBe(200);
+  });
   it("reserves before generation and returns no credentials, history or raw tool data", async () => {
     activateFingerprint();
     const deps = dependencies();

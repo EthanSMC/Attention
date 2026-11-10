@@ -14,6 +14,12 @@ it does not republish or renumber the deployed CLI/runtime 0.3.21.
   native context restore and budgeted native compaction.
 - Adds owner-isolated encrypted storage, optimistic revisions, reconnect/close/
   expiry, private-save consent, bounded usage and cancellation safeguards.
+- Classifies all 16 canonical tool names. Adds Filter court reads and exact
+  human-review gates for visibility, digest, report and vote actions, with
+  one-time encrypted claims and atomic Core-effect/status receipts.
+- Reads storage envelope 1 and 2; envelope 2 adds action metadata without
+  replacing native Pi history. Candidate/public-collect and shared-enrichment
+  execution still require their separate selection/evidence/merge review.
 - Personal-agent credentials and private sessions remain separate.
 - Supports configurable `members` or `allowlist` rollout audiences while
   retaining authentication, membership and session-ownership checks. The

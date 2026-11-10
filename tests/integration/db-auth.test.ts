@@ -176,6 +176,7 @@ import {
   submitContentReport,
   upsertCollection,
   upsertContentByIdentity,
+  type AttentionTransaction,
   type DatabaseHandle
 } from "@attention/db";
 import { migrateDatabase } from "@attention/db/migrate";
@@ -2509,6 +2510,138 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     expect(duplicate).toMatchObject({
       status: "already_collected",
       current_visibility: "private"
+    });
+  });
+
+  describe("website automatic private collection safety fence", () => {
+    async function businessSnapshot() {
+      // Attempt admission is outside the business transaction. All collection,
+      // shared-content, alias, event, observation and queued-job effects must roll back.
+      return Promise.all([contents, contentIdentities, contentAliases, collections, collectionEvents, contentLinks, jobs]
+        .map(async table => (await handle.db.select().from(table)).map(row => JSON.stringify(row)).sort()));
+    }
+    async function withWebRole<T>(work: (runtime: DatabaseHandle) => Promise<T>): Promise<T> {
+      const runtime = createDatabase(databaseUrl!, { maxConnections: 1 });
+      try {
+        await runtime.sql.unsafe("SET ROLE attention_web_runtime");
+        return await work(runtime);
+      } finally {
+        await runtime.sql.unsafe("RESET ROLE").catch(() => undefined);
+        await runtime.close();
+      }
+    }
+    const reviewRequired = { code: "website_collection_review_required", httpStatus: 409 };
+
+    it("allows simple private create, existing-content reuse and restore with one connection", async () => {
+      const { redeemed } = await createRedeemedAccount("member", "website-private-simple");
+      const principal = await principalFor(redeemed);
+      const raw_input = "https://example.org/website-private-simple";
+      const finalAuthority = vi.fn(async (tx: AttentionTransaction) => {
+        const current = await resolveSession(tx, redeemed.session.token, { touch: false });
+        return current ? { ...current, scopes: ["collection:write"] } : null;
+      });
+      await withWebRole(async runtime => {
+        const guarded = { ...principal, privateCollectionOnly: true, revalidateInTransaction: finalAuthority };
+        const first = await collectFromWeb(runtime.db, guarded, { raw_input, visibility: "private", idempotency_key: "website-simple-create" });
+        expect(first).toMatchObject({ status: "accepted", current_visibility: "private" });
+        if (first.status !== "accepted") throw new Error("Expected private collection");
+        expect(await collectFromWeb(runtime.db, guarded, { raw_input, visibility: "private", idempotency_key: "website-simple-reuse" }))
+          .toMatchObject({ status: "already_collected", collection_id: first.collection_id, current_visibility: "private" });
+        await deleteCollection(handle.db, { accountId: principal.accountId, collectionId: first.collection_id });
+        expect(await collectFromWeb(runtime.db, guarded, { raw_input, visibility: "private", idempotency_key: "website-simple-restore" }))
+          .toMatchObject({ collection_id: first.collection_id, current_visibility: "private" });
+      });
+      expect(finalAuthority).toHaveBeenCalledTimes(3);
+      expect(await handle.db.select().from(contents)).toHaveLength(1);
+      expect(await handle.db.select().from(collections)).toMatchObject([{ collectionStatus: "active", visibility: "private" }]);
+    });
+
+    it("rolls back when a reused collection would remain public", async () => {
+      const { redeemed } = await createRedeemedAccount("filter", "website-private-public");
+      const principal = await principalFor(redeemed);
+      const raw_input = "https://example.org/website-private-public";
+      await collectFromWeb(handle.db, principal, { raw_input, visibility: "public", idempotency_key: "website-public-seed" });
+      const before = await businessSnapshot();
+      await withWebRole(runtime => expect(collectFromWeb(runtime.db, { ...principal, privateCollectionOnly: true },
+        { raw_input, visibility: "private", idempotency_key: "website-public-blocked" })).rejects.toMatchObject(reviewRequired));
+      expect(await businessSnapshot()).toEqual(before);
+      const [attempt] = await handle.db.select().from(inputAttempts).where(eq(inputAttempts.channelMessageId, "website-public-blocked"));
+      expect(attempt).toMatchObject({ status: "processing", resultContentId: null, resultCollectionId: null });
+    });
+
+    it.each(["private", "public"] as const)("does not soft-delete an active %s alias collection", async visibility => {
+      const { redeemed } = await createRedeemedAccount("filter", `website-alias-${visibility}`);
+      const principal = await principalFor(redeemed);
+      const raw_input = "https://example.org/website-alias-primary";
+      const primary = await collectFromWeb(handle.db, principal, { raw_input, visibility: "private", idempotency_key: "website-alias-primary" });
+      if (primary.status !== "accepted") throw new Error("Expected primary collection");
+      const aliasUrl = "https://example.org/website-alias-old";
+      const alias = await upsertContentByIdentity(handle.db, { adapterVersion: "v1", dedupeKey: `generic_web:v1:url:${aliasUrl}`,
+        normalizedUrl: aliasUrl, outboundUrl: aliasUrl, source: "generic_web", sourceAdapter: "generic_web" });
+      await upsertCollection(handle.db, { accountId: principal.accountId, contentId: alias.content.id,
+        domainId: await aiDomainId(), sourceChannel: "web", visibility });
+      await handle.db.insert(contentAliases).values({ aliasContentId: alias.content.id, primaryContentId: primary.content_id,
+        aliasDedupeKey: `generic_web:v1:url:${aliasUrl}`, ruleVersion: "v1", reasonCode: "historical_split" });
+      const before = await businessSnapshot();
+      await withWebRole(runtime => expect(collectFromWeb(runtime.db, { ...principal, privateCollectionOnly: true },
+        { raw_input, visibility: "private", idempotency_key: "website-alias-blocked" })).rejects.toMatchObject(reviewRequired));
+      expect(await businessSnapshot()).toEqual(before);
+      // The ordinary Web/personal Core path retains its established merge behavior.
+      expect(await collectFromWeb(handle.db, principal, { raw_input, visibility: "private", idempotency_key: "ordinary-alias-merge" }))
+        .toMatchObject({ status: "merged_with_existing_content", current_visibility: visibility });
+      expect(await handle.db.select({ status: collections.collectionStatus }).from(collections).where(eq(collections.contentId, alias.content.id)))
+        .toEqual([{ status: "deleted" }]);
+    });
+
+    it("rolls back provisional target and identity writes before linking an existing alias identity", async () => {
+      const { redeemed } = await createRedeemedAccount("member", "website-identity-link");
+      const principal = await principalFor(redeemed);
+      const raw_input = "https://short.example/website-identity-link";
+      await collectFromWeb(handle.db, principal, { raw_input, visibility: "private", idempotency_key: "website-identity-seed" });
+      const before = await businessSnapshot();
+      vi.stubGlobal("fetch", vi.fn(async () => Response.json({ finalUrl: "https://example.org/website-identity-final", redirects: [], status: 200 })));
+      await withWebRole(runtime => expect(collectFromWeb(runtime.db, { ...principal, privateCollectionOnly: true },
+        { raw_input, visibility: "private", idempotency_key: "website-identity-blocked" })).rejects.toMatchObject(reviewRequired));
+      expect(await businessSnapshot()).toEqual(before);
+      expect(await handle.db.select().from(contentAliases)).toEqual([]);
+    });
+
+    it("rejects shared Xiaohongshu source changes but allows the unchanged access link", async () => {
+      const { redeemed } = await createRedeemedAccount("member", "website-xhs-source");
+      const principal = await principalFor(redeemed);
+      const raw_input = "https://www.xiaohongshu.com/explore/abc123?xsec_source=pc_share&xsec_token=public-share-a";
+      await collectFromWeb(handle.db, principal, { raw_input, visibility: "private", idempotency_key: "website-xhs-seed" });
+      await withWebRole(runtime => expect(collectFromWeb(runtime.db, { ...principal, privateCollectionOnly: true },
+        { raw_input, visibility: "private", idempotency_key: "website-xhs-unchanged" })).resolves.toMatchObject({ status: "already_collected" }));
+      const before = await businessSnapshot();
+      const changed = raw_input.replace("public-share-a", "public-share-b");
+      await withWebRole(runtime => expect(collectFromWeb(runtime.db, { ...principal, privateCollectionOnly: true },
+        { raw_input: changed, visibility: "private", idempotency_key: "website-xhs-blocked" })).rejects.toMatchObject(reviewRequired));
+      expect(await businessSnapshot()).toEqual(before);
+      await collectFromWeb(handle.db, principal, { raw_input: changed, visibility: "private", idempotency_key: "ordinary-xhs-refresh" });
+      expect((await handle.db.select().from(contents))[0]?.outboundUrl).toBe(changed);
+    });
+
+    it("rolls back all business writes when transaction-bound final authority is revoked", async () => {
+      const { redeemed } = await createRedeemedAccount("member", "website-final-authority");
+      const principal = await principalFor(redeemed);
+      const before = await businessSnapshot();
+      const outsideAuthority = vi.fn(async () => ({ ...principal, scopes: ["collection:write"] }));
+      const finalAuthority = vi.fn(async (tx: AttentionTransaction) => {
+        expect(await tx.select().from(contents)).toHaveLength(1);
+        expect(await tx.select().from(jobs)).toHaveLength(1);
+        await handle.db.update(sessions).set({ revokedAt: new Date() }).where(eq(sessions.id, principal.sessionId));
+        const current = await resolveSession(tx, redeemed.session.token, { touch: false });
+        return current ? { ...current, scopes: ["collection:write"] } : null;
+      });
+      await withWebRole(runtime => expect(collectFromWeb(runtime.db, { ...principal, privateCollectionOnly: true,
+        revalidate: outsideAuthority, revalidateInTransaction: finalAuthority }, {
+        raw_input: "https://example.org/website-final-authority", visibility: "private", idempotency_key: "website-final-authority",
+      })).rejects.toMatchObject({ code: "permission_revoked" }));
+      expect(outsideAuthority).toHaveBeenCalledTimes(5);
+      expect(finalAuthority).toHaveBeenCalledTimes(1);
+      expect(await businessSnapshot()).toEqual(before);
+      expect(await resolveSession(handle.db, redeemed.session.token, { touch: false })).toBeNull();
     });
   });
 

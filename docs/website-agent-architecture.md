@@ -68,10 +68,33 @@ When explicitly enabled in that form, the model may read eligible owned public
 sources or save links from the exact original user message as private
 collections. The server fixes the original message, retry key and private
 visibility; the model cannot replace the input or publish it.
+Automatic private collection is restricted to simple private create/reuse/
+restore. If Core would preserve public visibility, merge/retire alias
+collections, relink existing identities or change a shared Xiaohongshu source
+URL, the website path fails for exact review and rolls its business transaction
+back. Final authority uses a same-transaction, non-touching cookie check; it
+never consumes a second DB connection while collection rows are locked.
 
-Public visibility changes, reports/votes, digest changes, candidate selection
-and shared enrichment submission are not registered for the model. They need
-a separate trusted confirmation/evidence interface before being enabled.
+All 16 canonical tool names have an explicit website transport policy. Reads
+reuse the canonical live entitlement/scope checks, including Filter-only court
+cases. Source reading still needs the separate opt-in; private collection still
+uses only the original user message and its checkbox permission.
+
+Visibility, report, vote and digest writes are proposal-only model tools. They
+prepare an exact server-authored review card; no effect occurs until the user
+checks the review acknowledgment and confirms that card through a same-origin
+browser endpoint. The model cannot supply an approval flag, replacement args,
+identity, scope or executable token. Reviews describe public, irreversible and
+recurring consequences. Existing reports are identified as duplicates, never
+falsely described as new submissions of changed details.
+
+Candidate selection and public collection currently return explicit
+selection/public-review-required gates; shared enrichment returns a source-
+evidence-and-merge-review-required gate. Those names are callable but do not
+execute those effects yet. Enrichment can merge identities, retire alias
+collections and schedule notifications, so a generic summary confirmation is
+insufficient. Every canonical tool must be classified; unknown future tools
+fail closed instead of silently gaining authority.
 Summarizing a successfully read source in the answer does not mark the shared
 Core summary ready. Collection accepted, body read and summary ready remain
 different facts. Multi-candidate collections stay pending for user choice.
@@ -91,6 +114,25 @@ pending prompt. AES-256-GCM binds account, opaque random session UUID and revisi
 as additional authenticated data. The independent session secret cannot reuse
 Auth/HMAC/provider keys. The model never receives it. Public API responses expose
 only metadata, user/final-assistant text and pending status, never raw entries.
+
+The application envelope reads versions 1 and 2; version 2 adds bounded,
+encrypted action proposals beside the unchanged native Pi entries. These are
+authorization metadata, not a second conversation or Pi session format. Each
+proposal binds exact normalized argument hash, canonical contract, owner,
+website/auth session, originating completed run, target fingerprint and expiry.
+Public cards omit executable args, auth/claim IDs and source bodies; receipts
+retain only status/code/message, never raw tool results.
+
+Approval first commits a one-time executing claim. A subsequent account-locked
+transaction reloads that exact claim, locks account/auth/capability and target
+rows, resolves the real cookie on the same transaction without a lastSeenAt
+touch, and invokes canonical Core under a savepoint. Non-ok results roll back
+the savepoint. Current authority, wall-clock expiry and the exact target are
+checked before effect/receipt commit. Effects and their receipt are atomic;
+audits flush afterward using the root DB, not an expired transaction. Model
+turns and actions share the durable account lane. Close, logout, target changes
+and stale revisions fence execution. Uncertain claims become UNKNOWN and are
+never automatically retried; reload only reconciles.
 
 Every session read, write, close, reconnect, model call and tool call checks the
 server-authenticated account. Owner RLS and a composite account/session run FK

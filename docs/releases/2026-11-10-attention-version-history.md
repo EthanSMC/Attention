@@ -57,8 +57,8 @@ The same snapshot retains `0.3.17` through `0.3.22` CLI artifacts.
   `0.3.23-rc.1`; Web's private package metadata stays `0.1.0` and is not the
   application-version source.
 - The website-agent working tree pins Pi SDK packages to `0.85.1`, accepts
-  native Pi session format `3`, and stores an application envelope version
-  `1`. None of these is an Attention product release number.
+  native Pi session format `3`, and stores application envelope versions
+  `1` / `2` (backward compatible). None of these is an Attention product release number.
 - Product documents use “V1 / first release” as a scope label, not a verified
   SemVer release history.
 
@@ -87,7 +87,7 @@ not a database/schema-readiness or release-acceptance assertion.
 
 CLI/runtime `0.3.21`, its immutable artifact and manifest, Skill `1.10.0`, and
 tool contract `1.7.0` remain unchanged. Pi SDK `0.85.1`, native session format
-`3`, and the storage envelope `1` remain independent version domains. No tag,
+`3`, and the storage envelope `1` / `2` (backward compatible) remain independent version domains. No tag,
 push, publication, deployment or external write is part of this version change.
 
 The initial audit found that the live commit was absent from this feature

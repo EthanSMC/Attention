@@ -133,12 +133,18 @@ jobs:
             tests/integration/website-agent-http-guard.test.ts \
             tests/integration/website-agent-http.test.ts
 
-      - name: Typecheck browser acceptance and install Chromium
+      - name: Typecheck browser acceptance and verify sandboxed Chrome prerequisites
         run: |
           pnpm exec tsc --project tests/e2e/website-agent.tsconfig.json
-          pnpm exec playwright install --with-deps chromium
+          # Use the runner's official Chrome and existing AppArmor userns grant.
+          # Fail closed; never change profiles, sysctls, or sandbox flags.
+          test -x /opt/google/chrome/chrome
+          test -r /etc/apparmor.d/chrome
+          grep -F '/opt/google/chrome/chrome' /etc/apparmor.d/chrome
+          grep -E '^[[:space:]]*userns,' /etc/apparmor.d/chrome
+          /opt/google/chrome/chrome --version
 
-      - name: Accept website agent console in sandboxed Chromium
+      - name: Accept website agent console in sandboxed Chrome
         run: pnpm exec playwright test --config tests/e2e/website-agent.playwright.config.ts
 
       - name: Preserve website agent browser acceptance evidence

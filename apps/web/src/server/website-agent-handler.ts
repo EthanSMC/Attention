@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { SessionPrincipal } from "@attention/auth";
+import { readSessionToken, resolveSession, type SessionPrincipal } from "@attention/auth";
 import type { AttentionDatabase } from "@attention/db";
 import { runWebsiteAgent, WebsiteAgentError } from "@attention/website-agent";
 import { after } from "next/server";
@@ -15,9 +15,12 @@ import { clearInvalidSessionCookie, getRequestSession, type RequestSession } fro
 import { websiteAgentRequestFingerprint, WebsiteAgentAdmissionError } from "./website-agent-budget";
 import { beginWebsiteAgentTurn, finishWebsiteAgentTurn, isWebsiteAgentTurnActive, WebsiteAgentSessionError, type WebsiteAgentStartedTurn } from "./website-agent-sessions";
 import { websiteAgentAccountEligible, websiteAgentConfig, WebsiteAgentUnavailableError } from "./website-agent-config";
-import { createWebsiteAgentTools, WEBSITE_AGENT_READ_SCOPES } from "./website-agent-tools";
+import { createWebsiteAgentTools, WEBSITE_AGENT_TOOL_SCOPES } from "./website-agent-tools";
+import { pendingWebsiteAgentAction, WEBSITE_AGENT_MAX_NEW_ACTIONS, type StoredWebsiteAgentAction } from "./website-agent-action-state";
+import { prepareWebsiteAgentAction, WebsiteAgentActionPolicyError } from "./website-agent-action-policy";
 
 export const WEBSITE_AGENT_TIMEOUT_MS = 60_000;
+const secureCookie = process.env.NODE_ENV === "production";
 const bodySchema = z.object({
   query: z.string().trim().min(1).max(4_000),
   session_id: z.string().uuid(),
@@ -37,6 +40,8 @@ export interface WebsiteAgentRequestDependencies {
   isActive: typeof isWebsiteAgentTurnActive;
   run: typeof runWebsiteAgent;
   createTools: typeof createWebsiteAgentTools;
+  prepareAction?: typeof prepareWebsiteAgentAction;
+  resolveSessionInTransaction?: typeof resolveSession;
 }
 
 const defaults: WebsiteAgentRequestDependencies = {
@@ -73,9 +78,12 @@ export async function handleWebsiteAgentRequest(request: Request,
       timeoutMs: WEBSITE_AGENT_TIMEOUT_MS,
     });
     const claimedTurn = turn;
+    const cookieToken = readSessionToken(request.headers.get("cookie"), secureCookie);
     const requestId = claimedTurn.runId;
     const activeTurn = () => dependencies.isActive(database!, claimedTurn);
-    const scopes = [...WEBSITE_AGENT_READ_SCOPES, ...(body.collect ? ["collection:write"] : [])];
+    // Scopes describe the account's canonical tools. The transport's explicit
+    // consent/review adapters still prevent model calls from executing writes.
+    const scopes = [...WEBSITE_AGENT_TOOL_SCOPES];
     const context = (current: SessionPrincipal): AttentionToolBaseContext => ({
       accountId: current.accountId,
       caller: { clientId: "attention-website", credentialId: current.sessionId, credentialKind: "session", entrypoint: "hosted_agent" },
@@ -88,6 +96,16 @@ export async function handleWebsiteAgentRequest(request: Request,
           latest.isMember && websiteAgentAccountEligible(dependencies.getConfig(), latest.accountId) && await activeTurn()
           ? { accountId: latest.accountId, scopes, isMember: latest.isMember, isFilter: latest.isFilter } : null;
       },
+      revalidateInTransaction: async tx => {
+        if (!cookieToken) return null;
+        // Resolve on the current Core transaction, without a second connection
+        // or session lastSeenAt update while business rows are locked.
+        const latest = await (dependencies.resolveSessionInTransaction ?? resolveSession)(tx, cookieToken, { touch: false });
+        return latest && latest.accountId === principal.accountId && latest.sessionId === principal.sessionId &&
+          latest.isMember && websiteAgentAccountEligible(dependencies.getConfig(), latest.accountId) &&
+          await dependencies.isActive(tx, claimedTurn)
+          ? { accountId: latest.accountId, scopes, isMember: latest.isMember, isFilter: latest.isFilter } : null;
+      },
     });
     const currentPrincipal = async () => {
       const latest = (await dependencies.getSession(request)).principal;
@@ -98,6 +116,7 @@ export async function handleWebsiteAgentRequest(request: Request,
       const latest = await currentPrincipal();
       return latest && await activeTurn() ? context(latest) : null;
     };
+    const proposedActions: StoredWebsiteAgentAction[] = [];
     const result = await dependencies.run({
       apiKey: config.apiKey,
       prompt: body.query,
@@ -106,7 +125,28 @@ export async function handleWebsiteAgentRequest(request: Request,
       limits: { maxRunCostMicrousd: config.maxRunCostMicrousd, maxModelCalls: 6, maxToolCalls: 8,
         maxOutputTokensPerCall: 1_200, maxContextBytes: 131_072, maxToolOutputBytes: 65_536, timeoutMs: WEBSITE_AGENT_TIMEOUT_MS },
       tools: dependencies.createTools({ context: context(principal), getCurrentContext: currentContext,
-        operationId: body.operation_id, query: body.query, collect: body.collect, readSources: body.read_sources }),
+        operationId: body.operation_id, query: body.query, collect: body.collect, readSources: body.read_sources,
+        proposeAction: async (toolName, rawInput, execution) => {
+          execution.signal.throwIfAborted();
+          if (proposedActions.length >= WEBSITE_AGENT_MAX_NEW_ACTIONS) return { ok: false, code: "action_proposal_limit" };
+          const latest = await currentContext();
+          if (!latest) return { ok: false, code: "permission_revoked" };
+          try {
+            const proposal = await (dependencies.prepareAction ?? prepareWebsiteAgentAction)({ ...latest,
+              runId: `website:${body.operation_id}:${execution.toolCallId}`.slice(0, 128), signal: execution.signal }, toolName, rawInput);
+            execution.signal.throwIfAborted();
+            if (!await currentContext()) return { ok: false, code: "permission_revoked" };
+            const action = pendingWebsiteAgentAction({ proposal, authSessionId: principal.sessionId,
+              originRunId: claimedTurn.runId, originRevision: claimedTurn.revision });
+            proposedActions.push(action);
+            return { ok: true, value: { status: "requires_user_confirmation", action_id: action.id,
+              action_title: action.review.title, expires_at: action.expiresAt,
+              guidance: "This is a proposal only. The user must review and approve the exact action in the website. Nothing has been changed." } };
+          } catch (error) {
+            if (error instanceof WebsiteAgentActionPolicyError) return { ok: false, code: error.code };
+            return { ok: false, code: "action_proposal_unavailable" };
+          }
+        } }),
       beforeModelCall: async signal => {
         signal.throwIfAborted();
         if (!await currentContext()) throw new Error("permission_revoked");
@@ -117,7 +157,8 @@ export async function handleWebsiteAgentRequest(request: Request,
     if (!await currentContext()) throw new WebsiteAgentError("permission_revoked", result.usage, result.toolReceipts);
     request.signal.throwIfAborted();
     outcome = "completed";
-    const savedSession = await dependencies.finish(database, { ...claimedTurn, outcome, nativeSession: result.nativeSession, answer: result.answer });
+    const savedSession = await dependencies.finish(database, { ...claimedTurn, outcome, nativeSession: result.nativeSession, answer: result.answer,
+      ...(proposedActions.length ? { proposedActions } : {}) });
     finalized = true;
     if (!savedSession) throw new WebsiteAgentSessionError("session_conflict");
     // Persistence may await a transaction while access changes. The completed
