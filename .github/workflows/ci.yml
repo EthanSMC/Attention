@@ -164,6 +164,18 @@ jobs:
             tests/integration/website-agent-http-guard.test.ts \
             tests/integration/website-agent-http.test.ts
 
+      - name: Ensure Chinese glyph coverage for browser acceptance
+        run: |
+          # Reuse a runner-provided Noto CJK font when available. Otherwise use
+          # only Ubuntu's standard package; never download third-party font files.
+          if ! fc-list ':lang=zh-cn' family | grep -E 'Noto (Sans|Serif) CJK'; then
+            sudo apt-get update
+            apt-cache policy fonts-noto-cjk
+            sudo apt-get install --yes --no-install-recommends fonts-noto-cjk
+          fi
+          fc-match --format '%{family}\n' 'Noto Sans CJK SC:lang=zh-cn' | grep -E '^Noto (Sans|Serif) CJK'
+          fc-match --format '%{lang}\n' 'Noto Sans CJK SC:lang=zh-cn' | grep -E '(^|\|)zh-cn(\||$)'
+
       - name: Typecheck browser acceptance and verify sandboxed Chrome prerequisites
         run: |
           pnpm exec tsc --project tests/e2e/website-agent.tsconfig.json
@@ -198,6 +210,9 @@ jobs:
           TEST_WEBSITE_AGENT_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/attention_website_http_test_production_ci
           TEST_WEBSITE_AGENT_RUNTIME_DATABASE_URL: postgresql://attention_web_runtime:attention_ci_web_password@127.0.0.1:5432/attention_website_http_test_production_ci
         run: |
+          # The same runner font must remain available for the actual Next shell.
+          fc-match --format '%{family}\n' 'Noto Sans CJK SC:lang=zh-cn' | grep -E '^Noto (Sans|Serif) CJK'
+          fc-match --format '%{lang}\n' 'Noto Sans CJK SC:lang=zh-cn' | grep -E '(^|\|)zh-cn(\||$)'
           # A separate pristine database, never the main or route-suite database.
           # Fail if it already exists; no truncation, reuse, or drop operation.
           psql --host 127.0.0.1 --username postgres --dbname postgres \

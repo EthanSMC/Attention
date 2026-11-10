@@ -14,9 +14,10 @@ import { expect, test as base } from "@playwright/test";
 import { build } from "../../../apps/cli/node_modules/esbuild/lib/main.js";
 import { assertWebsiteHttpTestDatabase, websiteHttpTestDatabaseUrls } from "../../integration/website-agent-http-guard";
 import { productionFixtureMarker, providerKey } from "./website-agent-offline-provider";
+import { productionOrigin } from "./website-agent-production-http";
 import { copyWebsiteStandalone } from "./website-agent-standalone-copy";
 
-export const productionOrigin = "http://127.0.0.1:4179";
+export { productionOrigin } from "./website-agent-production-http";
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 export type SyntheticMember = { accountId: string; cookie: string; email: string };
 

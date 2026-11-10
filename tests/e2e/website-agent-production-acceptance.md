@@ -3,6 +3,11 @@
 This is a small complement to the 43 component cases and the isolated route/PG
 suite. It runs the built Next standalone server as a separate Node process on
 `127.0.0.1:4179`, with its traced dependencies, public files and `.next/static`.
+Clients use `http://localhost:4179`, matching NextRequest's canonical loopback
+origin. An IP URL would be normalized to localhost inside Next while its browser
+Origin header stayed numeric, correctly failing the unchanged CSRF guard when
+the configured build-time public origin differs. The listener stays IPv4
+loopback-only; no host/DNS/proxy, browser-security or production guard is changed.
 No production source, route handler, authentication function, database store,
 React component or browser API response is replaced.
 
@@ -26,6 +31,9 @@ cookie acceptance, cookie persistence, login, or a real user's account. The
 browser context blocks off-origin requests; actual app responses are never
 fulfilled from fixtures. Traces, videos and HAR are disabled, cookies are kept
 only in memory, and only synthetic screenshots/JUnit/limit notes are artifacts.
+Failed HTTP assertions include only the status and a fixed allowlist of error
+codes. Unknown or non-JSON errors are labeled generically; no response bodies,
+arbitrary messages, headers, tokens or cookies are printed.
 
 ## Offline provider boundary
 
@@ -77,7 +85,7 @@ with `chromiumSandbox: true`. There is no sandbox-disabled fallback. After
 
 ```sh
 pnpm exec tsc --project tests/e2e/website-agent-production.tsconfig.json
-pnpm exec vitest run tests/e2e/website-agent-offline-provider.test.ts tests/e2e/website-agent-standalone-copy.test.ts
+pnpm exec vitest run tests/e2e/website-agent-offline-provider.test.ts tests/e2e/website-agent-standalone-copy.test.ts tests/e2e/website-agent-production-http.test.ts
 pnpm exec playwright test --config tests/e2e/website-agent-production.playwright.config.ts
 ```
 

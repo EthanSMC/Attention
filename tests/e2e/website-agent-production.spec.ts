@@ -1,26 +1,34 @@
 import { randomUUID } from "node:crypto";
 
-import { expect } from "@playwright/test";
+import { expect, type Response as BrowserResponse } from "@playwright/test";
 
 import type { WebsiteAgentSessionView } from "../../apps/web/src/server/website-agent-sessions";
 import { digestAnswer, digestPrompt, helloAnswer, helloPrompt, resumeAnswer, resumePrompt } from "./fixtures/website-agent-offline-provider";
 import { productionOrigin, test } from "./fixtures/website-agent-production-fixture";
+import { productionResponseDiagnostic } from "./fixtures/website-agent-production-http";
 
 type SessionBody = { session: WebsiteAgentSessionView; answer?: string };
 const sessionsPath = "/api/website-agent/sessions";
 const queryPath = "/api/website-agent/query";
 
+async function expectHttpStatus(response: Response | BrowserResponse, expected: number): Promise<void> {
+  const status = typeof response.status === "function" ? response.status() : response.status;
+  // Clone native responses so the assertion does not consume their application body.
+  const readJson = () => "clone" in response ? response.clone().json() : response.json();
+  expect(status, await productionResponseDiagnostic(status, readJson)).toBe(expected);
+}
+
 test("real standalone HTTP authenticates, persists native state, and resumes after process restart", async ({ production }) => {
   const actor = await production.member();
   const unauthenticated = await production.request(sessionsPath);
-  expect(unauthenticated.status).toBe(401);
+  await expectHttpStatus(unauthenticated, 401);
   expect(await unauthenticated.json()).toMatchObject({ error: { code: "authentication_required" } });
   const created = await production.request(sessionsPath, actor, {});
-  expect(created.status).toBe(201);
+  await expectHttpStatus(created, 201);
   const { session } = await created.json() as SessionBody;
   const queried = await production.request(queryPath, actor, { query: helloPrompt, session_id: session.id,
     expected_revision: session.revision, operation_id: randomUUID(), data_consent: true });
-  expect(queried.status).toBe(200);
+  await expectHttpStatus(queried, 200);
   expect(queried.headers.get("cache-control")).toBe("no-store");
   const first = await queried.json() as SessionBody;
   expect(first.answer).toBe(helloAnswer);
@@ -33,14 +41,14 @@ test("real standalone HTTP authenticates, persists native state, and resumes aft
 
   await production.restart();
   const loaded = await production.request(`${sessionsPath}/${session.id}`, actor);
-  expect(loaded.status).toBe(200);
+  await expectHttpStatus(loaded, 200);
   const restored = await loaded.json() as SessionBody;
   expect(restored.session.id).toBe(session.id);
   expect(restored.session.revision).toBe(first.session.revision);
   expect(restored.session.messages).toEqual(first.session.messages);
   const resumed = await production.request(queryPath, actor, { query: resumePrompt, session_id: session.id,
     expected_revision: restored.session.revision, operation_id: randomUUID(), data_consent: true });
-  expect(resumed.status).toBe(200);
+  await expectHttpStatus(resumed, 200);
   expect((await resumed.json() as SessionBody).answer).toBe(resumeAnswer);
   // The preload only supplies the resume answer when the native provider request contains the old assistant turn.
   expect(await production.providerEvents()).toEqual([{ kind: "hello" }, { kind: "resume" }]);
@@ -74,7 +82,7 @@ test("hydrated production mobile shell reviews a native digest proposal and comm
   const creating = page.waitForResponse(response => new URL(response.url()).pathname === sessionsPath && response.request().method() === "POST");
   await page.getByRole("button", { name: "新建会话", exact: true }).click();
   const createResponse = await creating;
-  expect(createResponse.status()).toBe(201);
+  await expectHttpStatus(createResponse, 201);
   const created = await createResponse.json() as SessionBody;
   await expect(page).toHaveURL(`${productionOrigin}/agent/website?session=${created.session.id}`);
   await page.getByRole("textbox", { name: "询问 Attention" }).fill(digestPrompt);
@@ -82,7 +90,7 @@ test("hydrated production mobile shell reviews a native digest proposal and comm
   const querying = page.waitForResponse(response => new URL(response.url()).pathname === queryPath);
   await page.getByRole("button", { name: "询问网页助手", exact: true }).click();
   const queryResponse = await querying;
-  expect(queryResponse.status()).toBe(200);
+  await expectHttpStatus(queryResponse, 200);
   const proposed = await queryResponse.json() as SessionBody;
   expect(proposed.answer).toBe(digestAnswer);
   expect(proposed.session.actions).toHaveLength(1);
@@ -101,7 +109,7 @@ test("hydrated production mobile shell reviews a native digest proposal and comm
   const approving = page.waitForResponse(response => new URL(response.url()).pathname === approvalPath);
   await card.getByRole("button", { name: "确认执行", exact: true }).click();
   const approval = await approving;
-  expect(approval.status()).toBe(200);
+  await expectHttpStatus(approval, 200);
   const completed = await approval.json() as SessionBody;
   expect(completed.session.actions?.[0]).toMatchObject({ id: action.id, status: "completed", receipt: { ok: true, code: "completed" } });
   expect(posts.filter(post => post.path === approvalPath)).toEqual([{ path: approvalPath, body: {
@@ -122,6 +130,7 @@ test("hydrated production mobile shell reviews a native digest proposal and comm
   const [unchanged] = await production.db.sql`SELECT updated_at FROM account_digest_preferences WHERE account_id=${actor.accountId}`;
   expect(unchanged?.updated_at).toEqual(preference?.updated_at);
   const loaded = await production.request(`${sessionsPath}/${created.session.id}`, actor);
+  await expectHttpStatus(loaded, 200);
   expect((await loaded.json() as SessionBody).session.actions?.[0]).toMatchObject({ id: action.id, status: "completed" });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("production-digest-receipt-mobile-390.png"), fullPage: true });
