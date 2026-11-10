@@ -43,7 +43,7 @@ const attentionToolAuditInputSchema = z
     contentId: z.string().uuid().nullish(),
     contractVersion: opaqueIdentifierSchema,
     credentialId: z.string().uuid(),
-    credentialKind: z.enum(["oauth", "pat"]),
+    credentialKind: z.enum(["oauth", "pat", "session"]),
     durationMs: z.number().finite().nonnegative().max(86_400_000),
     entitlementTier: z.enum(["free", "member", "filter"]),
     entrypoint: z.enum(["hosted_agent", "hosted_mcp"]),

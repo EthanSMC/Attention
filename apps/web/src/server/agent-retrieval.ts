@@ -18,6 +18,7 @@ export async function retrieveForAgent(
   db: AttentionDatabase,
   accountId: string,
   query: string,
+  options: { generatedAnswer?: boolean } = {},
 ): Promise<AgentRetrievalResult> {
   const capabilities = await resolveAccountCapabilities(db, accountId);
   if (!capabilities.isMember) throw new AgentAccessError();
@@ -25,7 +26,7 @@ export async function retrieveForAgent(
   return answerAgentQuery({
     candidates,
     isMember: capabilities.isMember,
-    provider: createConfiguredAgentAnswerProvider(),
+    provider: options.generatedAnswer === false ? null : createConfiguredAgentAnswerProvider(),
     query,
   });
 }

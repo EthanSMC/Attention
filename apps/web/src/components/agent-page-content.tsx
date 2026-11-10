@@ -63,6 +63,7 @@ export function AgentPageContent({
   bridgeConnectionStatus,
   supportedAgents,
   wechatBindingStatus,
+  websiteAgentAvailable = false,
 }: {
   agentConnectionStatus: AgentConnectionStatus;
   agentDocumentationUrl: string;
@@ -70,6 +71,7 @@ export function AgentPageContent({
   bridgeConnectionStatus: BridgeConnectionStatus;
   supportedAgents: readonly string[];
   wechatBindingStatus: AgentWechatBindingStatus;
+  websiteAgentAvailable?: boolean;
 }) {
   const { feedback, showFeedback } = useTransientFeedback();
   const [copyDialogOpen, setCopyDialogOpen] = useState(false);
@@ -334,9 +336,9 @@ export function AgentPageContent({
         <div className="agent-page__cloud-copy">
           <p className="agent-page__eyebrow">云端 Agent</p>
           <h2 id="cloud-agent-title">在 Attention 里直接使用</h2>
-          <p>云端 Agent 正在开发中。完成后，你可以不安装本地运行时，直接在 Attention 里使用。</p>
+          <p>{websiteAgentAvailable ? <>网页助手已为你的账号开放。<Link href="/agent/website">打开网页助手</Link></> : "云端 Agent 正在开发中。完成后，你可以不安装本地运行时，直接在 Attention 里使用。"}</p>
         </div>
-        <span className="agent-page__status">开发中</span>
+        <span className="agent-page__status">{websiteAgentAvailable ? "内测" : "开发中"}</span>
       </section>
 
       {copyDialogOpen ? (

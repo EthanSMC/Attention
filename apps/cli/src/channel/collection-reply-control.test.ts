@@ -12,6 +12,23 @@ const COLLECTION_ID = "11111111-1111-4111-8111-111111111111";
 
 describe("collection reply control", () => {
   it.each([
+    ["no_content_link", "未保存：没有找到 HTTP(S) 内容链接。"],
+    ["non_content_target", "未保存：未识别到可收藏的内容页，请提供笔记或文章的分享链接。"],
+    ["invalid_url", "未保存：链接无效。"],
+    [undefined, "未保存：暂时无法识别这个链接。"],
+    ["unknown_error https://example.com/private", "未保存：暂时无法识别这个链接。"],
+  ] as const)("explains invalid results by stable error code %s without reflecting payloads", (errorCode, expected) => {
+    for (const toolName of ["attention_collect_content", "attention_select_collection_candidate"]) {
+      const control = applyAttentionToolResult(null, toolName, {
+        status: "invalid", error_code: errorCode, title: "PRIVATE TITLE",
+      });
+      expect(control).toEqual({ kind: "fixed", reply: expected });
+      expect(safeCollectionReply(control!, "The link is invalid. PRIVATE TITLE", {
+        phase: "ordinary", sensitiveFragments: [],
+      }).text).toBe(expected);
+    }
+  });
+  it.each([
     ["paused", "来源需要验证，自动重试已暂停。请完成验证后手动重试。"],
     ["terminal", "来源已不可用，自动重试已停止。"],
   ] as const)("retains a truthful %s explanation but rejects a subsequent future promise", (phase, reply) => {

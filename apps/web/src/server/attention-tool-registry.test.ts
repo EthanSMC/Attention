@@ -397,6 +397,33 @@ describe("Attention Tool Registry execution contract", () => {
     expect(core.collectFromWeb).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["hosted_agent", "private", true],
+    ["hosted_agent", "public", false],
+    ["hosted_mcp", "private", false],
+    ["hosted_mcp", "public", false],
+  ] as const)("sets the trusted private-only fence for %s %s", async (entrypoint, visibility, fenced) => {
+    const collect = vi.fn(async () => { throw new CollectionServiceError("website_collection_review_required", 409); });
+    const core = dependencies({ collectFromWeb: collect });
+    const result = await tool(core, "attention_collect_content").invoke(context({
+      isFilter: true, scopes: ["collection:write"],
+      caller: { clientId: "test", credentialId, credentialKind: "session", entrypoint },
+    }), { idempotency_key: "website-private-fence", input: "https://example.org/article", visibility });
+    expect(collect).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ privateCollectionOnly: fenced }), {
+      idempotency_key: "website-private-fence", raw_input: "https://example.org/article", visibility,
+    });
+    expect(result).toEqual({ ok: false, code: "website_collection_review_required",
+      guidance: "This collection would keep public visibility, merge existing collections, or change a shared source link. Review those exact changes before saving; no collection changes were committed." });
+  });
+
+  it("does not accept the private-only transport marker from tool arguments", async () => {
+    const core = dependencies();
+    expect(await tool(core, "attention_collect_content").invoke(context({ scopes: ["collection:write"] }), {
+      idempotency_key: "website-private-fence", input: "https://example.org/article", visibility: "private", privateCollectionOnly: false,
+    })).toMatchObject({ ok: false, code: "invalid_request" });
+    expect(core.collectFromWeb).not.toHaveBeenCalled();
+  });
+
   it("maps one-time candidate failures to stable public errors", async () => {
     const core = dependencies({
       selectCandidateFromWeb: vi.fn(async () => {

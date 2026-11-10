@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "sourceMap": false,
+    "types": ["node"],
+    "typeRoots": ["../../apps/web/node_modules/@types"]
+  },
+  "include": ["website-agent-console.spec.ts", "website-agent.playwright.config.ts", "fixtures/website-agent-fixture.ts"]
+}

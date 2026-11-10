@@ -1,5 +1,10 @@
 # Attention 系统架构
 
+2026-11-10 增补：网页 Agent 内测实现与个人 Agent 共用现有 Tool Registry、
+Core、权限和安全读取基础设施；Pi / DeepSeek 配置、开放边界与未完成验收见
+[`Website Agent 架构`](./website-agent-architecture.md)。此入口默认关闭，
+不是 Hosted 微信或下方长期方案已经上线的声明。
+
 状态：第一期基础设施架构；当前范围以 `docs/first-release-scope.md` 为准
 
 更新日期：2026-08-07

@@ -72,11 +72,12 @@ function reasonFor(code: string): string {
     dangerous_query: "链接可能包含访问凭证，请改用公开内容页链接。",
     invalid_url: "链接格式不完整，请复制公开内容页的完整地址。",
     no_content_link: "没有找到可收藏的 HTTP(S) 内容链接。",
-    non_content_target: "识别到的是下载页或活动页，不是可收藏的内容页。",
+    non_content_target: "未识别到可收藏的内容页，请提供笔记或文章的分享链接。",
     selection_expired: "候选选择已过期，请重新提交原始分享内容。",
     unsafe_target: "链接目标不在公开网络范围内，因此没有保存。",
   };
-  return reasons[code] ?? "这个链接暂时无法安全处理，请换一个公开内容页重试。";
+  const reason = Object.hasOwn(reasons, code) ? reasons[code] : undefined;
+  return reason ?? "暂时无法处理这个链接，请确认是公开内容页后重试。";
 }
 
 function toUiResult(

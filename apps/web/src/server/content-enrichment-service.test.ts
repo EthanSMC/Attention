@@ -15,9 +15,11 @@ import {
   type DatabaseHandle,
 } from "@attention/db";
 import { migrateDatabase } from "@attention/db/migrate";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { submitContentEnrichment } from "./content-enrichment-service";
+import { applyPreparedContentEnrichment, submitContentEnrichment } from "./content-enrichment-service";
+import { loadContentEnrichmentPlan } from "./content-enrichment-plan";
+import * as enrichmentPlans from "./content-enrichment-plan";
 import type { ContentEnrichmentServiceError } from "./content-enrichment-service";
 
 const databaseUrl = process.env.TEST_CONTENT_ENRICHMENT_DATABASE_URL;
@@ -527,6 +529,129 @@ describe.skipIf(!databaseUrl)("content enrichment service with PostgreSQL", () =
       outboundUrl: stored?.outboundUrl,
       summary: stored?.aiSummary,
       title: stored?.title,
+    });
+  });
+
+  describe("reviewed enrichment plan/apply with real PostgreSQL", () => {
+    async function snapshotBusiness() {
+      return Promise.all([contents, collections, contentIdentities, contentAliases, collectionEvents, eventLedger]
+        .map(async table => (await handle.db.select().from(table)).map(row => JSON.stringify(row)).sort()));
+    }
+    async function seedMerge(options: { deleted?: boolean; ready?: boolean; wechat?: boolean; public?: boolean } = {}) {
+      await handle.db.insert(contentIdentities).values({ contentId, adapterVersion: "v1", sourceAdapter: "generic_web",
+        dedupeKey: "generic_web:v1:url:https://example.com/shared", normalizedUrl: "https://example.com/shared" });
+      if (options.wechat) await handle.db.update(collections).set({ sourceChannel: "wechat" }).where(eq(collections.contentId, contentId));
+      if (options.public) {
+        await handle.db.insert(filterProfiles).values({ accountId, active: true, displayName: "Reviewed Filter" });
+        await handle.db.update(collections).set({ visibility: "public", publicSince: new Date("2026-01-01T00:00:00Z") }).where(eq(collections.contentId, contentId));
+      }
+      const winner = await upsertContentByIdentity(handle.db, { adapterVersion: "v1", sourceAdapter: "generic_web", source: "generic_web",
+        dedupeKey: `generic_web:v1:url:${input.resolved_url}`, normalizedUrl: input.resolved_url, outboundUrl: input.resolved_url });
+      const [target] = await handle.db.insert(collections).values({ accountId, contentId: winner.content.id, domainId,
+        collectionStatus: options.deleted ? "deleted" : "active", sourceChannel: "web", visibility: "private" }).returning();
+      if (options.ready) await handle.db.update(contents).set({ summaryStatus: "ready", aiSummary: "Existing shared summary must remain." }).where(eq(contents.id, winner.content.id));
+      return { winnerId: winner.content.id, targetId: target!.id };
+    }
+    it("previews without writes, then atomically applies ordinary same-target enrichment", async () => {
+      const before = await snapshotBusiness();
+      const plan = await asWebRuntime(runtime => loadContentEnrichmentPlan(runtime.db, accountId, input));
+      expect(await snapshotBusiness()).toEqual(before);
+      expect(plan.effects).toMatchObject({ claimIdentity: true, linkAlias: false, writeSharedSummary: true });
+      const result = await asWebRuntime(runtime => runtime.db.transaction(tx => applyPreparedContentEnrichment(tx, { accountId }, plan)));
+      expect(result).toMatchObject({ status: "enriched", contentId });
+      expect((await handle.db.select().from(contents))[0]).toMatchObject({ title: input.title, aiSummary: input.summary, aiTags: ["Agents", "MCP"] });
+    });
+    it("keeps default deleted-winner behavior while explicitly reviewed restore succeeds", async () => {
+      const target = await seedMerge({ deleted: true });
+      const before = await snapshotBusiness();
+      await expect(asWebRuntime(runtime => submitContentEnrichment(runtime.db, { accountId }, input))).rejects.toBeDefined();
+      expect(await snapshotBusiness()).toEqual(before);
+      const plan = await asWebRuntime(runtime => loadContentEnrichmentPlan(runtime.db, accountId, input));
+      expect(plan.effects.restoreWinnerCollection).toBe(true);
+      await asWebRuntime(runtime => runtime.db.transaction(tx => applyPreparedContentEnrichment(tx, { accountId }, plan)));
+      expect(await handle.db.select().from(collections).where(eq(collections.id, target.targetId))).toMatchObject([{ collectionStatus: "active" }]);
+      expect(await handle.db.select().from(collections).where(eq(collections.contentId, contentId))).toMatchObject([{ collectionStatus: "deleted" }]);
+      expect(await handle.db.select().from(contentAliases)).toMatchObject([{ aliasContentId: contentId, primaryContentId: target.winnerId }]);
+    });
+    it("executes public already-ready alias effects without overwriting the shared summary", async () => {
+      const target = await seedMerge({ ready: true, public: true });
+      const plan = await asWebRuntime(runtime => loadContentEnrichmentPlan(runtime.db, accountId, input));
+      expect(plan.effects).toMatchObject({ writeSharedSummary: false, effectivelyPublic: true, resultingVisibility: "public" });
+      expect(await asWebRuntime(runtime => runtime.db.transaction(tx => applyPreparedContentEnrichment(tx, { accountId }, plan))))
+        .toEqual({ contentId: target.winnerId, status: "already_enriched", summaryStatus: "ready" });
+      const [winner] = await handle.db.select().from(contents).where(eq(contents.id, target.winnerId));
+      expect(winner).toMatchObject({ aiSummary: "Existing shared summary must remain.", visibilityVersion: 1 });
+      expect(winner?.firstPublicAt).not.toBeNull(); // Exercises raw SQL timestamp serialization.
+      expect(await handle.db.select().from(collections).where(eq(collections.id, target.targetId))).toMatchObject([{ visibility: "public" }]);
+      expect(await handle.db.select().from(eventLedger)).toEqual([]);
+    });
+    it.each(["default", "reviewed"] as const)("preserves revoked public visibility in a new winner through %s Core", async mode => {
+      const target = await seedMerge({ public: true });
+      await handle.db.delete(collections).where(eq(collections.id, target.targetId));
+      const revoked = new Date("2026-01-02T00:00:00.000Z");
+      await handle.db.update(collections).set({ filterRevokedAt: revoked }).where(eq(collections.contentId, contentId));
+      const plan = await asWebRuntime(runtime => loadContentEnrichmentPlan(runtime.db, accountId, input));
+      expect(plan.effects).toMatchObject({ createWinnerCollection: true, effectivelyPublic: false, resultingFilterRevokedAt: revoked.toISOString() });
+      await asWebRuntime(runtime => mode === "reviewed"
+        ? runtime.db.transaction(tx => applyPreparedContentEnrichment(tx, { accountId }, plan))
+        : submitContentEnrichment(runtime.db, { accountId }, input));
+      const [winner] = await handle.db.select().from(collections).where(eq(collections.contentId, target.winnerId));
+      expect(winner?.filterRevokedAt?.toISOString()).toBe(revoked.toISOString());
+      expect(winner?.visibility).toBe("public");
+    });
+    it("promotes only the reviewed owned WeChat source and queues a deduped event", async () => {
+      const target = await seedMerge({ wechat: true });
+      const plan = await asWebRuntime(runtime => loadContentEnrichmentPlan(runtime.db, accountId, input));
+      expect(plan.effects).toMatchObject({ promoteSourceChannel: true, notification: { mode: "queue_if_missing" } });
+      await asWebRuntime(runtime => runtime.db.transaction(tx => applyPreparedContentEnrichment(tx, { accountId }, plan)));
+      expect(await handle.db.select().from(collections).where(eq(collections.id, target.targetId))).toMatchObject([{ sourceChannel: "wechat", collectionStatus: "active" }]);
+      expect(await handle.db.select().from(eventLedger)).toMatchObject([{ contentId: target.winnerId,
+        eventType: "content.summary.ready.v1", dedupeKey: `content.summary.ready.v1:${target.winnerId}` }]);
+    });
+    it("rolls back restoration, promotion, aliases and notification on outer receipt failure", async () => {
+      await seedMerge({ deleted: true, wechat: true, public: true });
+      const plan = await asWebRuntime(runtime => loadContentEnrichmentPlan(runtime.db, accountId, input)), before = await snapshotBusiness();
+      await expect(asWebRuntime(runtime => runtime.db.transaction(async tx => {
+        await applyPreparedContentEnrichment(tx, { accountId }, plan);
+        expect(await tx.select().from(contentAliases)).toHaveLength(1);
+        throw new Error("synthetic_receipt_failure");
+      }))).rejects.toThrow("synthetic_receipt_failure");
+      expect(await snapshotBusiness()).toEqual(before);
+    });
+    it("rejects changed targets and cannot replay the old exact plan after success", async () => {
+      const target = await seedMerge();
+      const plan = await asWebRuntime(runtime => loadContentEnrichmentPlan(runtime.db, accountId, input));
+      await handle.db.update(contents).set({ outboundUrl: "https://example.com/changed-target", updatedAt: new Date() }).where(eq(contents.id, target.winnerId));
+      const changed = await snapshotBusiness();
+      await expect(asWebRuntime(runtime => runtime.db.transaction(tx => applyPreparedContentEnrichment(tx, { accountId }, plan))))
+        .rejects.toMatchObject({ code: "enrichment_target_changed" });
+      expect(await snapshotBusiness()).toEqual(changed);
+      const fresh = await asWebRuntime(runtime => loadContentEnrichmentPlan(runtime.db, accountId, input));
+      await asWebRuntime(runtime => runtime.db.transaction(tx => applyPreparedContentEnrichment(tx, { accountId }, fresh)));
+      const after = await snapshotBusiness();
+      await expect(asWebRuntime(runtime => runtime.db.transaction(tx => applyPreparedContentEnrichment(tx, { accountId }, fresh)))).rejects.toBeDefined();
+      expect(await snapshotBusiness()).toEqual(after);
+    });
+    it("rolls back when a concurrent unique-identity winner appears after the locked preview", async () => {
+      const plan = await asWebRuntime(runtime => loadContentEnrichmentPlan(runtime.db, accountId, input));
+      const original = enrichmentPlans.lockAndRevalidateContentEnrichmentPlan;
+      let concurrentWinner: string | undefined;
+      const seam = vi.spyOn(enrichmentPlans, "lockAndRevalidateContentEnrichmentPlan").mockImplementation(async (...args) => {
+        const checked = await original(...args);
+        const winner = await upsertContentByIdentity(handle.db, { adapterVersion: "v1", sourceAdapter: "generic_web", source: "generic_web",
+          dedupeKey: `generic_web:v1:url:${input.resolved_url}`, normalizedUrl: input.resolved_url, outboundUrl: input.resolved_url });
+        concurrentWinner = winner.content.id;
+        return checked;
+      });
+      try {
+        await expect(asWebRuntime(runtime => runtime.db.transaction(tx => applyPreparedContentEnrichment(tx, { accountId }, plan))))
+          .rejects.toMatchObject({ code: "enrichment_target_changed" });
+      } finally { seam.mockRestore(); }
+      expect(concurrentWinner).toBeDefined();
+      expect(await handle.db.select().from(contentAliases)).toEqual([]);
+      expect(await handle.db.select().from(collections)).toHaveLength(1);
+      expect((await handle.db.select().from(contents).where(eq(contents.id, contentId)))[0]).toMatchObject({ summaryStatus: "pending", aiSummary: null });
+      expect((await handle.db.select().from(contentIdentities)).map(row => row.contentId)).toEqual([concurrentWinner]);
     });
   });
 });

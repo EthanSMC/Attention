@@ -556,6 +556,7 @@ describe("handleInboundMessage", () => {
 
   it.each([
     ["invalid", "未保存：链接无效。"],
+    ["non_content_target", "未保存：未识别到可收藏的内容页，请提供笔记或文章的分享链接。"],
     ["unsafe", "未保存：链接未通过安全检查。"],
     ["resolution_pending", "链接仍在解析，收藏尚未完成。"],
     ["missing", "收藏结果无法确认，请稍后重试。"],

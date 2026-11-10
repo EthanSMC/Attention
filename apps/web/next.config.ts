@@ -13,6 +13,13 @@ const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: workspaceRoot,
   poweredByHeader: false,
+  // Pi uses native Node loaders. Keep those published modules intact rather
+  // than rewriting their dynamic builtin imports into webpack contexts.
+  serverExternalPackages: [
+    "@earendil-works/pi-agent-core",
+    "@earendil-works/pi-ai",
+    "@earendil-works/pi-coding-agent",
+  ],
   transpilePackages: [
     "@attention/auth",
     "@attention/collector",
@@ -21,7 +28,8 @@ const nextConfig: NextConfig = {
     "@attention/fetcher",
     "@attention/contracts",
     "@attention/db",
-    "@attention/domain"
+    "@attention/domain",
+    "@attention/website-agent"
   ]
 };
 

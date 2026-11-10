@@ -176,6 +176,7 @@ import {
   submitContentReport,
   upsertCollection,
   upsertContentByIdentity,
+  type AttentionTransaction,
   type DatabaseHandle
 } from "@attention/db";
 import { migrateDatabase } from "@attention/db/migrate";
@@ -2512,6 +2513,140 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
     });
   });
 
+  describe("website automatic private collection safety fence", () => {
+    async function businessSnapshot() {
+      // Attempt admission is outside the business transaction. All collection,
+      // shared-content, alias, event, observation and queued-job effects must roll back.
+      return Promise.all([contents, contentIdentities, contentAliases, collections, collectionEvents, contentLinks, jobs]
+        .map(async table => (await handle.db.select().from(table)).map(row => JSON.stringify(row)).sort()));
+    }
+    async function withWebRole<T>(work: (runtime: DatabaseHandle) => Promise<T>): Promise<T> {
+      const runtime = createDatabase(databaseUrl!, { maxConnections: 1 });
+      try {
+        await runtime.sql.unsafe("SET ROLE attention_web_runtime");
+        return await work(runtime);
+      } finally {
+        await runtime.sql.unsafe("RESET ROLE").catch(() => undefined);
+        await runtime.close();
+      }
+    }
+    const reviewRequired = { code: "website_collection_review_required", httpStatus: 409 };
+
+    it("allows simple private create, existing-content reuse and restore with one connection", async () => {
+      const { redeemed } = await createRedeemedAccount("member", "website-private-simple");
+      const principal = await principalFor(redeemed);
+      const raw_input = "https://example.org/website-private-simple";
+      const finalAuthority = vi.fn(async (tx: AttentionTransaction) => {
+        const current = await resolveSession(tx, redeemed.session.token, { touch: false });
+        return current ? { ...current, scopes: ["collection:write"] } : null;
+      });
+      await withWebRole(async runtime => {
+        const guarded = { ...principal, privateCollectionOnly: true, revalidateInTransaction: finalAuthority };
+        const first = await collectFromWeb(runtime.db, guarded, { raw_input, visibility: "private", idempotency_key: "website-simple-create" });
+        expect(first).toMatchObject({ status: "accepted", current_visibility: "private" });
+        if (first.status !== "accepted") throw new Error("Expected private collection");
+        expect(await collectFromWeb(runtime.db, guarded, { raw_input, visibility: "private", idempotency_key: "website-simple-reuse" }))
+          .toMatchObject({ status: "already_collected", collection_id: first.collection_id, current_visibility: "private" });
+        await deleteCollection(handle.db, { accountId: principal.accountId, collectionId: first.collection_id });
+        expect(await collectFromWeb(runtime.db, guarded, { raw_input, visibility: "private", idempotency_key: "website-simple-restore" }))
+          .toMatchObject({ collection_id: first.collection_id, current_visibility: "private" });
+      });
+      expect(finalAuthority).toHaveBeenCalledTimes(3);
+      expect(await handle.db.select().from(contents)).toHaveLength(1);
+      expect(await handle.db.select().from(collections)).toMatchObject([{ collectionStatus: "active", visibility: "private" }]);
+    });
+
+    it("rolls back when a reused collection would remain public", async () => {
+      const { redeemed } = await createRedeemedAccount("filter", "website-private-public");
+      const principal = await principalFor(redeemed);
+      const raw_input = "https://example.org/website-private-public";
+      await collectFromWeb(handle.db, principal, { raw_input, visibility: "public", idempotency_key: "website-public-seed" });
+      const before = await businessSnapshot();
+      await withWebRole(runtime => expect(collectFromWeb(runtime.db, { ...principal, privateCollectionOnly: true },
+        { raw_input, visibility: "private", idempotency_key: "website-public-blocked" })).rejects.toMatchObject(reviewRequired));
+      expect(await businessSnapshot()).toEqual(before);
+      const [attempt] = await handle.db.select().from(inputAttempts).where(eq(inputAttempts.channelMessageId, "website-public-blocked"));
+      expect(attempt).toMatchObject({ status: "processing", resultContentId: null, resultCollectionId: null });
+    });
+
+    it.each(["private", "public"] as const)("does not soft-delete an active %s alias collection", async visibility => {
+      const { redeemed } = await createRedeemedAccount("filter", `website-alias-${visibility}`);
+      const principal = await principalFor(redeemed);
+      const raw_input = "https://example.org/website-alias-primary";
+      const primary = await collectFromWeb(handle.db, principal, { raw_input, visibility: "private", idempotency_key: "website-alias-primary" });
+      if (primary.status !== "accepted") throw new Error("Expected primary collection");
+      const aliasUrl = "https://example.org/website-alias-old";
+      const alias = await upsertContentByIdentity(handle.db, { adapterVersion: "v1", dedupeKey: `generic_web:v1:url:${aliasUrl}`,
+        normalizedUrl: aliasUrl, outboundUrl: aliasUrl, source: "generic_web", sourceAdapter: "generic_web" });
+      await upsertCollection(handle.db, { accountId: principal.accountId, contentId: alias.content.id,
+        domainId: await aiDomainId(), sourceChannel: "web", visibility });
+      await handle.db.insert(contentAliases).values({ aliasContentId: alias.content.id, primaryContentId: primary.content_id,
+        aliasDedupeKey: `generic_web:v1:url:${aliasUrl}`, ruleVersion: "v1", reasonCode: "historical_split" });
+      const before = await businessSnapshot();
+      await withWebRole(runtime => expect(collectFromWeb(runtime.db, { ...principal, privateCollectionOnly: true },
+        { raw_input, visibility: "private", idempotency_key: "website-alias-blocked" })).rejects.toMatchObject(reviewRequired));
+      expect(await businessSnapshot()).toEqual(before);
+      // The ordinary Web/personal Core path retains its established merge behavior.
+      expect(await collectFromWeb(handle.db, principal, { raw_input, visibility: "private", idempotency_key: "ordinary-alias-merge" }))
+        .toMatchObject({ status: "merged_with_existing_content", current_visibility: visibility });
+      expect(await handle.db.select({ status: collections.collectionStatus }).from(collections).where(eq(collections.contentId, alias.content.id)))
+        .toEqual([{ status: "deleted" }]);
+    });
+
+    it("rolls back provisional target and identity writes before linking an existing alias identity", async () => {
+      const { redeemed } = await createRedeemedAccount("member", "website-identity-link");
+      const principal = await principalFor(redeemed);
+      const raw_input = "https://short.example/website-identity-link";
+      await collectFromWeb(handle.db, principal, { raw_input, visibility: "private", idempotency_key: "website-identity-seed" });
+      const before = await businessSnapshot();
+      vi.stubGlobal("fetch", vi.fn(async () => Response.json({ finalUrl: "https://example.org/website-identity-final", redirects: [], status: 200 })));
+      await withWebRole(runtime => expect(collectFromWeb(runtime.db, { ...principal, privateCollectionOnly: true },
+        { raw_input, visibility: "private", idempotency_key: "website-identity-blocked" })).rejects.toMatchObject(reviewRequired));
+      expect(await businessSnapshot()).toEqual(before);
+      expect(await handle.db.select().from(contentAliases)).toEqual([]);
+    });
+
+    it("rejects shared Xiaohongshu source changes but allows the unchanged access link", async () => {
+      const { redeemed } = await createRedeemedAccount("member", "website-xhs-source");
+      const principal = await principalFor(redeemed);
+      const raw_input = "https://www.xiaohongshu.com/explore/abc123?xsec_source=pc_share&xsec_token=public-share-a";
+      await collectFromWeb(handle.db, principal, { raw_input, visibility: "private", idempotency_key: "website-xhs-seed" });
+      await withWebRole(runtime => expect(collectFromWeb(runtime.db, { ...principal, privateCollectionOnly: true },
+        { raw_input, visibility: "private", idempotency_key: "website-xhs-unchanged" })).resolves.toMatchObject({ status: "already_collected" }));
+      const before = await businessSnapshot();
+      const changed = raw_input.replace("public-share-a", "public-share-b");
+      await withWebRole(runtime => expect(collectFromWeb(runtime.db, { ...principal, privateCollectionOnly: true },
+        { raw_input: changed, visibility: "private", idempotency_key: "website-xhs-blocked" })).rejects.toMatchObject(reviewRequired));
+      expect(await businessSnapshot()).toEqual(before);
+      await collectFromWeb(handle.db, principal, { raw_input: changed, visibility: "private", idempotency_key: "ordinary-xhs-refresh" });
+      expect((await handle.db.select().from(contents))[0]?.outboundUrl).toBe(changed);
+    });
+
+    it("rolls back all business writes when transaction-bound final authority is revoked", async () => {
+      const { redeemed } = await createRedeemedAccount("member", "website-final-authority");
+      const principal = await principalFor(redeemed);
+      const before = await businessSnapshot();
+      const outsideAuthority = vi.fn(async () => ({ ...principal, scopes: ["collection:write"] }));
+      const finalAuthority = vi.fn(async (tx: AttentionTransaction) => {
+        expect(await tx.select().from(contents)).toHaveLength(1);
+        expect(await tx.select().from(jobs)).toHaveLength(1);
+        await handle.db.update(sessions).set({ revokedAt: new Date() }).where(eq(sessions.id, principal.sessionId));
+        const current = await resolveSession(tx, redeemed.session.token, { touch: false });
+        return current ? { ...current, scopes: ["collection:write"] } : null;
+      });
+      await withWebRole(runtime => expect(collectFromWeb(runtime.db, { ...principal, privateCollectionOnly: true,
+        revalidate: outsideAuthority, revalidateInTransaction: finalAuthority }, {
+        raw_input: "https://example.org/website-final-authority", visibility: "private", idempotency_key: "website-final-authority",
+      })).rejects.toMatchObject({ code: "permission_revoked" }));
+      // Before the attempt; resolver entry/before/after resolution; after resolution;
+      // and before the effect transaction. Final authority remains transaction-bound.
+      expect(outsideAuthority).toHaveBeenCalledTimes(6);
+      expect(finalAuthority).toHaveBeenCalledTimes(1);
+      expect(await businessSnapshot()).toEqual(before);
+      expect(await resolveSession(handle.db, redeemed.session.token, { touch: false })).toBeNull();
+    });
+  });
+
   it.each(["unavailable", "failed"] as const)(
     "returns no enrichment action for genuine terminal %s Content",
     async (summaryStatus) => {
@@ -2689,6 +2824,224 @@ describe.skipIf(!databaseUrl)("PostgreSQL schema and auth primitives", () => {
         DROP FUNCTION IF EXISTS attention_test_reject_selection_job();
       `);
     }
+  });
+
+  it.each([
+    ["xiaohongshu", "https://xhslink.cn/o/pending-fixture", "https://xhslink.cn/o/pending-fixture"],
+    ["xiaohongshu", "https://xhslink.cn/o/pending-fixture", "https://www.xiaohongshu.com/login"],
+    ["douyin", "https://v.douyin.com/pending-fixture/", "https://v.douyin.com/pending-fixture/"],
+  ])("keeps unresolved %s shortlinks pending without creating content", async (source, shortUrl, finalUrl) => {
+    const [account] = await handle.db.insert(accounts).values({ stableHandle: "shortlink-pending" }).returning();
+    const principal = { accountId: account!.id, isMember: true, isFilter: false };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ finalUrl, redirects: [], status: 200 })));
+    const input = { idempotency_key: "shortlink-pending-fixture", raw_input: shortUrl, visibility: "private" };
+
+    const result = await collectFromWeb(handle.db, principal, input);
+    expect(result).toMatchObject({ status: "resolution_pending", source, retry_after_seconds: 300 });
+    expect(await collectFromWeb(handle.db, principal, input)).toMatchObject({
+      status: "resolution_pending", source, attempt_id: result.attempt_id,
+    });
+    expect(await handle.db.select().from(contents)).toHaveLength(0);
+    expect(await handle.db.select().from(collections)).toHaveLength(0);
+  });
+
+  it("keeps a Xiaohongshu note when resolution redirects to login", async () => {
+    const [account] = await handle.db.insert(accounts).values({ stableHandle: "xhs-login-test" }).returning();
+    const principal = { accountId: account!.id, isMember: true, isFilter: false };
+    const noteUrl = "https://www.xiaohongshu.com/explore/6aad3c540000000029011cd3";
+    const sharedUrl = `${noteUrl}?app_platform=android&xsec_source=app_share&xsec_token=public-share-token&share_channel=wechat`;
+    const loginUrl = `https://www.xiaohongshu.com/login?redirectPath=${encodeURIComponent(sharedUrl)}`;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      finalUrl: loginUrl,
+      redirects: [{ host: "www.xiaohongshu.com", pathFingerprint: "login-redirect", status: 302 }],
+      status: 200,
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+
+    const result = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "xhs-note-login-redirect",
+      raw_input: sharedUrl,
+      visibility: "private",
+    });
+    expect(result).toMatchObject({
+      status: "accepted",
+      source: "xiaohongshu",
+      enrichment_action: "generate_summary",
+      public_read_url: `${noteUrl}?xsec_source=app_share&xsec_token=public-share-token`,
+    });
+    if (result.status !== "accepted") throw new Error("Expected saved note");
+    const [content] = await handle.db.select().from(contents).where(eq(contents.id, result.content_id));
+    expect(content).toMatchObject({ normalizedUrl: noteUrl, enrichmentStatus: "partial" });
+    const [link] = await handle.db.select().from(contentLinks).where(eq(contentLinks.inputAttemptId, result.attempt_id));
+    expect(link).toMatchObject({
+      resolutionStatus: "pending",
+      safeSelectedUrl: sharedUrl,
+      resolvedUrl: sharedUrl,
+      redirectChain: ["302:www.xiaohongshu.com:login-redirect"],
+    });
+
+    const repeat = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "xhs-note-login-repeat",
+      raw_input: sharedUrl,
+      visibility: "private",
+    });
+    expect(repeat).toMatchObject({ status: "already_collected", content_id: result.content_id });
+
+    for (const [index, rawInput] of [loginUrl, "https://www.xiaohongshu.com/user/profile/abc123"].entries()) {
+      const unsupported = await collectFromWeb(handle.db, principal, {
+        idempotency_key: `xhs-login-non-note-${index}`,
+        raw_input: rawInput,
+        visibility: "private",
+      });
+      expect(unsupported).toMatchObject({ status: "invalid", error_code: "non_content_target" });
+    }
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      finalUrl: `${loginUrl}&access_token=private-token`, redirects: [], status: 200,
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    const unsafe = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "xhs-login-unsafe-redirect",
+      raw_input: sharedUrl,
+      visibility: "private",
+    });
+    expect(unsafe).toMatchObject({ status: "unsafe", error_code: "dangerous_query" });
+    expect(await handle.db.select().from(contents)).toHaveLength(1);
+  });
+
+  it.each([
+    ["HTTP discovery", "http://www.xiaohongshu.com/discovery/item/6ad7f00d000000002c034c0b"],
+    ["HTTP default port", "http://xiaohongshu.com:80/explore/6ad7f00d000000002c034c0b"],
+    ["HTTP trailing slash", "http://www.xiaohongshu.com:80/discovery/item/6ad7f00d000000002c034c0b/"],
+    ["HTTPS default port", "https://www.xiaohongshu.com:443/discovery/item/6ad7f00d000000002c034c0b"],
+  ])("recovers validated %s note metadata as HTTPS without requesting it", async (_label, embeddedNote) => {
+    const [account] = await handle.db.insert(accounts).values({ stableHandle: "xhs-login-https-normalization" }).returning();
+    const principal = { accountId: account!.id, isMember: true, isFilter: false };
+    const shortUrl = "https://xhslink.cn/o/normalization-fixture";
+    const canonicalNote = "https://www.xiaohongshu.com/explore/6ad7f00d000000002c034c0b";
+    const sharedNote = `${embeddedNote}?app_platform=android&share_channel=wechat&xsec_source=app_share&xsec_token=public-share-token`;
+    const resolveFetch = vi.fn(async () => Response.json({
+      finalUrl: `https://www.xiaohongshu.com/login?redirectPath=${encodeURIComponent(sharedNote)}`,
+      redirects: [{ host: "xhslink.cn", pathFingerprint: "login-fixture", status: 302 }],
+      status: 200,
+    }));
+    vi.stubGlobal("fetch", resolveFetch);
+
+    const result = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "xhs-normalize-login-note", raw_input: shortUrl, visibility: "private",
+    });
+    expect(result).toMatchObject({
+      status: "accepted", source: "xiaohongshu", summary_status: "pending", enrichment_action: "generate_summary",
+      public_read_url: `${canonicalNote}?xsec_source=app_share&xsec_token=public-share-token`,
+    });
+    if (result.status !== "accepted") throw new Error("Expected recovered note identity");
+    expect(resolveFetch).toHaveBeenCalledExactlyOnceWith("http://127.0.0.1:4100/v1/fetch", expect.objectContaining({
+      body: JSON.stringify({ mode: "resolve", sourceKind: "xiaohongshu", url: shortUrl }),
+    }));
+    const [content] = await handle.db.select().from(contents).where(eq(contents.id, result.content_id));
+    expect(content).toMatchObject({
+      normalizedUrl: canonicalNote, outboundUrl: result.public_read_url, aiSummary: null, enrichmentStatus: "partial",
+    });
+    const [link] = await handle.db.select().from(contentLinks).where(eq(contentLinks.inputAttemptId, result.attempt_id));
+    expect(link).toMatchObject({ safeSelectedUrl: shortUrl, resolutionStatus: "pending" });
+    expect(link?.resolvedUrl).toMatch(/^https:\/\//u);
+  });
+
+  it.each([
+    ["HTTP login", "http://www.xiaohongshu.com/login", "invalid", "non_content_target"],
+    ["HTTPS login on port 80", "https://www.xiaohongshu.com:80/login", "invalid", "non_content_target"],
+    ["HTTPS login on port 8443", "https://www.xiaohongshu.com:8443/login", "unsafe", "unsafe_target"],
+  ])("does not recover Xiaohongshu note metadata through %s", async (_label, loginUrl, status, errorCode) => {
+    const [account] = await handle.db.insert(accounts).values({ stableHandle: "xhs-login-origin-boundary" }).returning();
+    const note = "http://www.xiaohongshu.com/discovery/item/6ad7f00d000000002c034c0b";
+    const resolveFetch = vi.fn(async () => Response.json({
+      finalUrl: `${loginUrl}?redirectPath=${encodeURIComponent(note)}`, redirects: [], status: 200,
+    }));
+    vi.stubGlobal("fetch", resolveFetch);
+    expect(await collectFromWeb(handle.db, { accountId: account!.id, isMember: true, isFilter: false }, {
+      idempotency_key: "xhs-login-untrusted-origin", raw_input: "https://xhslink.cn/o/origin-fixture", visibility: "private",
+    })).toMatchObject({ status, error_code: errorCode });
+    expect(resolveFetch).toHaveBeenCalledTimes(1);
+    expect(await handle.db.select().from(contents)).toHaveLength(0);
+    expect(await handle.db.select().from(collections)).toHaveLength(0);
+  });
+
+  it("keeps a Xiaohongshu shortlink's note behind a login redirect", async () => {
+    const [account] = await handle.db.insert(accounts).values({ stableHandle: "xhs-shortlink-login" }).returning();
+    const principal = { accountId: account!.id, isMember: true, isFilter: false };
+    const shortUrl = "https://xhslink.cn/o/short-note-fixture";
+    const noteUrl = "https://www.xiaohongshu.com/discovery/item/6ad7f00d000000002c034c0b";
+    const sharedUrl = `${noteUrl}?xsec_source=app_share&xsec_token=public-share-token&share_channel=wechat`;
+    const redirectHop = { host: "xhslink.cn", pathFingerprint: "shortlink-fixture", status: 302 };
+    const resolveToLogin = (target: string) => vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      finalUrl: `https://www.xiaohongshu.com/login?redirectPath=${encodeURIComponent(target)}`,
+      redirects: [redirectHop], status: 200,
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+
+    resolveToLogin(sharedUrl);
+    const result = await collectFromWeb(handle.db, principal, {
+      idempotency_key: "xhs-shortlink-login-save", raw_input: `分享文案 ${shortUrl} 小红书`, visibility: "private",
+    });
+    expect(result).toMatchObject({
+      status: "accepted", source: "xiaohongshu", enrichment_action: "generate_summary",
+      public_read_url: "https://www.xiaohongshu.com/explore/6ad7f00d000000002c034c0b?xsec_source=app_share&xsec_token=public-share-token",
+    });
+    if (result.status !== "accepted") throw new Error("Expected saved shortlink note");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [content] = await handle.db.select().from(contents).where(eq(contents.id, result.content_id));
+    expect(content).toMatchObject({
+      normalizedUrl: "https://www.xiaohongshu.com/explore/6ad7f00d000000002c034c0b", enrichmentStatus: "partial",
+      aiSummary: null,
+    });
+    const [link] = await handle.db.select().from(contentLinks).where(eq(contentLinks.inputAttemptId, result.attempt_id));
+    expect(link).toMatchObject({
+      safeSelectedUrl: shortUrl, resolvedUrl: sharedUrl, resolutionStatus: "pending",
+      redirectChain: ["302:xhslink.cn:shortlink-fixture"],
+    });
+    const [attempt] = await handle.db.select().from(inputAttempts).where(eq(inputAttempts.id, result.attempt_id));
+    expect(attempt).toMatchObject({ safeSelectedUrl: shortUrl, redirectChain: ["302:xhslink.cn:shortlink-fixture"] });
+    const aliases = await handle.db.select().from(contentIdentities).where(eq(contentIdentities.contentId, result.content_id));
+    expect(aliases).toEqual(expect.arrayContaining([expect.objectContaining({ normalizedUrl: shortUrl, sourceAdapter: "generic_web" })]));
+
+    resolveToLogin(sharedUrl.replace("https://www.xiaohongshu.com", ""));
+    await expect(collectFromWeb(handle.db, principal, {
+      idempotency_key: "xhs-shortlink-login-repeat", raw_input: shortUrl, visibility: "private",
+    })).resolves.toMatchObject({ status: "already_collected", content_id: result.content_id });
+
+    for (const [index, target] of [
+      "https://example.com/explore/abc123", "//127.0.0.1/explore/abc123",
+      "https://www.xiaohongshu.com.evil.example/explore/abc123",
+      "https://user:password@www.xiaohongshu.com/explore/abc123",
+      "https://www.xiaohongshu.com:8443/explore/abc123",
+      "https://www.xiaohongshu.com/user/profile/abc123",
+      "http://example.com/explore/abc123", "http://127.0.0.1/explore/abc123",
+      "http://www.xiaohongshu.com.evil.example/explore/abc123",
+      "http://user:password@www.xiaohongshu.com/explore/abc123",
+      "http://www.xiaohongshu.com:8080/explore/abc123",
+      "http://www.xiaohongshu.com:443/explore/abc123",
+      "https://www.xiaohongshu.com:80/explore/abc123",
+      "ftp://www.xiaohongshu.com/explore/abc123",
+      "http://www.xiaohongshu.com/user/profile/abc123",
+      "http://www.xiaohongshu.com/explore/abc123/extra",
+      "https://www.xiaohongshu.com/explore/abc123/extra",
+      "http://www.xiaohongshu.com/explore/abc123%2Fextra", "/login", "",
+      "https://[invalid/explore/abc123",
+      "/explore/abc123\\tracking", "/explore/abc123\nignored",
+    ].entries()) {
+      resolveToLogin(target);
+      await expect(collectFromWeb(handle.db, principal, {
+        idempotency_key: `xhs-shortlink-invalid-${index}`, raw_input: shortUrl, visibility: "private",
+      })).resolves.toMatchObject({ status: "invalid", error_code: "non_content_target" });
+    }
+    for (const [index, target] of [
+      `${sharedUrl}&access_token=private-token`, `${sharedUrl}#access_token=private-token`,
+      `${sharedUrl.replace("https:", "http:")}&access_token=private-token`,
+      `${sharedUrl.replace("https:", "http:")}#access_token=private-token`,
+    ].entries()) {
+      resolveToLogin(target);
+      await expect(collectFromWeb(handle.db, principal, {
+        idempotency_key: `xhs-shortlink-unsafe-${index}`, raw_input: shortUrl, visibility: "private",
+      })).resolves.toMatchObject({ status: "unsafe", error_code: "dangerous_query" });
+    }
+    expect(await handle.db.select().from(contents)).toHaveLength(1);
   });
 
   it("blocks credential-like URLs but permits public Xiaohongshu share parameters", async () => {
