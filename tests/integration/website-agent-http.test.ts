@@ -6,6 +6,7 @@ import { accountDigestPreferences, accounts, collections, contents, createDataba
 import { migrateDatabase } from "@attention/db/migrate";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { decryptCandidateSet } from "../../apps/web/src/server/candidate-vault";
 import type * as QueryRoute from "../../apps/web/src/app/api/website-agent/query/route";
 import type * as CloseRoute from "../../apps/web/src/app/api/website-agent/sessions/[sessionId]/close/route";
 import type * as SessionRoute from "../../apps/web/src/app/api/website-agent/sessions/[sessionId]/route";
@@ -791,6 +792,11 @@ describe.skipIf(!enabled)("website agent authenticated HTTP on isolated PostgreS
     const actor = await member(), key = randomUUID();
     const proposed = await proposeCollection(actor, `https://example.com/${key}/first https://example.com/${key}/second`);
     expect(proposed.actions![0]!.candidates).toHaveLength(2);
+    const pending = await owner.sql<{ encrypted_payload: string }[]>`SELECT encrypted_payload FROM pending_candidate_sets
+      WHERE account_id=${actor.accountId} AND consumed_at IS NULL`;
+    if (pending.length !== 1) throw new Error("Expected one synthetic candidate vault");
+    const selectionToken = decryptCandidateSet(pending[0]!.encrypted_payload).selectionToken;
+    expect(selectionToken.length).toBeGreaterThanOrEqual(32);
     await expectError(await approve(actor, proposed), 409, "candidate_selection_required");
     const another = await member();
     await expectError(await select(another, proposed, proposed.actions![0]!.candidates![0]!.candidateId), 404, "session_not_found");
@@ -801,7 +807,11 @@ describe.skipIf(!enabled)("website agent authenticated HTTP on isolated PostgreS
     expect(selected.actions![0]!.toolName).toBe("attention_select_collection_candidate");
     expect(selected.actions![0]!.candidates).toBeUndefined();
     expect(JSON.stringify(selected)).not.toContain("selection_token");
-    expect(JSON.stringify(providerCalls)).not.toContain("selection_token");
+    // A static tool schema can name the field; model messages cannot expose it.
+    expect(JSON.stringify(providerCalls.map(call => call.messages)).includes("selection_token")).toBe(false);
+    // Assert booleans so a failure cannot print the actual synthetic vault token.
+    expect(JSON.stringify(providerCalls).includes(selectionToken)).toBe(false);
+    expect(JSON.stringify(selected).includes(selectionToken)).toBe(false);
     expect((await owner.sql`SELECT count(*)::int AS n FROM collections WHERE account_id=${actor.accountId}`)[0]?.n).toBe(0);
     const approved = await approve(actor, selected);
     expect(approved.status).toBe(200);
@@ -824,7 +834,8 @@ describe.skipIf(!enabled)("website agent authenticated HTTP on isolated PostgreS
       const actor = await member(), key = randomUUID();
       const proposed = await proposeCollection(actor, `https://example.com/${key}/a https://example.com/${key}/b`);
       if (kind === "close") expect((await close(actor, proposed)).status).toBe(200);
-      else await owner.sql`UPDATE pending_candidate_sets SET expires_at=clock_timestamp()-interval '1 second' WHERE account_id=${actor.accountId}`;
+      else await owner.sql`UPDATE pending_candidate_sets SET created_at=clock_timestamp()-interval '2 minutes',
+        expires_at=clock_timestamp()-interval '1 second' WHERE account_id=${actor.accountId}`;
       const response = await select(actor, proposed, proposed.actions![0]!.candidates![0]!.candidateId);
       expect(response.status).toBe(409);
       expect((await owner.sql`SELECT count(*)::int AS n FROM collections WHERE account_id=${actor.accountId}`)[0]?.n).toBe(0);
